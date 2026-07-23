@@ -1,0 +1,805 @@
+/**
+ * Styles for BetterClaude's page-level overlay chrome added by the
+ * Customize Everything pass: cursor trail/ripple canvas, the radial
+ * quick-action menu, the command palette, the mascot companion, confetti/
+ * seasonal decoration canvases, the haptic-pulse substitute, notification
+ * style variants, and the mini-game modal. Loaded once via
+ * electron/preload.js's injectStaticCSS, same as ui/hud/hud.css and
+ * ui/title-bar.css.
+ */
+
+/* --- Cursor trail canvas + click ripple --- */
+#bc-fx-canvas {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2147483000;
+}
+.bc-fx-ripple {
+  position: fixed;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  margin-top: -5px;
+  border: 2px solid #8b5cf6;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 2147483001;
+  animation: bc-ripple-expand 500ms ease-out forwards;
+}
+@keyframes bc-ripple-expand {
+  from { transform: scale(0.3); opacity: 0.8; }
+  to { transform: scale(6); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bc-fx-ripple { animation-duration: 1ms; }
+}
+
+/* --- Radial quick-action menu (right-click) --- */
+#bc-radial-menu {
+  position: fixed;
+  z-index: 2147483400;
+  width: 0;
+  height: 0;
+}
+.bc-radial-item {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translate(calc(-50% + var(--bc-radial-x, 0px)), calc(-50% + var(--bc-radial-y, 0px)));
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(20, 16, 31, 0.95);
+  color: #ece7fb;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+  font: 10px -apple-system, sans-serif;
+  animation: bc-radial-in 160ms ease both;
+}
+.bc-radial-item:hover {
+  background: rgba(139, 92, 246, 0.35);
+  border-color: var(--bc-accent, #8b5cf6);
+}
+.bc-radial-icon { width: 18px; height: 18px; display: inline-flex; }
+.bc-radial-icon svg { width: 100%; height: 100%; }
+@keyframes bc-radial-in {
+  from { transform: translate(-50%, -50%) scale(0.4); opacity: 0; }
+  to { transform: translate(calc(-50% + var(--bc-radial-x, 0px)), calc(-50% + var(--bc-radial-y, 0px))) scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bc-radial-item { animation: none; }
+}
+
+/* --- Command palette (Cmd/Ctrl+K) --- */
+#bc-command-palette-overlay {
+  position: fixed;
+  inset: 0;
+  /* Above the settings panel (2147483500 in panel.css) — Cmd/Ctrl+K is
+     advertised as working "anywhere," including while Settings is open. */
+  z-index: 2147483550;
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.45);
+}
+#bc-command-palette-overlay.bc-open { display: flex; }
+#bc-command-palette-overlay .bc-cp-box {
+  width: 100%;
+  max-width: 480px;
+  background: #1c1630;
+  border: 1px solid #3a2e5c;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  font: 13px -apple-system, sans-serif;
+  color: #ece7fb;
+}
+.bc-cp-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  border-bottom: 1px solid #3a2e5c;
+  background: transparent;
+  color: #ece7fb;
+  padding: 14px 16px;
+  font: inherit;
+  font-size: 15px;
+}
+.bc-cp-input:focus { outline: none; }
+.bc-cp-list { max-height: 320px; overflow-y: auto; padding: 6px; }
+.bc-cp-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: #ece7fb;
+  cursor: pointer;
+  font: inherit;
+}
+.bc-cp-item.bc-active, .bc-cp-item:hover { background: rgba(139, 92, 246, 0.25); }
+.bc-cp-item-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-cp-item-group {
+  flex: none;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  opacity: 0.6;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.bc-cp-empty { padding: 16px; text-align: center; opacity: 0.6; }
+
+/* --- Prompt Picker (Cmd/Ctrl+Shift+P, or Cmd+K -> "Insert Prompt…") --- */
+#bc-prompt-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483550;
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.45);
+}
+#bc-prompt-picker-overlay.bc-open { display: flex; }
+.bc-pp-box {
+  width: 100%;
+  max-width: 520px;
+  background: #1c1630;
+  border: 1px solid #3a2e5c;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  font: 13px -apple-system, sans-serif;
+  color: #ece7fb;
+}
+.bc-pp-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  border-bottom: 1px solid #3a2e5c;
+  background: transparent;
+  color: #ece7fb;
+  padding: 14px 16px;
+  font: inherit;
+  font-size: 15px;
+}
+.bc-pp-input:focus { outline: none; }
+.bc-pp-list { max-height: 340px; overflow-y: auto; padding: 6px; }
+.bc-pp-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: #ece7fb;
+  cursor: pointer;
+  font: inherit;
+}
+.bc-pp-item.bc-active, .bc-pp-item:hover { background: rgba(139, 92, 246, 0.25); }
+.bc-pp-item-title { font-weight: 600; }
+.bc-pp-item-meta { font-size: 11px; opacity: 0.6; }
+.bc-pp-empty { padding: 16px; text-align: center; opacity: 0.6; }
+.bc-pp-form-header { padding: 14px 16px; border-bottom: 1px solid #3a2e5c; font-weight: 600; }
+.bc-pp-form { padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; max-height: 320px; overflow-y: auto; }
+.bc-pp-form-row { display: flex; flex-direction: column; gap: 4px; font-size: 12px; opacity: 0.85; }
+.bc-pp-form-row textarea {
+  background: #14101f; border: 1px solid #3a2e5c; color: #ece7fb;
+  border-radius: 10px; padding: 6px 8px; font: 13px inherit; resize: vertical;
+}
+.bc-pp-form-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid #3a2e5c; }
+.bc-pp-form-actions button { padding: 6px 14px; border-radius: 10px; border: none; cursor: pointer; font: inherit; }
+.bc-pp-form-save { background: #8b5cf6; color: #fff; }
+.bc-pp-form-cancel { background: transparent; color: #ece7fb; border: 1px solid #3a2e5c !important; }
+
+/* --- Semantic Search (Cmd/Ctrl+Shift+F, or Cmd+K -> "Search All Chats") --- */
+#bc-semantic-search-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483550;
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.45);
+}
+#bc-semantic-search-overlay.bc-open { display: flex; }
+.bc-ss-box {
+  width: 100%;
+  max-width: 560px;
+  max-height: 70vh;
+  background: #1c1630;
+  border: 1px solid #3a2e5c;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  font: 13px -apple-system, sans-serif;
+  color: #ece7fb;
+}
+.bc-ss-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  border-bottom: 1px solid #3a2e5c;
+  background: transparent;
+  color: #ece7fb;
+  padding: 14px 16px;
+  font: inherit;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+.bc-ss-input:focus { outline: none; }
+.bc-ss-list { overflow-y: auto; padding: 6px; }
+.bc-ss-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: #ece7fb;
+  cursor: pointer;
+  font: inherit;
+  margin-bottom: 2px;
+}
+.bc-ss-item:hover { background: rgba(139, 92, 246, 0.25); }
+.bc-ss-item-head { display: flex; justify-content: space-between; gap: 8px; }
+.bc-ss-item-title { font-weight: 600; }
+.bc-ss-item-role { font-size: 11px; opacity: 0.6; flex-shrink: 0; }
+.bc-ss-item-snippet { opacity: 0.7; font-size: 12px; margin-top: 2px; }
+.bc-ss-empty, .bc-ss-loading, .bc-ss-error { padding: 16px; text-align: center; opacity: 0.6; }
+.bc-ss-error { color: #f87171; opacity: 0.9; }
+
+/* Brief highlight when a search jump scrolls a matched message into view. */
+.bc-search-highlight {
+  outline: 2px solid var(--bc-accent, #8b5cf6) !important;
+  outline-offset: 2px;
+  transition: outline-color 400ms ease;
+}
+
+/* --- Macro Recorder floating indicator (recording or replaying) --- */
+#bc-macro-recording-indicator {
+  position: fixed;
+  top: 46px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2147483560;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(20, 16, 31, 0.95);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  border-radius: 999px;
+  padding: 6px 8px 6px 14px;
+  font: 12px -apple-system, sans-serif;
+  color: #ece7fb;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+#bc-macro-recording-indicator button {
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 4px 12px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+#bc-macro-recording-indicator button:hover { background: #dc2626; }
+
+/* --- Mascot companion --- */
+/* Offset past the sidebar's width (falls back to its 280px default when the
+   user hasn't set a custom width — see core/tokens.js sidebarWidthPx bound)
+   so this never lands on top of claude.ai's own account-switcher, which
+   lives in the sidebar's bottom-left corner at the exact same fixed spot. */
+#bc-companion {
+  position: fixed;
+  left: calc(var(--bc-sidebar-width, 280px) + 16px);
+  bottom: 16px;
+  z-index: 2147482800;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+  transform: translateY(var(--bc-parallax-y, 0px));
+}
+#bc-companion .bc-companion-avatar {
+  pointer-events: auto;
+  width: 48px;
+  height: 48px;
+  animation: bc-companion-idle 3.2s ease-in-out infinite;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.35));
+}
+@keyframes bc-companion-idle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+.bc-companion-avatar.bc-companion-happy { animation: bc-companion-bounce 1.5s ease; }
+.bc-companion-avatar.bc-companion-streak-bump { animation: bc-companion-bounce 0.9s ease; }
+@keyframes bc-companion-bounce {
+  0%, 100% { transform: translateY(0) scale(1); }
+  30% { transform: translateY(-14px) scale(1.08); }
+  55% { transform: translateY(0) scale(0.96); }
+  75% { transform: translateY(-6px) scale(1.03); }
+}
+.bc-companion-bubble {
+  pointer-events: auto;
+  max-width: 220px;
+  background: rgba(20, 16, 31, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font: 12px -apple-system, sans-serif;
+  color: #ece7fb;
+  margin-bottom: 6px;
+}
+.bc-companion-streak {
+  pointer-events: none;
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(20, 16, 31, 0.9);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font: 11px -apple-system, sans-serif;
+  color: #f5c518;
+  margin-left: -10px;
+}
+.bc-companion-streak svg { width: 11px; height: 11px; flex: none; }
+@media (prefers-reduced-motion: reduce) {
+  #bc-companion .bc-companion-avatar,
+  .bc-companion-avatar.bc-companion-happy,
+  .bc-companion-avatar.bc-companion-streak-bump {
+    animation: none !important;
+  }
+}
+
+/* --- Confetti + seasonal decoration canvases --- */
+#bc-confetti-canvas, #bc-seasonal-canvas {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+#bc-confetti-canvas { z-index: 2147483200; }
+#bc-seasonal-canvas { z-index: 2147482600; }
+
+/* --- Haptic-feedback visual substitute (desktop has no rumble motor) --- */
+.bc-haptic-pulse { animation: bc-haptic-bounce 220ms ease; }
+@keyframes bc-haptic-bounce {
+  0% { transform: scale(1); }
+  40% { transform: scale(calc(1 + 0.12 * var(--bc-haptic-strength, 0.5))); }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bc-haptic-pulse { animation: none; }
+}
+
+/* --- Notification style variants (banner / popup / badge) --- */
+.bc-toast {
+  position: fixed;
+  z-index: 2147483647;
+  background: rgba(20, 16, 31, 0.95);
+  color: #ece7fb;
+  font: 12px -apple-system, sans-serif;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.bc-toast-banner {
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  border-radius: 8px;
+}
+.bc-toast-popup {
+  right: 16px;
+  top: 56px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  animation: bc-toast-popup-in 200ms ease;
+}
+@keyframes bc-toast-popup-in {
+  from { transform: translateX(20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.bc-toast-badge {
+  right: 16px;
+  bottom: 16px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--bc-accent, #8b5cf6);
+  font-size: 14px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bc-toast-popup { animation: none; }
+}
+
+/* --- Conversation Branching: floating fork buttons --- */
+/* Viewport-pinned, never inserted into claude.ai's own message DOM — see
+   core/branch-fork-buttons.js. Sits below the dock/HUD/palette tiers since
+   it's ambient chrome next to messages, not a deliberately-opened surface. */
+#bc-fork-buttons-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2147482700;
+}
+.bc-fork-btn-wrap {
+  position: absolute;
+  display: flex;
+  gap: 4px;
+  pointer-events: auto;
+}
+.bc-fork-btn {
+  background: rgba(20, 16, 31, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #ece7fb;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font: 11px -apple-system, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.bc-fork-btn:hover { background: rgba(139, 92, 246, 0.35); border-color: var(--bc-accent, #8b5cf6); }
+.bc-fork-btn-copy { padding: 3px 7px; }
+
+/* --- Inline Diff Applier: floating "Diff & Apply" buttons over matched
+   code blocks --- */
+#bc-diff-apply-buttons-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2147482700;
+}
+.bc-diff-apply-btn-wrap {
+  position: absolute;
+  pointer-events: auto;
+}
+.bc-diff-apply-btn {
+  background: rgba(20, 16, 31, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #ece7fb;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font: 11px -apple-system, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.bc-diff-apply-btn:hover { background: rgba(139, 92, 246, 0.35); border-color: var(--bc-accent, #8b5cf6); }
+
+/* --- Diff Viewer (Cmd+K -> "Compare Responses") --- */
+#bc-diff-viewer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483600;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  font: 13px -apple-system, sans-serif;
+  color: #ece7fb;
+}
+#bc-diff-viewer-overlay.bc-open { display: flex; }
+.bc-dv-box {
+  width: min(760px, 94vw);
+  max-height: 88vh;
+  background: #1c1630;
+  border: 1px solid #3a2e5c;
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.bc-dv-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #3a2e5c;
+}
+.bc-dv-close {
+  background: transparent;
+  border: 1px solid #3a2e5c;
+  color: #ece7fb;
+  border-radius: 10px;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+}
+.bc-dv-close:hover { background: rgba(255, 255, 255, 0.08); }
+.bc-dv-inputs { display: flex; gap: 10px; padding: 12px 16px; }
+.bc-dv-textarea {
+  flex: 1;
+  min-height: 100px;
+  background: #14101f;
+  border: 1px solid #3a2e5c;
+  color: #ece7fb;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: 12px SFMono-Regular, Menlo, Consolas, monospace;
+  resize: vertical;
+}
+.bc-dv-box > .bc-btn { margin: 0 16px 12px; align-self: flex-start; }
+.bc-dv-result {
+  margin: 0 16px 16px;
+  padding: 12px;
+  background: #14101f;
+  border: 1px solid #3a2e5c;
+  border-radius: 8px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 12px SFMono-Regular, Menlo, Consolas, monospace;
+}
+.bc-dv-added { background: rgba(34, 197, 94, 0.28); color: #bbf7d0; }
+.bc-dv-removed { background: rgba(239, 68, 68, 0.28); color: #fecaca; text-decoration: line-through; }
+
+/* --- Inline Diff Applier modal (opened from a "Diff & Apply" button) --- */
+#bc-diff-applier-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483600;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  font: 13px -apple-system, sans-serif;
+  color: #ece7fb;
+}
+#bc-diff-applier-overlay.bc-open { display: flex; }
+.bc-da-box {
+  width: min(720px, 94vw);
+  max-height: 88vh;
+  background: #1c1630;
+  border: 1px solid #3a2e5c;
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.bc-da-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #3a2e5c;
+}
+.bc-da-select-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px 0;
+  font-size: 12px;
+  opacity: 0.85;
+}
+.bc-da-select {
+  flex: 1;
+  background: #14101f;
+  border: 1px solid #3a2e5c;
+  color: #ece7fb;
+  border-radius: 10px;
+  padding: 5px 8px;
+  font: 12px -apple-system, sans-serif;
+}
+.bc-da-confidence {
+  margin: 8px 16px 0;
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.bc-da-conf-exact { color: #bbf7d0; }
+.bc-da-conf-fuzzy { color: #fde68a; }
+.bc-da-conf-ambiguous, .bc-da-conf-unknown { color: #fecaca; }
+.bc-da-result { margin: 12px 16px; flex: 1; }
+.bc-da-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 0 16px 16px; }
+
+/* --- Usage Analytics Dashboard (Settings -> Usage Analytics -> Open Dashboard,
+   or Cmd+K -> "Open Usage Analytics") --- */
+#bc-analytics-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483600;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  font: 13px -apple-system, sans-serif;
+  color: #ece7fb;
+}
+#bc-analytics-overlay.bc-open { display: flex; }
+.bc-an-box {
+  width: min(980px, 96vw);
+  max-height: 92vh;
+  background: #1c1630;
+  border: 1px solid #3a2e5c;
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.bc-an-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #3a2e5c;
+}
+.bc-an-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-bottom: 1px solid #3a2e5c;
+}
+.bc-an-presets { display: flex; gap: 4px; }
+.bc-an-presets button {
+  background: #14101f;
+  border: 1px solid #3a2e5c;
+  color: #ece7fb;
+  border-radius: 10px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: 12px -apple-system, sans-serif;
+}
+.bc-an-presets button:hover { border-color: var(--bc-accent, #8b5cf6); }
+.bc-an-date-label { display: flex; align-items: center; gap: 6px; font-size: 12px; opacity: 0.85; }
+.bc-an-date-label input {
+  background: #14101f;
+  border: 1px solid #3a2e5c;
+  color: #ece7fb;
+  border-radius: 10px;
+  padding: 4px 6px;
+  font: 12px -apple-system, sans-serif;
+}
+.bc-an-spacer { flex: 1; }
+.bc-an-body {
+  padding: 16px;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.bc-an-body.bc-an-loading { opacity: 0.5; pointer-events: none; }
+.bc-an-totals {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 12px;
+}
+.bc-an-tile {
+  flex: 1;
+  background: #14101f;
+  border: 1px solid #3a2e5c;
+  border-radius: 10px;
+  padding: 12px 16px;
+  text-align: center;
+}
+.bc-an-tile-value { font-size: 20px; font-weight: 700; }
+.bc-an-tile-label { font-size: 11px; opacity: 0.65; margin-top: 2px; }
+.bc-an-chart-block {
+  background: #14101f;
+  border: 1px solid #3a2e5c;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.bc-an-chart-wide { grid-column: 1 / -1; }
+.bc-an-chart-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  opacity: 0.85;
+  margin-bottom: 6px;
+}
+.bc-an-png {
+  background: transparent;
+  border: 1px solid #3a2e5c;
+  color: #ece7fb;
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.bc-an-png:hover { border-color: var(--bc-accent, #8b5cf6); }
+.bc-an-chart-block canvas { width: 100%; display: block; }
+@media (max-width: 720px) {
+  .bc-an-body { grid-template-columns: 1fr; }
+}
+
+/* --- Context Budget Planner pre-send modal --- */
+#bc-context-budget-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483600;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  font: 13px -apple-system, sans-serif;
+  color: #ece7fb;
+}
+#bc-context-budget-overlay.bc-open { display: flex; }
+.bc-cb-box {
+  width: min(440px, 92vw);
+  background: #1c1630;
+  border: 1px solid #3a2e5c;
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+  padding: 18px;
+}
+.bc-cb-header { font-weight: 600; font-size: 15px; margin-bottom: 10px; }
+.bc-cb-rows { display: flex; flex-direction: column; gap: 4px; }
+.bc-cb-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  background: #14101f;
+  border-radius: 10px;
+  font-size: 12px;
+}
+.bc-cb-row span:first-child { opacity: 0.8; }
+.bc-cb-hint { opacity: 0.65; font-size: 12px; margin: 10px 0 0; }
+.bc-cb-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+
+/* --- Mini-game modal (Settings -> Playful) --- */
+#bc-minigame-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483600;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+#bc-minigame-modal.bc-open { display: flex; }
+.bc-minigame-box {
+  background: #1c1630;
+  border: 1px solid #3a2e5c;
+  border-radius: 14px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+}
+.bc-minigame-close {
+  align-self: flex-end;
+  background: transparent;
+  border: 1px solid #3a2e5c;
+  color: #ece7fb;
+  border-radius: 10px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.bc-minigame-close:hover { background: rgba(255, 255, 255, 0.06); }
+.bc-snake-wrap { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.bc-snake-score { font: 13px -apple-system, sans-serif; color: #ece7fb; }
+.bc-snake-canvas { border-radius: 8px; border: 1px solid #3a2e5c; }
+.bc-snake-hint { font: 11px -apple-system, sans-serif; color: #a99bd1; }

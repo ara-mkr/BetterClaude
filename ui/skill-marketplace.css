@@ -1,0 +1,141 @@
+/**
+ * Skill Marketplace overlay styles. Loaded once via electron/preload.js's
+ * injectStaticCSS, same as ui/overlays.css. Same z-index tier as the
+ * mini-game modal (2147483600) — a deliberately-opened full-screen surface,
+ * not something that needs to coexist with Settings or the Command Palette.
+ */
+
+#bc-skill-marketplace-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483600;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #ece7fb;
+}
+#bc-skill-marketplace-overlay.bc-open { display: flex; }
+
+.bc-skm-box {
+  width: min(1040px, 94vw);
+  height: min(720px, 88vh);
+  background: #1c1630;
+  border: 1px solid #3a2e5c;
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.bc-skm-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid #3a2e5c;
+  flex-shrink: 0;
+}
+.bc-skm-header input,
+.bc-skm-header select {
+  background: #14101f;
+  border: 1px solid #3a2e5c;
+  color: #ece7fb;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font: inherit;
+}
+.bc-skm-search { flex: 1; min-width: 0; }
+.bc-skm-stars { width: 72px; }
+.bc-skm-close {
+  background: transparent;
+  border: 1px solid #3a2e5c;
+  color: #ece7fb;
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+  flex-shrink: 0;
+  border-radius: 22%;
+  clip-path: var(--bc-squircle-clip);
+}
+.bc-skm-close:hover { background: rgba(255, 255, 255, 0.08); }
+
+.bc-skm-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.bc-skm-list {
+  width: 42%;
+  min-width: 280px;
+  overflow-y: auto;
+  padding: 10px;
+  border-right: 1px solid #3a2e5c;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bc-skm-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.bc-skm-card:hover { background: rgba(139, 92, 246, 0.15); }
+.bc-skm-card.bc-active { background: rgba(139, 92, 246, 0.25); border-color: var(--bc-accent, #8b5cf6); }
+.bc-skm-card-title { font-weight: 600; }
+.bc-skm-card-desc {
+  opacity: 0.7;
+  margin-top: 2px;
+  font-size: 12px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.bc-skm-card-meta {
+  margin-top: 6px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.bc-skm-badge {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+}
+.bc-skm-badge-update { background: rgba(245, 197, 24, 0.25); color: #f5c518; }
+
+.bc-skm-detail {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+.bc-skm-detail-header h3 { margin: 0 0 4px; }
+.bc-skm-detail-header p { margin: 0; opacity: 0.75; }
+.bc-skm-detail-actions { display: flex; gap: 8px; margin: 14px 0; }
+.bc-skm-readme {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #14101f;
+  border: 1px solid #3a2e5c;
+  border-radius: 8px;
+  padding: 12px;
+  font: 12px SFMono-Regular, Menlo, Consolas, monospace;
+  max-height: none;
+}
+.bc-skm-empty, .bc-skm-loading, .bc-skm-error {
+  opacity: 0.6;
+  text-align: center;
+  padding: 24px 12px;
+}
+.bc-skm-error { color: #f87171; opacity: 0.9; }

@@ -1,0 +1,227 @@
+/* BetterClaude scaffold: Ocean Abyss */
+:root {
+  color-scheme: dark;
+  --bc-bg: #071620;
+  --bc-bg-elevated: #0d2333;
+  --bc-bg-sidebar: #04101a;
+  --bc-text: #d8ecf5;
+  --bc-text-muted: #7fa8bc;
+  --bc-accent: #22b8cf;
+  --bc-accent-hover: #4fd1e3;
+  --bc-link: #22b8cf;
+  --bc-border: #133245;
+  --bc-danger: #ef4444;
+  --bc-bubble-user: #0f2c3e;
+  --bc-bubble-assistant: transparent;
+
+  /* Composer tokens (§3, §4.1) — the composer card is themed independently
+     rather than inheriting the generic page text color; fg/placeholder are
+     contrast-guaranteed against --bc-composer-bg at generation time. */
+  --bc-composer-bg: #0d2333;
+  --bc-composer-fg: #d8ecf5;
+  --bc-composer-border: #133245;
+  --bc-composer-placeholder: #7fa8bc;
+
+  /* Interactive state token groups (§1.1). default and hover are ALWAYS
+     distinct values, and default falls back to the container surface — never
+     to the hover value — so nothing renders permanently in its hover tint. */
+  --btn-primary-bg-default: var(--bc-accent);
+  --btn-primary-bg-hover: var(--bc-accent-hover, color-mix(in srgb, var(--bc-accent) 92%, white));
+  --btn-primary-bg-active: color-mix(in srgb, var(--bc-accent) 86%, white);
+  --btn-primary-bg-disabled: color-mix(in srgb, var(--bc-accent) 40%, var(--bc-bg));
+  --btn-primary-fg: #ffffff;
+
+  --btn-secondary-bg-default: transparent;
+  --btn-secondary-bg-hover: color-mix(in srgb, var(--bc-text) 8%, transparent);
+  --btn-secondary-bg-active: color-mix(in srgb, var(--bc-text) 14%, transparent);
+  --btn-secondary-fg: var(--bc-text);
+
+  --btn-destructive-bg-default: var(--bc-danger);
+  --btn-destructive-bg-hover: color-mix(in srgb, var(--bc-danger) 92%, white);
+  --btn-destructive-bg-active: color-mix(in srgb, var(--bc-danger) 86%, white);
+  --btn-destructive-fg: #ffffff;
+
+  --nav-item-bg-default: transparent;
+  --nav-item-bg-hover: color-mix(in srgb, var(--bc-text) 6%, transparent);
+  --nav-item-bg-selected: color-mix(in srgb, var(--bc-accent) 18%, transparent);
+  --nav-item-fg-default: var(--bc-text-muted);
+  --nav-item-fg-selected: var(--bc-text);
+
+  --bc-focus-ring: #22b8cf;
+  --bc-border-focus: #22b8cf;
+}
+
+body {
+  background: var(--bc-bg) !important;
+}
+/* Text color, unlike background, has to reach every real leaf node: claude.ai
+   sets color explicitly on almost every element (not just body), so a plain
+   body-level rule never wins there. :where() keeps this at zero specificity
+   so it still loses, as intended, to the button/nav-item/link foreground
+   tokens declared further down (their own text needs to stay readable on a
+   colored background, not flip to the generic body text color). Scoped via
+   PAGE_ROOT_SCOPE (everything under <body> except our own injected chrome)
+   rather than a claude.ai app-root id, which isn't guaranteed to exist. */
+body, :where(body *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *)) {
+  color: var(--bc-text) !important;
+}
+
+/* claude.ai's sidebar <nav> carries no stable class or testid of its own —
+   only Tailwind utility classes that vary across builds — but it always
+   contains the pin-sidebar-toggle button, which does have a stable testid.
+   :has() lets us key off that real, verified hook instead of a guessed
+   class name (the old "nav[class*='sidebar']" / "[data-testid='sidebar']"
+   never matched anything on the live site). */
+nav:has([data-testid="pin-sidebar-toggle"]) {
+  background: var(--bc-bg-sidebar) !important;
+  border-right: 1px solid var(--bc-border) !important;
+}
+
+header {
+  background: var(--bc-bg) !important;
+  border-color: var(--bc-border) !important;
+}
+
+/* Sidebar / settings nav items as a proper state machine (§1, §3): resting
+   default is the container surface (never the hover tint), hover is gated to
+   non-touch pointers, and the persistent selected/current item has its own
+   token distinct from hover. */
+nav:has([data-testid="pin-sidebar-toggle"]) a,
+nav:has([data-testid="pin-sidebar-toggle"]) [role="button"] {
+  background: var(--nav-item-bg-default) !important;
+  color: var(--nav-item-fg-default) !important;
+  border-radius: var(--bc-radius, calc(2.4em * var(--bc-shape-ratio, 0.28))) !important;
+}
+@media (hover: hover) and (pointer: fine) {
+  nav:has([data-testid="pin-sidebar-toggle"]) a:hover,
+  nav:has([data-testid="pin-sidebar-toggle"]) [role="button"]:hover {
+    background: var(--nav-item-bg-hover) !important;
+  }
+}
+nav:has([data-testid="pin-sidebar-toggle"]) a[aria-current],
+nav:has([data-testid="pin-sidebar-toggle"]) a.active,
+nav:has([data-testid="pin-sidebar-toggle"]) [aria-selected="true"] {
+  background: var(--nav-item-bg-selected) !important;
+  color: var(--nav-item-fg-selected) !important;
+}
+
+/* claude.ai's composer is a contentEditable ProseMirror div, not a
+   <textarea> — "form textarea"/"textarea" never matched anything real.
+   data-testid="chat-input" is the verified hook onto the actual element —
+   but that element is only the inner text row (verified live: ~636px),
+   narrower than the real rounded composer card wrapping it (~672px, its
+   own native background, no stable testid to hook). A previous session
+   painted a background/border/radius/width directly on this narrower node
+   and shipped a "cut-off rectangle" behind the placeholder text — a second,
+   mismatched rounded box that fell short of the real card's right edge.
+   The real card IS reachable, just not by id: it's the nearest ancestor
+   that directly contains this node, matched with :has(). Painting ONLY
+   color there (no border-radius, no width) follows the real card's own
+   native geometry instead of fighting it, while finally fixing its actual
+   bug: claude.ai paints its own background on that card regardless of
+   BetterClaude's page-wide text color, so a light BetterClaude theme's
+   near-black text forced onto a still-dark native card (or vice versa) was
+   landing at ~1.2:1 contrast — invisible. --bc-composer-* tokens are
+   generated to guarantee contrast against EACH OTHER, not against the page
+   bg (see pickComposerFg/pickComposerPlaceholder above). */
+div:has(> [data-testid="chat-input"]) {
+  background: var(--bc-composer-bg) !important;
+  border-color: var(--bc-composer-border) !important;
+}
+[data-testid="chat-input"] {
+  color: var(--bc-composer-fg) !important;
+}
+/* ProseMirror renders its placeholder either as a [data-placeholder]
+   attribute-carrying node or an .is-empty node, with the visible text
+   drawn via a ::before pseudo-element in most builds — cover both the
+   pseudo-element and the plain element defensively since which one claude.ai
+   uses isn't independently verified here. */
+[data-testid="chat-input"] [data-placeholder]::before,
+[data-testid="chat-input"][data-placeholder]::before,
+[data-testid="chat-input"] .is-empty::before,
+[data-testid="chat-input"].is-empty::before,
+[data-testid="chat-input"] [data-placeholder],
+[data-testid="chat-input"][data-placeholder] {
+  color: var(--bc-composer-placeholder) !important;
+}
+
+/* All buttons: relational radius (never a raw px), resting state only.
+   Excludes BetterClaude's own injected chrome (title bar, settings panel,
+   HUD, plugin dock) — those have their own fixed styling (e.g. the title
+   bar's circular traffic lights) and must never follow the page's shape
+   preference. */
+button:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *) {
+  border-radius: var(--bc-radius, calc(2.4em * var(--bc-shape-ratio, 0.28))) !important;
+}
+
+/* Primary / send — DEFAULT state, resting. Hover is applied separately and
+   only through a real :hover selector, gated to non-touch pointers.
+   button[class*="primary"] is deliberately NOT used here: claude.ai's own
+   buttons carry generic Tailwind utility classes like "hover:text-primary"
+   on ordinary icon buttons (verified live on its Search button), so that
+   substring match was silently mis-coloring unrelated buttons rather than
+   doing nothing. data-testid*="send" has no confirmed match yet either —
+   kept as a harmless no-op hook until a real one is found.
+   These selectors are built from SCAFFOLD_PAINTED_BUTTON_ATTRS (defined
+   above, exported below) rather than hardcoded here — that constant is THE
+   list of "buttons this scaffold paints a non-transparent background onto",
+   and core/theme-engine.js imports it to build the exact inverse: the
+   :not(...) exclusion list on the rule that makes every OTHER button
+   transparent. Editing this list here automatically keeps that rule in sync;
+   do not hardcode a parallel selector list in theme-engine.js. */
+button[data-testid*="send"] {
+  background: var(--btn-primary-bg-default) !important;
+  color: var(--btn-primary-fg) !important;
+}
+button[aria-label*="delete" i], button[aria-label*="remove" i] {
+  background: var(--btn-destructive-bg-default) !important;
+  color: var(--btn-destructive-fg) !important;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button[data-testid*="send"]:hover {
+    background: var(--btn-primary-bg-hover) !important;
+  }
+  button[aria-label*="delete" i]:hover, button[aria-label*="remove" i]:hover {
+    background: var(--btn-destructive-bg-hover) !important;
+  }
+}
+
+/* Pressed state works on touch and mouse alike (§1.2): default -> active ->
+   default with no stuck hover. */
+button[data-testid*="send"]:active {
+  background: var(--btn-primary-bg-active) !important;
+}
+
+/* Keyboard focus ring — ALWAYS present, contrast-enforced, independent of the
+   theme's accent so it can't vanish on a low-contrast accent (§1.1).
+   [data-testid="chat-input"] is excluded here and given its own rule below —
+   see the comment above that selector: it's the narrower inner text row
+   (~636px), not the real rounded composer card (~672px) around it, so the
+   generic 2px offset used everywhere else draws a ring whose right edge
+   lands short of the card's actual right wall — visually "cut off" against
+   the real border. A larger offset pushes the ring out to roughly hug the
+   real card's edge instead. */
+button:focus-visible, a:focus-visible, textarea:focus-visible,
+input:focus-visible, [tabindex]:focus-visible:not([data-testid="chat-input"]),
+[role="tab"]:focus-visible {
+  outline: 2px solid var(--bc-focus-ring) !important;
+  outline-offset: 2px !important;
+}
+/* Plain :focus (not just :focus-visible) is covered too — contenteditable
+   elements aren't natively focusable form controls, so Chromium's default
+   UA outline for them can still apply on :focus even when :focus-visible's
+   heuristic doesn't consider the interaction keyboard-driven. */
+[data-testid="chat-input"]:focus,
+[data-testid="chat-input"]:focus-visible {
+  outline: none !important;
+}
+
+a { color: var(--bc-link) !important; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bc-bg); }
+::-webkit-scrollbar-thumb { background: var(--bc-border); border-radius: 8px; }
+@media (hover: hover) and (pointer: fine) {
+  ::-webkit-scrollbar-thumb:hover { background: var(--bc-accent); }
+}

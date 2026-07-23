@@ -1,0 +1,171 @@
+#betterclaude-titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 38px;
+  z-index: 2147483600;
+  display: flex;
+  align-items: center;
+  background: var(--bc-bg-sidebar, #100c1c);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  -webkit-app-region: drag;
+}
+
+/* --- Traffic lights (left) --- */
+#betterclaude-titlebar .bc-tb-traffic {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding-left: 14px;
+  padding-right: 8px;
+  -webkit-app-region: drag;
+}
+
+#betterclaude-titlebar .bc-tb-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  position: relative;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.15);
+}
+#betterclaude-titlebar .bc-tb-dot-max { background: var(--bc-accent, #8b5cf6); }
+#betterclaude-titlebar .bc-tb-dot-min { background: color-mix(in srgb, var(--bc-accent, #8b5cf6) 65%, #3b82f6 35%); }
+#betterclaude-titlebar .bc-tb-dot-close { background: color-mix(in srgb, var(--bc-accent, #8b5cf6) 65%, black 35%); }
+
+/* Glyphs only show on hover, like real macOS traffic lights. */
+#betterclaude-titlebar .bc-tb-dot::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  line-height: 1;
+  color: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+}
+#betterclaude-titlebar .bc-tb-traffic:hover .bc-tb-dot-close::before { content: "\2715"; opacity: 1; }
+#betterclaude-titlebar .bc-tb-traffic:hover .bc-tb-dot-min::before { content: "\2212"; opacity: 1; }
+#betterclaude-titlebar .bc-tb-traffic:hover .bc-tb-dot-max::before { content: "\002B"; opacity: 1; }
+
+/* --- Center: logo + title --- */
+#betterclaude-titlebar .bc-tb-center {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  -webkit-app-region: drag;
+}
+
+
+#betterclaude-titlebar .bc-tb-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--bc-text-muted, #a99bd1);
+  letter-spacing: 0.01em;
+  -webkit-user-select: none;
+  user-select: none;
+  white-space: nowrap;
+}
+
+/* --- Right: BetterClaude actions (not window controls) --- */
+#betterclaude-titlebar .bc-tb-controls {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding-right: 10px;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+#betterclaude-titlebar .bc-tb-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 22%;
+  clip-path: var(--bc-squircle-clip);
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  color: var(--bc-text-muted, #a99bd1);
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#betterclaude-titlebar .bc-tb-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--bc-text, #ece7fb);
+}
+
+#betterclaude-titlebar .bc-tb-logo-btn {
+  background: transparent !important;
+}
+
+#betterclaude-titlebar .bc-tb-logo-btn:hover {
+  background: transparent !important;
+}
+
+#betterclaude-titlebar .bc-tb-logo {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  display: block;
+  pointer-events: none;
+}
+
+#betterclaude-titlebar .bc-tb-btn.bc-tb-active {
+  color: var(--bc-accent, #8b5cf6);
+}
+
+/* Push the page content down so it isn't covered by the title bar. An
+   explicit height is required for box-sizing: border-box to actually do
+   anything — without it, padding-top has no height to eat into and just
+   adds 38px on top of body's natural (viewport-sized) height, silently
+   pushing that much content below the visible window (e.g. the composer's
+   bottom margin + the "Claude can make mistakes" disclaimer beneath it,
+   which sat exactly in that clipped sliver on any conversation route). */
+html {
+  height: 100%;
+}
+body {
+  height: 100vh !important;
+  padding-top: 38px !important;
+  box-sizing: border-box;
+}
+/* Capping body's own box isn't sufficient on its own: claude.ai's app root
+   sizes itself with its own `height: 100vh` (a raw viewport unit, unaffected
+   by any ancestor's padding/height), so it still renders 100% of the window
+   tall starting after body's 38px padding — overflowing the actual visible
+   area by that same 38px regardless of what body does. #root/#__next are
+   the two ids claude.ai has shipped its app-root under; scoped as a direct
+   child of body (not `body #root *`) so this can't accidentally hit some
+   unrelated nested element sharing the id deeper in a portal/dialog tree. */
+body > #root,
+body > #__next {
+  height: calc(100vh - 38px) !important;
+  max-height: calc(100vh - 38px) !important;
+  /* Belt-and-suspenders: claude.ai nests further wrapper divs a few levels
+     down (verified live) that re-establish their own literal 100vh height
+     independent of any ancestor sizing, so capping #root's own box alone
+     still let a grandchild render past the visible window. overflow:hidden
+     makes #root a hard clip boundary regardless of how any current or
+     future descendant sizes itself — this doesn't affect claude.ai's own
+     internal scroll regions (they scroll themselves, not the page), and
+     position:fixed overlays (dropdowns/modals) aren't clipped by an
+     ancestor's overflow unless that ancestor also has a transform/filter,
+     which this rule doesn't add. */
+  overflow: hidden;
+}
