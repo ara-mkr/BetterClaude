@@ -480,6 +480,19 @@ class ThemeEngine {
     const text = getComputedStyle(document.documentElement).getPropertyValue("--bc-text").trim() || "#ece7fb";
     const link = deriveAccessibleColor(color, text, (hex) => contrastRatio(hex, bg) >= WCAG_AA_BODY);
     document.documentElement.style.setProperty("--bc-link", link);
+    // --btn-primary-fg has the SAME staleness problem, and it's the most
+    // visible one: it's the label color on every accent-backed button, baked
+    // at generation time against the theme's shipped accent. Left stale, a
+    // user picking a light custom accent keeps the old dark-accent's white
+    // label and gets white-on-light — the exact invisible-button bug this
+    // token was introduced to fix, reintroduced at runtime. contrast-color()
+    // would let CSS do this itself, but it only reached Chrome stable in 147,
+    // well past this project's Chrome 120 target, so it has to be recomputed
+    // here like the two above.
+    // --btn-destructive-fg deliberately gets NO recompute: it derives from
+    // --bc-danger, a fixed per-theme palette value the accent picker never
+    // touches, so its generation-time value is always still correct.
+    document.documentElement.style.setProperty("--btn-primary-fg", tokens.pickButtonFg(color).color);
   }
 
   setCustomCSS(code) {

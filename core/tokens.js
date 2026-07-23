@@ -412,6 +412,39 @@ function focusRingColor(accent, surface) {
   return contrastRatio(light, surface) >= contrastRatio(dark, surface) ? light : dark;
 }
 
+// Pick a button-label foreground guaranteed to be as high-contrast as
+// possible against `bg` (the button's ACTUAL painted background — the live
+// --bc-accent for primary, --bc-danger for destructive), rather than
+// hardcoding white (Defect: white-on-accent measured as low as 1.07:1 on
+// high-contrast's #ffff00 accent). Mirrors focusRingColor's "pick the better
+// of near-white/near-black" pattern rather than deriveAccessibleColor's
+// hue-preserving walk: button label text needs to stay crisp/high-contrast,
+// not "the same hue as before, just readable" — a mid-tone derived color
+// would be the wrong tool here.
+// Returns { color, ratio, passes }: `passes` is false when NEITHER
+// near-white nor near-black reaches WCAG_AA_BODY (4.5:1) against this
+// particular bg — in that case `color` is still the BEST of the two
+// available options (never a silently-shipped worse choice), and callers
+// (scripts/audit.js) must report `passes: false` loudly rather than treat it
+// as an ordinary pass.
+function pickButtonFg(bg) {
+  const light = "#ffffff";
+  const dark = "#111111";
+  const rLight = contrastRatio(light, bg);
+  const rDark = contrastRatio(dark, bg);
+  // NaN-safe: if bg is unparseable both ratios are NaN and every comparison
+  // is false, so this falls through to the dark default below with
+  // ratio=NaN — evaluateContrast's `unparseable` convention doesn't apply to
+  // a two-way pick like this, but a NaN ratio still fails `>= WCAG_AA_BODY`
+  // safely rather than reporting a fabricated pass.
+  const best = rLight >= rDark ? { color: light, ratio: rLight } : { color: dark, ratio: rDark };
+  return {
+    color: best.color,
+    ratio: Number.isNaN(best.ratio) ? null : Math.round(best.ratio * 100) / 100,
+    passes: best.ratio >= WCAG_AA_BODY,
+  };
+}
+
 /* ------------------------------------------------------------------ *
  * Hue-preserving accessible-color derivation (Defects 3 & 4). Used to
  * correct an authored color (muted text, link) that fails WCAG AA against
@@ -573,6 +606,22 @@ function buildScaffoldCSS(vars = {}, opts = {}) {
 
   const ring = focusRingColor(accent, bg);
 
+  // Button label foreground (P0 fix): computed against the button's ACTUAL
+  // painted background (--bc-accent / --bc-danger palette LOCALS, not v() —
+  // see the composer-token comment below for why v()-sourced derived tokens
+  // freeze on first regen). Chrome's contrast-color()/color-contrast() CSS
+  // functions were investigated for a pure-CSS live-recompute path (so this
+  // would track ThemeEngine.setAccentColor's runtime inline --bc-accent
+  // override with zero JS changes here) but are NOT reliably available at
+  // this project's stated Chrome 120+ target — contrast-color() only reached
+  // Chrome stable at version 147, well past 120 — so that path is unusable
+  // today. This bakes a generation-time computed value instead; see
+  // buildScaffoldCSS's --btn-primary-fg/--btn-destructive-fg comment and the
+  // audit-run report for the explicit runtime-override caveat that follows
+  // from that choice.
+  const btnPrimaryFg = pickButtonFg(accent);
+  const btnDestructiveFg = pickButtonFg(danger);
+
   // Resolve possibly-translucent surfaces (glassmorphism themes author
   // --bc-bg-elevated / --bc-bg-sidebar / --bc-composer-bg as rgba(), e.g.
   // rose-glass.css) to the OPAQUE color they actually render as, by
@@ -676,7 +725,22 @@ function buildScaffoldCSS(vars = {}, opts = {}) {
   --btn-primary-bg-hover: var(--bc-accent-hover, ${mix("var(--bc-accent)", 8)});
   --btn-primary-bg-active: ${mix("var(--bc-accent)", 14)};
   --btn-primary-bg-disabled: color-mix(in srgb, var(--bc-accent) 40%, var(--bc-bg));
-  --btn-primary-fg: #ffffff;
+  /* Contrast-safe button label (P0 fix): picked from near-white/near-black
+     against the theme's SHIPPED --bc-accent at generation time (pickButtonFg
+     above), replacing a hardcoded #ffffff that failed WCAG AA on 19/20
+     bundled themes (as low as 1.07:1 on high-contrast's #ffff00 accent).
+     KNOWN GAP: this is a baked value, not a live CSS expression — a user's
+     runtime accent override (ThemeEngine.setAccentColor writes --bc-accent as
+     an inline :root style in core/theme-engine.js, which this project does
+     not touch) will NOT cause this to recompute, and would re-create the
+     exact same stale-white-text bug at runtime. contrast-color()/
+     color-contrast() would let the browser recompute this against the LIVE
+     --bc-accent with no JS at all, but neither is reliably available at this
+     project's stated Chrome 120+ target (contrast-color() only reached
+     stable at Chrome 147). setAccentColor must be taught to recompute
+     --btn-primary-fg/--btn-destructive-fg itself, the same way it already
+     recomputes --bc-focus-ring/--bc-border-focus on every accent change. */
+  --btn-primary-fg: ${btnPrimaryFg.color};
 
   --btn-secondary-bg-default: transparent;
   --btn-secondary-bg-hover: color-mix(in srgb, var(--bc-text) 8%, transparent);
@@ -686,7 +750,9 @@ function buildScaffoldCSS(vars = {}, opts = {}) {
   --btn-destructive-bg-default: var(--bc-danger);
   --btn-destructive-bg-hover: ${mix("var(--bc-danger)", 8)};
   --btn-destructive-bg-active: ${mix("var(--bc-danger)", 14)};
-  --btn-destructive-fg: #ffffff;
+  /* See --btn-primary-fg above: same fix, same known runtime-override gap,
+     picked against --bc-danger instead of --bc-accent. */
+  --btn-destructive-fg: ${btnDestructiveFg.color};
 
   --nav-item-bg-default: transparent;
   --nav-item-bg-hover: color-mix(in srgb, var(--bc-text) 6%, transparent);
@@ -874,12 +940,24 @@ a { color: var(--bc-link) !important; }
 }`;
 }
 
-// Extract the --bc-* variables declared in a theme's :root block. Used by the
-// theme regenerator to rebuild the scaffold while preserving each theme's
-// palette.
+// Extract the --bc-* variables (plus --btn-primary-fg/--btn-destructive-fg
+// specifically) declared in a theme's :root block. The regenerator only ever
+// feeds --bc-* entries back into buildScaffoldCSS's `v()` reader
+// (buildScaffoldCSS never calls v("--btn-...", ...) for either derived
+// --btn-*-fg token — those are computed fresh each run from the
+// --bc-accent/--bc-danger palette locals via pickButtonFg, per the
+// v()-freezes-on-regen footgun documented above buildScaffoldCSS), so pulling
+// in those two specific --btn-*-fg names is purely additive: it lets callers
+// like scripts/audit.js read back the GENERATED button-foreground values for
+// verification without changing what regen-themes.js round-trips through
+// buildScaffoldCSS. Deliberately NOT a blanket `--btn-*` match: the other
+// --btn-*-bg-* tokens are authored as color-mix() expressions that
+// tokens.parseColor can't evaluate, and pulling those into scripts/audit.js's
+// "every declared color is parseable" check would false-fail on pre-existing,
+// unrelated tokens this fix doesn't touch.
 function extractThemeVars(cssText) {
   const out = {};
-  const re = /(--bc-[a-z-]+)\s*:\s*([^;]+);/gi;
+  const re = /(--bc-[a-z-]+|--btn-(?:primary|destructive)-fg)\s*:\s*([^;]+);/gi;
   let m;
   while ((m = re.exec(cssText || "")) !== null) {
     out[m[1]] = m[2].trim();
@@ -921,6 +999,7 @@ module.exports = {
   deriveStates,
   focusRingColor,
   deriveAccessibleColor,
+  pickButtonFg,
   SCAFFOLD_PAINTED_BUTTON_ATTRS,
   pickComposerFg,
   pickComposerPlaceholder,

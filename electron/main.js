@@ -15,6 +15,7 @@ app.setName("BetterClaude");
 const { mergeDefaults, DEFAULT_SETTINGS } = require("../core/settings-schema");
 const { buildThemeCSSFromVars } = require("../core/theme-engine");
 const { attachWindowState, getInitialBounds } = require("./window-state");
+const { TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y } = require("./window-chrome");
 const { autoUpdater } = require("electron-updater");
 const { pickLoadingTip } = require("../core/motion-fx");
 const { deriveChannelId, encryptText, decryptText } = require("../core/clipboard-bridge");
@@ -31,6 +32,23 @@ const store = new Store({
   defaults: DEFAULT_SETTINGS,
   migrations: {},
 });
+
+// Platform-specific window chrome. `frame: false` and `titleBarStyle` are
+// mutually exclusive in Electron — setting frame:false suppresses the
+// native traffic lights entirely, even with titleBarStyle also set — so
+// this can't be a small addition on top of a shared `frame: false`; the two
+// platforms need genuinely different option sets:
+//   - macOS: no `frame` override (stays true) + `titleBarStyle: "hiddenInset"`,
+//     which hides the title bar/toolbar but keeps the real system traffic
+//     lights, repositioned via `trafficLightPosition` to sit inside the
+//     custom bar at the coordinates ui/title-bar.js reserves space for
+//     (see electron/window-chrome.js — same constants, so they can't drift).
+//   - Windows/Linux: `frame: false` as before; ui/title-bar.js keeps
+//     rendering the hand-drawn dots there since there's no native chrome.
+const titleBarOptions =
+  process.platform === "darwin"
+    ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: TRAFFIC_LIGHT_X, y: TRAFFIC_LIGHT_Y } }
+    : { frame: false };
 
 let mainWindow = null;
 let tray = null;
@@ -383,7 +401,7 @@ function createWindow() {
     ...bounds,
     minWidth: 760,
     minHeight: 480,
-    frame: false,
+    ...titleBarOptions,
     title: "BetterClaude",
     icon: APP_ICON_PATH,
     backgroundColor: "#14101f",
@@ -945,7 +963,7 @@ function createSecondaryClaudeWindow(bounds) {
     ...bounds,
     minWidth: 760,
     minHeight: 480,
-    frame: false,
+    ...titleBarOptions,
     title: "BetterClaude",
     icon: APP_ICON_PATH,
     backgroundColor: "#14101f",

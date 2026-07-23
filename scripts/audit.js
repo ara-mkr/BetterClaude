@@ -240,6 +240,55 @@ function auditContrast() {
     record("§4.1", `${file}: composer placeholder >= 3:1 on composer bg`, placeholderRatio >= tokens.WCAG_AA_LARGE,
       `${Math.round(placeholderRatio * 100) / 100}:1`);
 
+    // P0 — button label foreground must clear WCAG AA against the button's
+    // ACTUAL painted background (--bc-accent for primary, --bc-danger for
+    // destructive), not just exist. Previously hardcoded #ffffff failed this
+    // on 19/20 bundled themes (as low as 1.07:1 on high-contrast).
+    const accent = vars["--bc-accent"] || bg;
+    const danger = vars["--bc-danger"] || bg;
+    const btnPrimaryFg = vars["--btn-primary-fg"] || "#ffffff";
+    const btnDestructiveFg = vars["--btn-destructive-fg"] || "#ffffff";
+    const btnPrimaryRatio = tokens.contrastRatio(btnPrimaryFg, accent);
+    const btnDestructiveRatio = tokens.contrastRatio(btnDestructiveFg, danger);
+
+    // pickButtonFg already picks the BETTER of near-white/near-black against
+    // this exact accent/danger — if even the best of those two can't reach
+    // 4.5:1, that's not a bug in the generated value (there IS no passing
+    // choice for this accent), so it must not be reported as an ordinary
+    // regression-style FAIL (which would make the audit permanently red for
+    // a theme with an inherently mid-luminance accent, defeating the whole
+    // check). Report it loudly as a distinct "best-available, short of AA"
+    // note instead — never silently accept it AND never conflate it with an
+    // actual defect (e.g. someone reverting to a hardcoded #ffffff, which
+    // DOES have a passing alternative available and must still hard-fail).
+    const bestPrimary = tokens.pickButtonFg(accent);
+    if (bestPrimary.passes) {
+      record("§4.1", `${file}: btn-primary-fg >= 4.5:1 on bc-accent`, btnPrimaryRatio >= tokens.WCAG_AA_BODY,
+        `${Math.round(btnPrimaryRatio * 100) / 100}:1`);
+    } else {
+      // Even in the "no passing choice exists" case, the GENERATED value
+      // must still equal the best available one (not silently regress to a
+      // worse pick, e.g. a hand-reverted #ffffff when black would have been
+      // closer) — verify that explicitly rather than trusting the note.
+      const matchesBest = btnPrimaryFg.toLowerCase() === bestPrimary.color.toLowerCase();
+      record("§4.1", `${file}: btn-primary-fg matches best-available pick`, matchesBest,
+        matchesBest ? "matches" : `generated ${btnPrimaryFg} != best pick ${bestPrimary.color}`);
+      note("§4.1", `${file}: btn-primary-fg is best-available (no white/black choice reaches 4.5:1 on this accent)`,
+        `generated ${Math.round(btnPrimaryRatio * 100) / 100}:1, best possible ${bestPrimary.ratio}:1 on accent ${accent}`);
+    }
+
+    const bestDestructive = tokens.pickButtonFg(danger);
+    if (bestDestructive.passes) {
+      record("§4.1", `${file}: btn-destructive-fg >= 4.5:1 on bc-danger`, btnDestructiveRatio >= tokens.WCAG_AA_BODY,
+        `${Math.round(btnDestructiveRatio * 100) / 100}:1`);
+    } else {
+      const matchesBestD = btnDestructiveFg.toLowerCase() === bestDestructive.color.toLowerCase();
+      record("§4.1", `${file}: btn-destructive-fg matches best-available pick`, matchesBestD,
+        matchesBestD ? "matches" : `generated ${btnDestructiveFg} != best pick ${bestDestructive.color}`);
+      note("§4.1", `${file}: btn-destructive-fg is best-available (no white/black choice reaches 4.5:1 on this danger color)`,
+        `generated ${Math.round(btnDestructiveRatio * 100) / 100}:1, best possible ${bestDestructive.ratio}:1 on danger ${danger}`);
+    }
+
     // Defect 4 — `a { color: var(--bc-link) }` must clear body-text AA
     // against the page background it actually renders on.
     const link = vars["--bc-link"] || vars["--bc-accent"] || text;

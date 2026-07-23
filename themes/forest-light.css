@@ -29,6 +29,21 @@
   --btn-primary-bg-hover: var(--bc-accent-hover, color-mix(in srgb, var(--bc-accent) 92%, black));
   --btn-primary-bg-active: color-mix(in srgb, var(--bc-accent) 86%, black);
   --btn-primary-bg-disabled: color-mix(in srgb, var(--bc-accent) 40%, var(--bc-bg));
+  /* Contrast-safe button label (P0 fix): picked from near-white/near-black
+     against the theme's SHIPPED --bc-accent at generation time (pickButtonFg
+     above), replacing a hardcoded #ffffff that failed WCAG AA on 19/20
+     bundled themes (as low as 1.07:1 on high-contrast's #ffff00 accent).
+     KNOWN GAP: this is a baked value, not a live CSS expression — a user's
+     runtime accent override (ThemeEngine.setAccentColor writes --bc-accent as
+     an inline :root style in core/theme-engine.js, which this project does
+     not touch) will NOT cause this to recompute, and would re-create the
+     exact same stale-white-text bug at runtime. contrast-color()/
+     color-contrast() would let the browser recompute this against the LIVE
+     --bc-accent with no JS at all, but neither is reliably available at this
+     project's stated Chrome 120+ target (contrast-color() only reached
+     stable at Chrome 147). setAccentColor must be taught to recompute
+     --btn-primary-fg/--btn-destructive-fg itself, the same way it already
+     recomputes --bc-focus-ring/--bc-border-focus on every accent change. */
   --btn-primary-fg: #ffffff;
 
   --btn-secondary-bg-default: transparent;
@@ -39,7 +54,9 @@
   --btn-destructive-bg-default: var(--bc-danger);
   --btn-destructive-bg-hover: color-mix(in srgb, var(--bc-danger) 92%, black);
   --btn-destructive-bg-active: color-mix(in srgb, var(--bc-danger) 86%, black);
-  --btn-destructive-fg: #ffffff;
+  /* See --btn-primary-fg above: same fix, same known runtime-override gap,
+     picked against --bc-danger instead of --bc-accent. */
+  --btn-destructive-fg: #111111;
 
   --nav-item-bg-default: transparent;
   --nav-item-bg-hover: color-mix(in srgb, var(--bc-text) 6%, transparent);

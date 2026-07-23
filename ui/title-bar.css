@@ -13,6 +13,8 @@
 }
 
 /* --- Traffic lights (left) --- */
+/* Windows/Linux only (frame: false, no native chrome) — hand-drawn dots
+   wired to window:minimize/maximize-toggle/close over IPC. */
 #betterclaude-titlebar .bc-tb-traffic {
   display: flex;
   align-items: center;
@@ -20,6 +22,18 @@
   height: 100%;
   padding-left: 14px;
   padding-right: 8px;
+  -webkit-app-region: drag;
+}
+
+/* macOS only (titleBarStyle: "hiddenInset") — an empty drag region sized to
+   match `trafficLightPosition` (see electron/window-chrome.js, the single
+   source both this variable and main.js's BrowserWindow option come from)
+   so nothing in the bar renders underneath the real system traffic lights,
+   which macOS draws on top of the page itself. */
+#betterclaude-titlebar .bc-tb-traffic-spacer {
+  flex: 0 0 auto;
+  width: var(--bc-tb-traffic-reserved, 66px);
+  height: 100%;
   -webkit-app-region: drag;
 }
 
