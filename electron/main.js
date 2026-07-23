@@ -459,6 +459,11 @@ function createWindow() {
 
 function buildTray() {
   const icon = nativeImage.createFromPath(TRAY_ICON_PATH);
+  // Template image: macOS renders it as a monochrome silhouette (alpha-only shape,
+  // color discarded) and auto-inverts it for light/dark menu bars and the
+  // highlighted/clicked state. Requires the PNG to be monochrome-with-alpha,
+  // which assets/tray-icon.png and tray-icon@2x.png are.
+  if (!icon.isEmpty()) icon.setTemplateImage(true);
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.setToolTip("BetterClaude");
 

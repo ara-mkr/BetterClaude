@@ -421,23 +421,102 @@ function focusRingColor(accent, surface) {
 // hue-preserving walk: button label text needs to stay crisp/high-contrast,
 // not "the same hue as before, just readable" — a mid-tone derived color
 // would be the wrong tool here.
-// Returns { color, ratio, passes }: `passes` is false when NEITHER
-// near-white nor near-black reaches WCAG_AA_BODY (4.5:1) against this
-// particular bg — in that case `color` is still the BEST of the two
-// available options (never a silently-shipped worse choice), and callers
-// (scripts/audit.js) must report `passes: false` loudly rather than treat it
-// as an ordinary pass.
+//
+// WIDENED CANDIDATE SET (fix for the "false best-available" bug): the
+// original version only ever tried literal `#ffffff`/`#111111` — a *near*-
+// black, not pure black. That silently capped every dark-side candidate's
+// max possible ratio below what pure `#000000` can reach. Concretely, on
+// BetterClaude's own DEFAULT accent `#8b5cf6`: `#111111` measures ~4.46:1
+// (fails WCAG AA 4.5:1) while `#000000` measures ~4.96:1 (passes) — so the
+// old picker reported midnight-violet as a genuine "no passing choice
+// exists" case when a passing choice existed all along, just outside the
+// two literal hexes it tried.
+//
+// Fix: walk a small ramp from each pole's *soft* near-tone toward its *pure*
+// extreme (near-black -> pure black, near-white -> pure white) and take the
+// FIRST ramp step that clears WCAG_AA_BODY (4.5:1) — i.e. the softest
+// passing tone, not the highest-contrast one. This preserves the existing
+// visual softness on every theme where the near-tone already passed (no
+// regression possible: the near-tone is still step 0 of its ramp and is
+// still tried first) and only hardens toward a pure extreme on themes where
+// the soft tone genuinely isn't enough. bestOnRamp's fallback (when NO ramp
+// step passes) picks the ramp's highest-ratio step, mirroring the old
+// function's "best of the two available options" guarantee.
+const PICK_BUTTON_FG_NEAR_DARK = "#111111";
+const PICK_BUTTON_FG_PURE_DARK = "#000000";
+const PICK_BUTTON_FG_NEAR_LIGHT = "#ffffff";
+const PICK_BUTTON_FG_PURE_LIGHT = "#ffffff"; // near-white IS pure white already; ramp is a 1-element no-op, kept for symmetry with the dark side.
+
+// Build an ordered [nearHex, ..., pureHex] ramp (softest first) by linearly
+// interpolating RGB channels — safe here specifically because both poles are
+// neutral grays (hue-preserving HSL walk, as used by deriveAccessibleColor
+// above, is unnecessary and irrelevant for a pure gray).
+function buildFgRamp(nearHex, pureHex, steps = 4) {
+  const near = parseHex(nearHex);
+  const pure = parseHex(pureHex);
+  const out = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    out.push(toHex({
+      r: near.r + (pure.r - near.r) * t,
+      g: near.g + (pure.g - near.g) * t,
+      b: near.b + (pure.b - near.b) * t,
+    }));
+  }
+  return out;
+}
+
+// Computed once at module load — the ramps themselves don't depend on `bg`.
+const PICK_BUTTON_FG_DARK_RAMP = buildFgRamp(PICK_BUTTON_FG_NEAR_DARK, PICK_BUTTON_FG_PURE_DARK);
+const PICK_BUTTON_FG_LIGHT_RAMP = buildFgRamp(PICK_BUTTON_FG_NEAR_LIGHT, PICK_BUTTON_FG_PURE_LIGHT);
+
+// Walk `ramp` (softest -> most extreme) against `bg`, returning the first
+// step that clears WCAG_AA_BODY. If none do, returns the step with the
+// highest ratio (never assumes the most-extreme step is necessarily highest
+// — safer than indexing the last element outright). NaN-safe: an
+// unparseable `bg` makes every contrastRatio() call return NaN, every
+// `>= WCAG_AA_BODY` comparison false, and every `r > best.ratio` comparison
+// false, so this falls through to returning the ramp's FIRST step with
+// ratio=NaN rather than fabricating a pass.
+function bestOnRamp(ramp, bg) {
+  for (const c of ramp) {
+    const r = contrastRatio(c, bg);
+    if (r >= WCAG_AA_BODY) return { color: c, ratio: r };
+  }
+  let best = null;
+  for (const c of ramp) {
+    const r = contrastRatio(c, bg);
+    if (!best || r > best.ratio) best = { color: c, ratio: r };
+  }
+  return best;
+}
+
+// Returns { color, ratio, passes }: `passes` is false when NEITHER ramp
+// (light-pole nor dark-pole, each searched from soft near-tone to pure
+// extreme) reaches WCAG_AA_BODY (4.5:1) against this particular bg — in that
+// case `color` is still the BEST of the two available options (never a
+// silently-shipped worse choice), and callers (scripts/audit.js) must report
+// `passes: false` loudly rather than treat it as an ordinary pass.
 function pickButtonFg(bg) {
-  const light = "#ffffff";
-  const dark = "#111111";
-  const rLight = contrastRatio(light, bg);
-  const rDark = contrastRatio(dark, bg);
-  // NaN-safe: if bg is unparseable both ratios are NaN and every comparison
-  // is false, so this falls through to the dark default below with
-  // ratio=NaN — evaluateContrast's `unparseable` convention doesn't apply to
-  // a two-way pick like this, but a NaN ratio still fails `>= WCAG_AA_BODY`
-  // safely rather than reporting a fabricated pass.
-  const best = rLight >= rDark ? { color: light, ratio: rLight } : { color: dark, ratio: rDark };
+  const darkBest = bestOnRamp(PICK_BUTTON_FG_DARK_RAMP, bg);
+  const lightBest = bestOnRamp(PICK_BUTTON_FG_LIGHT_RAMP, bg);
+  const darkPasses = darkBest.ratio >= WCAG_AA_BODY;
+  const lightPasses = lightBest.ratio >= WCAG_AA_BODY;
+
+  let best;
+  if (darkPasses && lightPasses) {
+    // Both poles found a passing tone: prefer the higher-contrast of the two
+    // (matches the original two-candidate function's tie-break).
+    best = darkBest.ratio >= lightBest.ratio ? darkBest : lightBest;
+  } else if (darkPasses) {
+    best = darkBest;
+  } else if (lightPasses) {
+    best = lightBest;
+  } else {
+    // Neither pole reaches AA: best-available fallback, higher ratio wins.
+    best = darkBest.ratio >= lightBest.ratio ? darkBest : lightBest;
+  }
+
   return {
     color: best.color,
     ratio: Number.isNaN(best.ratio) ? null : Math.round(best.ratio * 100) / 100,
@@ -836,12 +915,83 @@ nav:has([data-testid="pin-sidebar-toggle"]) [aria-selected="true"] {
    near-black text forced onto a still-dark native card (or vice versa) was
    landing at ~1.2:1 contrast — invisible. --bc-composer-* tokens are
    generated to guarantee contrast against EACH OTHER, not against the page
-   bg (see pickComposerFg/pickComposerPlaceholder above). */
-div:has(> [data-testid="chat-input"]) {
+   bg (see pickComposerFg/pickComposerPlaceholder above).
+
+   SINGLE-POINT-OF-FAILURE FIX: the ONLY verified hook is the testid on the
+   inner text row — "the paintable card is its direct parent <div>" was never
+   checked against the live site. If the real card is a grandparent, isn't a
+   <div>, or an extra wrapper sits in between, the old direct-child-only rule
+   matches nothing and the whole composer fix silently no-ops while every
+   automated check still reports green. Two independent layers of defense
+   replace that single guess:
+
+   1. A small, BOUNDED set of ancestor selectors, not just the direct parent.
+      Each one is restricted three ways so it can't runaway to a full-pane
+      wrapper (the "cut-off rectangle"'s inverse failure mode — painting a
+      container far bigger than the real card):
+        - Tag-restricted to div/form only: claude.ai's own body/html elements
+          can never match a div:has(...)/form:has(...) selector by
+          construction, no :not() needed for those.
+        - Depth-bounded via chained '>' child combinators (1, 2, then 3 hops
+          up from the testid node) instead of a bare unrestricted :has()
+          descendant search — CSS has no "nth ancestor" combinator, so
+          stacking '> * > *' chains is the closest equivalent to "search only
+          the next few levels", which keeps the match close to the real
+          composer instead of walking arbitrarily far up the tree to the
+          nearest div that happens to contain it (which could be the entire
+          chat pane).
+        - :not(:has(nav)) on every rule: a legitimate composer card never
+          also contains the entire sidebar nav element — any ancestor that
+          does is structurally the app shell, not the card, so it's excluded
+          outright regardless of depth.
+      Rules are listed most-specific (direct parent) first; since a single
+      real ancestor node can only ever satisfy exactly one depth (it's either
+      1, 2, or 3 hops from the testid node, never more than one), "most
+      specific wins" here just means the closest true ancestor is the one
+      that actually matches — the deeper rules exist purely to reach a real
+      card that turns out to sit further up. Multiple rules CAN match
+      different ancestor nodes at once (e.g. both the true parent and a
+      wrapper two levels up) — that's harmless by construction because every
+      rule paints only background/border-color (never border-width, radius,
+      or an explicit box size, same restriction as the original single
+      rule), so stacked same-color fills on nested divs produce one seamless
+      region, not a second mismatched box.
+   2. A same-color safety net directly on the verified
+      [data-testid="chat-input"] node itself: --bc-composer-bg is now
+      painted there too, not just --bc-composer-fg. Reasoning, stated
+      explicitly: CSS can't express "only apply this if the card selector
+      above matched nothing" — so the choice is between always painting it
+      (safe: unreadable text, a P0, can never happen even if every ancestor
+      selector above misses) or never painting it (unsafe: one wrong DOM
+      assumption away from silently shipping invisible text again, the exact
+      bug this whole fix exists to prevent). The fail-safe choice is to
+      always paint it. This does NOT reintroduce the old "cut-off rectangle"
+      bug: that bug came from also setting a mismatched
+      border/border-radius/width on the narrow inner node, drawing a
+      visibly separate box short of the real card's edge. Here only a flat
+      background (no border, no radius, no width) is set, using the SAME
+      --bc-composer-bg token as the ancestor rules — when an ancestor rule
+      also matches, the two same-color fills merge seamlessly (no visible
+      seam, nothing narrower drawn on top); when every ancestor rule misses,
+      this is the only thing standing between the user and unreadable text,
+      so it degrades to "background is native-card-sized instead of
+      full-card-sized" (a P2 cosmetic mismatch) rather than "text is
+      invisible" (a P0). */
+div:has(> [data-testid="chat-input"]):not(:has(nav)),
+div:has(> * > [data-testid="chat-input"]):not(:has(nav)),
+div:has(> * > * > [data-testid="chat-input"]):not(:has(nav)),
+form:has(> [data-testid="chat-input"]):not(:has(nav)),
+form:has(> * > [data-testid="chat-input"]):not(:has(nav)),
+form:has(> * > * > [data-testid="chat-input"]):not(:has(nav)) {
   background: var(--bc-composer-bg) !important;
   border-color: var(--bc-composer-border) !important;
 }
 [data-testid="chat-input"] {
+  /* Safety net (see comment above): same --bc-composer-bg as the card rules
+     above, flat fill only — no border/radius/width — so it merges seamlessly
+     when an ancestor rule also matched, and still guarantees readable text
+     when none of them did. */
+  background: var(--bc-composer-bg) !important;
   color: var(--bc-composer-fg) !important;
 }
 /* ProseMirror renders its placeholder either as a [data-placeholder]
