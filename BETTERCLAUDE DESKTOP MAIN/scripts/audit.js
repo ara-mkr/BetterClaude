@@ -483,8 +483,8 @@ function auditCustomAppearanceState() {
   "preset reset handler clears override layers");
   record("custom appearance", "theme cards use the reset-safe selection path", /host\.selectTheme\(id\)/.test(panel),
     "theme card delegates to selectTheme");
-  const extensionContent = stripJsComments(fs.readFileSync(path.join(ROOT, "BetterClaudeExtension", "content", "content-script.js"), "utf8"));
-  const extensionWorker = stripJsComments(fs.readFileSync(path.join(ROOT, "BetterClaudeExtension", "background", "service-worker.js"), "utf8"));
+  const extensionContent = stripJsComments(fs.readFileSync(path.join(ROOT, "..", "BetterClaudeExtension", "content", "content-script.js"), "utf8"));
+  const extensionWorker = stripJsComments(fs.readFileSync(path.join(ROOT, "..", "BetterClaudeExtension", "background", "service-worker.js"), "utf8"));
   record("custom appearance", "extension uses the same atomic Custom/preset paths", /appearance:set-cosmetic/.test(extensionContent)
     && /appearance:select-theme/.test(extensionContent) && /appearance:set-cosmetic/.test(extensionWorker)
     && /appearance:select-theme/.test(extensionWorker) && /enqueueAppearance/.test(extensionWorker)
