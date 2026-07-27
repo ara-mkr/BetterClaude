@@ -160,8 +160,23 @@ function getUserPluginsDir() {
   return dir;
 }
 
+// Built-in plugins withdrawn after they had already been seeded into
+// userData. Deleting the shipped source alone doesn't retire them: the
+// seeded copy stays on disk, readAllPluginSources() still finds it, and
+// `plugins.enabled[id] !== false` treats an id absent from the defaults as
+// enabled — so a withdrawn plugin would come back ON. Delete the seeded
+// copy by exact filename instead.
+const RETIRED_BUILTIN_PLUGINS = [
+  "conversation-export.claudeplugin.js",
+  "conversation-search.claudeplugin.js",
+];
+
 function seedBuiltinPlugins() {
   const userDir = getUserPluginsDir();
+  for (const file of RETIRED_BUILTIN_PLUGINS) {
+    const stale = path.join(userDir, file);
+    if (fs.existsSync(stale)) fs.rmSync(stale);
+  }
   const builtins = fs.readdirSync(BUILTIN_PLUGINS_DIR).filter((f) => f.endsWith(".claudeplugin.js"));
   for (const file of builtins) {
     const dest = path.join(userDir, file);
