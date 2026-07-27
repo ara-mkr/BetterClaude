@@ -384,6 +384,7 @@
 
     function applyScheduledTheme() {
       if (settings.general && settings.general.enabled === false) return;
+      if (settings.appearance && settings.appearance.activeTheme === "custom") return;
       const schedule = settings.appearance && settings.appearance.schedule;
       if (schedule && schedule.mode === "season") {
         const bundle = bundleForSeason(new Date().getMonth());
@@ -396,12 +397,13 @@
 
     async function applyScheduledWeatherTheme() {
       const wt = settings.appearance && settings.appearance.weatherTheme;
+      if (settings.appearance && settings.appearance.activeTheme === "custom") return false;
       if (!wt || !wt.enabled || wt.lat == null || wt.lon == null) return false;
       try {
         const { code, isDay } = await bg("weather:get", { lat: wt.lat, lon: wt.lon });
         const bundle = mapWeatherCodeToBundle(code, isDay);
         if (!bundle) return false;
-        applyBundle(bundle, { setSetting, applyBundlePreview });
+        await applyBundle(bundle, { setSetting, selectTheme });
         return true;
       } catch (err) { console.error("[BetterClaude] weather theme fetch failed", err); return false; }
     }
@@ -433,8 +435,14 @@
         pluginLoader.list().forEach((p) => pluginLoader.unload(p.id));
         return;
       }
-      sources.forEach(({ id, module }) => {
-        const shouldBeEnabled = settings.plugins.enabled[id] !== false;
+    sources.forEach(({ id, module }) => {
+      // Match the desktop surface: Focus Mode is intentionally unavailable
+      // until it has a complete product experience.
+      if (id === "focus-mode") {
+        if (pluginLoader.list().some((p) => p.id === id)) pluginLoader.unload(id);
+        return;
+      }
+      const shouldBeEnabled = settings.plugins.enabled[id] !== false;
         const isLoaded = pluginLoader.list().some((p) => p.id === id);
         if (shouldBeEnabled && !isLoaded) {
           try { pluginLoader.load(id, module); } catch (err) { console.error(`[BetterClaude] failed to load plugin "${id}"`, err); }
@@ -445,7 +453,13 @@
     }
 
     function setSetting(keyPath, value) {
-      return bg("settings:set", { keyPath, value }).then((updated) => { settings = updated; return updated; });
+      const cosmetic = /^(appearance\.(accentColor|colorBlindSafe|contrastBoost|glassPanels)|appearanceEditor\.|background\.|customCSS\.|fonts\.|layout\.|cursor\.|motion\.)/.test(keyPath);
+      return bg(cosmetic ? "appearance:set-cosmetic" : "settings:set", cosmetic ? { keyPath, value } : { keyPath, value })
+        .then((updated) => { settings = updated; return updated; });
+    }
+
+    function selectTheme(themeId) {
+      return bg("appearance:select-theme", { themeId }).then((updated) => { settings = updated; return updated; });
     }
 
     const settingsChangedHandlers = [];
@@ -456,7 +470,20 @@
     companion.mount(settings);
 
     let lastUsage = null;
+    function syncContextualChrome() {
+      const hasComposer = !!document.querySelector('[data-testid="chat-input"]');
+      const hasUsage = !!(lastUsage && lastUsage.turnCount > 0);
+      document.body.classList.toggle("bc-signed-out", !hasComposer);
+      hud.setVisible(!!(settings.hud && settings.hud.enabled && hasComposer && hasUsage));
+      companion.update({ ...settings, personality: { ...settings.personality, companionEnabled: !!(settings.personality && settings.personality.companionEnabled && hasComposer) } });
+      if (!hasComposer && interactionFX) { interactionFX.unmount(); interactionFX = null; }
+      else if (hasComposer && !interactionFX && (!settings.general || settings.general.enabled !== false)) {
+        interactionFX = new InteractionFX({ onRadialAction: (id) => runRadialAction(id) });
+        interactionFX.mount(settings);
+      }
+    }
     applyThemeState();
+    syncContextualChrome();
     applyScheduledTheme();
     applyScheduledWeatherTheme();
     setInterval(applyScheduledTheme, 60 * 1000);
@@ -615,6 +642,7 @@
     function refreshUsage() {
       lastUsage = tokenCounter.computeUsage(document);
       hud.update(lastUsage);
+      syncContextualChrome();
       detectAndDispatchNewMessages(collectConversationText(document));
       if (settings.branching && settings.branching.enabled && settings.branching.showForkButtons) branchForkButtons.sync();
       if (settings.diffApplier && settings.diffApplier.enabled && settings.fileWatcher && settings.fileWatcher.enabled) codeDiffButtons.sync();
@@ -807,6 +835,7 @@
         loadCssEditor().then((mod) => { editorHandle = mod.mountCssEditor(container, opts); });
         return { setValue: (v) => editorHandle && editorHandle.setValue(v), destroy: () => editorHandle && editorHandle.destroy() };
       },
+      selectTheme,
       applyThemePreview: (themeId) => themeEngine.setTheme(themeId),
       applyCustomCSSPreview: (css) => { ensureStyleTag("betterclaude-custom-css").textContent = css; },
       applyAccentPreview: (hex) => themeEngine.setAccentColor(hex),

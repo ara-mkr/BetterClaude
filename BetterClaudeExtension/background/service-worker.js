@@ -87,6 +87,46 @@ async function broadcastSettings() {
   return updated;
 }
 
+// MV3 can dispatch multiple messages while an earlier chrome.storage write is
+// awaiting completion. Serialize appearance transitions so a slider update
+// can never overwrite a preset reset (or a neighboring slider update).
+let appearanceTransaction = Promise.resolve();
+function enqueueAppearance(work) {
+  const next = appearanceTransaction.then(work, work);
+  appearanceTransaction = next.catch(() => {});
+  return next;
+}
+
+function isCosmeticPath(keyPath) {
+  return /^(appearance\.(accentColor|colorBlindSafe|contrastBoost|glassPanels)|appearanceEditor\.|background\.|customCSS\.|fonts\.|layout\.|cursor\.|motion\.)/.test(keyPath);
+}
+
+async function beginCustomAppearance(current) {
+  if (current.appearance.activeTheme === "custom") return current;
+  const themes = await getAllThemes();
+  const base = current.appearance.activeTheme;
+  if (!themes[base]) return current;
+  current.appearance.customThemeBase = base;
+  current.appearance.customThemeCSS = themes[base];
+  current.appearance.activeTheme = "custom";
+  return current;
+}
+
+async function selectTheme(themeId) {
+  const themes = await getAllThemes();
+  if (!themes[themeId]) throw new Error("Unknown theme");
+  const current = await getStoredSettings();
+  const defaults = mergeDefaults({});
+  const next = {
+    ...current,
+    appearance: { ...current.appearance, activeTheme: themeId, customThemeBase: null, customThemeCSS: "", accentColor: defaults.appearance.accentColor, colorBlindSafe: defaults.appearance.colorBlindSafe, contrastBoost: defaults.appearance.contrastBoost, glassPanels: defaults.appearance.glassPanels, schedule: defaults.appearance.schedule, weatherTheme: defaults.appearance.weatherTheme },
+    appearanceEditor: defaults.appearanceEditor, background: defaults.background, customCSS: defaults.customCSS,
+    fonts: defaults.fonts, layout: defaults.layout, cursor: defaults.cursor, motion: defaults.motion,
+  };
+  await setStoredSettings(next);
+  return broadcastSettings();
+}
+
 // --- Themes: bundled presets (dist/themes/*.css, fetched as extension
 // resources) layered with user-saved themes (chrome.storage.local, since
 // there is no themes folder to write .css files into). ---
@@ -380,6 +420,21 @@ const handlers = {
     await broadcastSettings();
     return updated;
   },
+  "appearance:set-cosmetic": async ({ keyPath, value }) => {
+    return enqueueAppearance(async () => {
+      const current = await beginCustomAppearance(await getStoredSettings());
+      const parts = keyPath.split(".");
+      let node = current;
+      for (let i = 0; i < parts.length - 1; i += 1) {
+        if (typeof node[parts[i]] !== "object" || node[parts[i]] === null) node[parts[i]] = {};
+        node = node[parts[i]];
+      }
+      node[parts[parts.length - 1]] = value;
+      await setStoredSettings(mergeDefaults(current));
+      return broadcastSettings();
+    });
+  },
+  "appearance:select-theme": ({ themeId }) => enqueueAppearance(() => selectTheme(themeId)),
   "themes:get-all": () => getAllThemes(),
   "themes:save-user": ({ name, cssText }) => saveUserTheme({ name, cssText }),
   "themes:delete-user": ({ id }) => deleteUserTheme(id),

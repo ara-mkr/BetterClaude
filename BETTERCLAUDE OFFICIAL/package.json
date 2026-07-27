@@ -1,0 +1,38 @@
+{
+  "name": "betterclaude-tui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A themeable terminal UI that wraps your existing Claude Code CLI. Not affiliated with or endorsed by Anthropic.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "betterclaude": "dist/index.js",
+    "bcx": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/postinstall.mjs",
+    "build": "tsc",
+    "dev": "tsx src/index.tsx",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@xterm/headless": "^5.5.0",
+    "commander": "^12.1.0",
+    "ink": "^5.1.0",
+    "node-pty": "^1.0.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/react": "^18.3.12",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}
