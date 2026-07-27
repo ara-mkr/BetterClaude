@@ -123,7 +123,7 @@ module.exports = {
     wrap.appendChild(el("h2", { text: "Smart Notification Digest", class: "bc-ae-subhead" }));
     wrap.appendChild(el("p", {
       class: "bc-hint",
-      text: "Off by default. Batches routine background completions (macro replays, Team Sync, clipboard syncs, "
+      text: "Off by default. Batches routine background completions (Team Sync, clipboard syncs, skill installs, "
         + "...) into one periodic native OS notification instead of interrupting one at a time. Failures always "
         + "notify immediately regardless of this setting — the digest only ever delays routine \"it worked\" updates.",
     }));

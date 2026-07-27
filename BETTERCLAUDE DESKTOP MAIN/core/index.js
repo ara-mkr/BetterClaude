@@ -13,8 +13,6 @@ const {
   resolveScheduledTheme,
   ensureStyleTag,
 } = require("./theme-engine");
-const { TokenCounter, estimateTokens, getContextWindow, detectModel, collectConversationText } = require("./token-counter");
-const { HUD } = require("./hud");
 const { PluginLoader } = require("./plugin-loader");
 const { DEFAULT_SETTINGS, mergeDefaults } = require("./settings-schema");
 const tokens = require("./tokens");
@@ -32,15 +30,9 @@ const { findComposer, insertIntoComposer, waitForComposer } = require("./compose
 const { SkillMarketplaceOverlay } = require("./skill-marketplace");
 const { extractVariables, fillTemplate } = require("./prompt-vars");
 const { PromptPicker } = require("./prompt-picker");
-const { mountBranchForkButtons } = require("./branch-fork-buttons");
 const { DiffViewer } = require("./diff-viewer");
-const { ContextBudgetPlanner } = require("./context-budget");
-const { SemanticSearchOverlay } = require("./semantic-search");
-const { pickRule, ModelRouter } = require("./model-router");
 const { buildFileBlock, findAndReplaceInComposer, insertFileBlock } = require("./file-sync-indicator");
-const { MacroRecorder, replayMacro, waitForResponseSettled } = require("./macro-recorder");
 const { deriveChannelId, deriveKey, encryptText, decryptText } = require("./clipboard-bridge");
-const { extractCodeBlocks, matchCandidates, mountCodeDiffButtons, DiffApplierOverlay } = require("./diff-applier");
 const { renderLineChart, renderBarChart } = require("./analytics-charts");
 const { AnalyticsDashboard, presetRange } = require("./analytics-dashboard");
 
@@ -54,12 +46,6 @@ module.exports = {
   tokens,
   applyBackground,
   buildBackgroundCSS,
-  TokenCounter,
-  estimateTokens,
-  getContextWindow,
-  detectModel,
-  collectConversationText,
-  HUD,
   PluginLoader,
   DEFAULT_SETTINGS,
   mergeDefaults,
@@ -76,7 +62,7 @@ module.exports = {
   vibeBundles,
   weather,
   notifications,
-  // Productivity modules: Skill Marketplace, Prompt Library, Branching.
+  // Productivity modules: Skill Marketplace, Prompt Library.
   findComposer,
   insertIntoComposer,
   waitForComposer,
@@ -84,26 +70,14 @@ module.exports = {
   extractVariables,
   fillTemplate,
   PromptPicker,
-  mountBranchForkButtons,
   DiffViewer,
-  ContextBudgetPlanner,
-  SemanticSearchOverlay,
-  pickRule,
-  ModelRouter,
   buildFileBlock,
   findAndReplaceInComposer,
   insertFileBlock,
-  MacroRecorder,
-  replayMacro,
-  waitForResponseSettled,
   deriveChannelId,
   deriveKey,
   encryptText,
   decryptText,
-  extractCodeBlocks,
-  matchCandidates,
-  mountCodeDiffButtons,
-  DiffApplierOverlay,
   renderLineChart,
   renderBarChart,
   AnalyticsDashboard,

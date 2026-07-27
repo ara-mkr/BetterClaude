@@ -14,9 +14,6 @@
 const { ipcRenderer } = require("electron");
 
 const { ThemeEngine, resolveScheduledTheme, ensureStyleTag, restoreClaudeColorMode } = require("../core/theme-engine");
-const { TokenCounter, collectConversationText, estimateTokens } = require("../core/token-counter");
-const { fetchAccountUsage } = require("../core/account-usage");
-const { HUD } = require("../core/hud");
 const { PluginLoader } = require("../core/plugin-loader");
 const { buildExtrasCSS, applyColorBlindSafeVars } = require("../core/extras-css");
 const { InteractionFX } = require("../core/interaction-fx");
@@ -26,20 +23,13 @@ const { Companion, checkAchievements, incrementStreak, buildGreeting, ACHIEVEMEN
 const { CommandPalette, mountKonamiListener } = require("../core/command-palette");
 const { SkillMarketplaceOverlay } = require("../core/skill-marketplace");
 const { PromptPicker } = require("../core/prompt-picker");
-const { mountBranchForkButtons } = require("../core/branch-fork-buttons");
 const { DiffViewer } = require("../core/diff-viewer");
-const { ContextBudgetPlanner } = require("../core/context-budget");
-const { SemanticSearchOverlay } = require("../core/semantic-search");
-const { ModelRouter } = require("../core/model-router");
 const { findAndReplaceInComposer, insertFileBlock } = require("../core/file-sync-indicator");
-const { MacroRecorder, replayMacro } = require("../core/macro-recorder");
-const { mountCodeDiffButtons, DiffApplierOverlay } = require("../core/diff-applier");
 const { AnalyticsDashboard } = require("../core/analytics-dashboard");
-const { extractVariables, fillTemplate } = require("../core/prompt-vars");
 const { VIBE_BUNDLES, pickRandomBundle, bundleForMood, bundleForSeason, applyBundle } = require("../core/vibe-bundles");
 const { mapWeatherCodeToBundle } = require("../core/weather");
 const { shouldSuppress, notificationStyleClass } = require("../core/notifications");
-const { insertIntoComposer, waitForComposer, buildTranscriptText, findComposer, findSendButton, getComposerText } = require("../core/compose-insert");
+const { insertIntoComposer } = require("../core/compose-insert");
 
 const { mountTitleBar } = require("../ui/title-bar");
 const { SettingsPanel, SECTIONS } = require("../ui/settings-panel/panel");
@@ -80,7 +70,6 @@ async function bootstrap() {
   // Static chrome stylesheets (not part of the theme system's swappable tags).
   injectStaticCSS("betterclaude-squircle-css", path.join(__dirname, "../ui/squircle.css"));
   injectStaticCSS("betterclaude-titlebar-css", path.join(__dirname, "../ui/title-bar.css"));
-  injectStaticCSS("betterclaude-hud-css", path.join(__dirname, "../ui/hud/hud.css"));
   injectStaticCSS("betterclaude-panel-css", path.join(__dirname, "../ui/settings-panel/panel.css"));
   injectStaticCSS("betterclaude-overlays-css", path.join(__dirname, "../ui/overlays.css"));
   injectStaticCSS("betterclaude-skill-marketplace-css", path.join(__dirname, "../ui/skill-marketplace.css"));
@@ -88,49 +77,6 @@ async function bootstrap() {
   let settings = await ipcRenderer.invoke("settings:get");
   const themes = await ipcRenderer.invoke("themes:get-all");
   let osThemeIsDark = (await ipcRenderer.invoke("system:get-os-theme")).isDark;
-
-  // A forked branch window lands here on https://claude.ai/new#bc-fork=<id>
-  // (see electron/main.js's createBranchWindow). Consumed exactly once and
-  // the hash is stripped immediately so it doesn't linger in the URL bar.
-  // Never auto-submits — insertIntoComposer only fills the textarea.
-  async function handlePendingForkHash() {
-    const m = /bc-fork=([^&]+)/.exec(location.hash);
-    if (!m) return;
-    history.replaceState(null, "", location.pathname + location.search);
-    const text = await ipcRenderer.invoke("branching:consume-pending-fork", m[1]);
-    if (!text) return;
-    const composer = await waitForComposer();
-    if (!composer) return;
-    insertIntoComposer(text, { append: false });
-  }
-  handlePendingForkHash().catch((err) => console.error("[BetterClaude] fork hash handling failed", err));
-
-  // Best-effort "jump to result" for Semantic Search: setting location.href
-  // (below, in jumpToResult) is a full page reload even for a same-origin
-  // SPA route, so a plain JS variable can't survive it — sessionStorage
-  // does, and is cleared immediately so it only ever fires once.
-  function scrollToSnippet(snippet) {
-    const needle = (snippet || "").replace(/…$/, "").slice(0, 60).trim();
-    if (!needle) return;
-    const turns = collectConversationText(document);
-    const match = turns.find((t) => t.text.includes(needle));
-    if (match && match.node && match.node.scrollIntoView) {
-      match.node.scrollIntoView({ behavior: "smooth", block: "center" });
-      match.node.classList && match.node.classList.add("bc-search-highlight");
-      setTimeout(() => match.node.classList && match.node.classList.remove("bc-search-highlight"), 2000);
-    }
-  }
-  try {
-    const pendingSnippet = sessionStorage.getItem("bc-scroll-to-snippet");
-    if (pendingSnippet) {
-      sessionStorage.removeItem("bc-scroll-to-snippet");
-      // Give claude.ai's own render a moment to paint the conversation
-      // before searching the DOM for the match.
-      setTimeout(() => scrollToSnippet(pendingSnippet), 1200);
-    }
-  } catch (_e) {
-    // sessionStorage can throw under some privacy settings — non-fatal.
-  }
 
   // --- Theme engine ---
   const themeEngine = new ThemeEngine({ presets: themes });
@@ -163,185 +109,12 @@ async function bootstrap() {
     getPrompts: () => settings.promptLibrary.prompts || [],
     insertIntoComposer: (text) => insertIntoComposer(text),
     notify: (message) => notify(message, { category: "plugin" }),
-    // Macro Recorder's capture hook — see the "Macro Recorder" section below.
-    onInsert: (meta) => { pendingMacroStepSource = meta; },
   });
 
-  // --- Conversation Branching ---
+  // --- Compare Responses (manual paste) ---
   const diffViewer = new DiffViewer();
 
-  // --- Context Budget Planner ---
-  // Shared, time-windowed bypass for every composer-send interceptor
-  // (Context Budget Planner, Model Router — see both files' headers for
-  // why a private per-instance flag breaks once more than one interceptor
-  // sits on the same composer/send-button: a resend from one re-fires every
-  // sibling's own listener too, so bypass state needs to be shared and
-  // survive that whole chain, not be consumed by whichever runs first).
-  let sendBypassUntil = 0;
-  const isSendBypassed = () => Date.now() < sendBypassUntil;
-  const setSendBypass = (ms = 800) => { sendBypassUntil = Date.now() + ms; };
-
-  const contextBudgetPlanner = new ContextBudgetPlanner({
-    getUsage: () => (lastUsage ? { usedTokens: lastUsage.usedTokens, contextWindow: lastUsage.contextWindow } : { usedTokens: 0, contextWindow: tokenCounter.contextWindow }),
-    getThreshold: () => (settings.contextBudget ? settings.contextBudget.warnThresholdPercent : 75),
-    isEnabled: () => !!(settings.contextBudget && settings.contextBudget.enabled),
-    isBypassed: isSendBypassed,
-    setBypass: setSendBypass,
-  });
-
-  // --- Multi-Model Routing ---
-  const modelRouter = new ModelRouter({
-    getRules: () => (settings.modelRouting ? settings.modelRouting.rules : []),
-    getDefaultModel: () => (settings.modelRouting ? settings.modelRouting.defaultModel : ""),
-    isEnabled: () => !!(settings.modelRouting && settings.modelRouting.enabled),
-    notify: (message) => notify(message, { category: "plugin" }),
-    isBypassed: isSendBypassed,
-    setBypass: setSendBypass,
-  });
-
-  // --- Macro Recorder ---
-  // Set by core/prompt-picker.js's onInsert hook right before a send, so the
-  // capture step below can tell "this send's text came from a Prompt
-  // Library entry" (record a re-resolvable {type:"prompt"} step) apart from
-  // arbitrary typed text ({type:"text"}).
-  let pendingMacroStepSource = null;
-  let replayStopRequested = false;
-
-  function finishRecording() {
-    const macro = macroRecorder.stopRecording();
-    if (macro.steps.length === 0) {
-      notify("Recording stopped — no steps captured.", { category: "plugin" });
-      return;
-    }
-    const record = {
-      id: `mc${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-      name: macro.name,
-      shortcut: null,
-      steps: macro.steps,
-      createdAt: Date.now(),
-    };
-    const next = [...(settings.macros.list || []), record];
-    settings.macros.list = next;
-    setSetting("macros.list", next);
-    notify(`Saved macro "${record.name}" (${record.steps.length} step${record.steps.length === 1 ? "" : "s"}).`, { category: "plugin" });
-  }
-
-  const macroRecorder = new MacroRecorder({
-    onStopRecording: () => finishRecording(),
-    onStopReplay: () => { replayStopRequested = true; },
-  });
-
-  // Re-resolves a {type:"prompt"} step at replay time (not at record time)
-  // so {{clipboard}} picks up whatever's on the clipboard *during replay* —
-  // {{selection}} can't be meaningfully re-captured unattended (no user
-  // gesture is selecting text mid-replay), so it falls back to whatever was
-  // captured when the step was originally recorded, if anything.
-  async function resolvePromptStep(step) {
-    const prompt = (settings.promptLibrary.prompts || []).find((p) => p.id === step.promptId);
-    if (!prompt) return ""; // deleted since recording — replay as empty rather than crash
-    const vars = extractVariables(prompt.body);
-    const values = { ...step.values };
-    if (vars.includes("clipboard") && navigator.clipboard && navigator.clipboard.readText) {
-      try { values.clipboard = await navigator.clipboard.readText(); } catch (_e) { /* keep recorded value */ }
-    }
-    return fillTemplate(prompt.body, values);
-  }
-
-  async function doReplayMacro(macro) {
-    if (!macro || !macro.steps || macro.steps.length === 0) {
-      notify("This macro has no steps.");
-      return;
-    }
-    if (macroRecorder.isReplaying()) {
-      notify("A macro is already replaying — stop it first.");
-      return;
-    }
-    replayStopRequested = false;
-    macroRecorder.startReplay(macro.steps.length);
-    const result = await replayMacro(macro, {
-      insertText: (text) => insertIntoComposer(text, { append: false }),
-      clickSend: () => { const btn = findSendButton(document); if (btn) btn.click(); },
-      getTurns: () => collectConversationText(document),
-      resolvePromptStep,
-      onStep: (i) => macroRecorder.setReplayIndex(i + 1),
-      shouldStop: () => replayStopRequested,
-    });
-    macroRecorder.stopReplay();
-    if (result.stopped) {
-      notify(
-        result.timedOut
-          ? `Macro stopped — timed out waiting for a response (step ${result.completedSteps}).`
-          : `Macro stopped after ${result.completedSteps} step(s).`,
-        { category: "plugin", urgent: result.timedOut }
-      );
-    } else {
-      notify(`Macro "${macro.name}" finished (${result.completedSteps} steps).`, { category: "plugin" });
-    }
-  }
-
-  // Observes (never blocks) the same send action Context Budget/Model
-  // Router intercept — records a step when recording is active, then always
-  // lets the send through untouched. Self-healing re-attach happens in
-  // refreshUsage() below, same pattern as the other composer-attached
-  // features.
-  let macroCaptureComposer = null;
-  function attachMacroCaptureIfNeeded() {
-    const composer = findComposer(document);
-    if (!composer || composer === macroCaptureComposer) return;
-    macroCaptureComposer = composer;
-    const capture = () => {
-      if (!macroRecorder.isRecording()) return;
-      const text = getComposerText(composer);
-      if (!text.trim()) return;
-      if (pendingMacroStepSource && pendingMacroStepSource.filledText === text) {
-        macroRecorder.recordStep({ type: "prompt", promptId: pendingMacroStepSource.promptId, values: pendingMacroStepSource.values });
-      } else {
-        macroRecorder.recordStep({ type: "text", text });
-      }
-      pendingMacroStepSource = null;
-    };
-    const safeCapture = () => { try { capture(); } catch (err) { console.error("[BetterClaude] Macro capture error", err); } };
-    composer.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) safeCapture(); }, true);
-    const sendBtn = findSendButton(document);
-    if (sendBtn) sendBtn.addEventListener("click", () => safeCapture(), true);
-  }
-
-  // --- Local Semantic Search ---
-  function jumpToResult(item) {
-    if (location.href === item.conversationUrl) {
-      scrollToSnippet(item.snippet);
-      return;
-    }
-    try { sessionStorage.setItem("bc-scroll-to-snippet", item.snippet); } catch (_e) { /* non-fatal */ }
-    location.href = item.conversationUrl;
-  }
-
-  const semanticSearch = new SemanticSearchOverlay({
-    query: (params) => ipcRenderer.invoke("search:query", params),
-    jumpToResult,
-  });
-
-  // Buffered, not per-turn: flushed on a timer / page unload rather than
-  // firing an IPC call for every finalized message.
-  let searchIndexBuffer = [];
-  function bufferForIndexing(turn, idx) {
-    if (!settings.semanticSearch || !settings.semanticSearch.enabled) return;
-    searchIndexBuffer.push({ idx, role: turn.role, text: turn.text });
-  }
-  function flushSearchIndex() {
-    if (searchIndexBuffer.length === 0) return;
-    if (!settings.semanticSearch || !settings.semanticSearch.enabled) {
-      searchIndexBuffer = [];
-      return;
-    }
-    const turns = searchIndexBuffer;
-    searchIndexBuffer = [];
-    ipcRenderer.invoke("search:index-turns", { conversationUrl: location.href, title: document.title, turns })
-      .catch((err) => console.error("[BetterClaude] search indexing failed", err));
-  }
-  setInterval(flushSearchIndex, 15000);
-  window.addEventListener("beforeunload", flushSearchIndex);
-  // Declared (not initialized) here, assigned further down once notify/hud
+  // Declared (not initialized) here, assigned further down once notify
   // are ready — effectiveSoundSettings below can run before that assignment
   // (it's invoked from applyThemeState's very first call), so it needs a
   // `let` it can safely check rather than a `const` it would TDZ-fault on.
@@ -378,10 +151,7 @@ async function bootstrap() {
     if (interactionFX) interactionFX.applySettings(settings);
 
     if (settings.motion && settings.motion.parallax && !stopParallax) {
-      stopParallax = mountParallax(() => [
-        document.getElementById("bc-companion"),
-        document.getElementById("betterclaude-hud"),
-      ]);
+      stopParallax = mountParallax(() => [document.getElementById("bc-companion")]);
     } else if ((!settings.motion || !settings.motion.parallax) && stopParallax) {
       stopParallax();
       stopParallax = null;
@@ -441,7 +211,7 @@ async function bootstrap() {
     bcProps.forEach((prop) => style.removeProperty(prop));
   }
 
-  // Master kill-switch: everything downstream (theme CSS, HUD, plugins)
+  // Master kill-switch: everything downstream (theme CSS, plugins)
   // only actually gets applied when general.enabled isn't false. This lets
   // Settings -> Appearance fully revert to stock claude.ai without an
   // uninstall, and flip back on just by re-checking the box. The title bar
@@ -453,7 +223,6 @@ async function bootstrap() {
         const tag = document.getElementById(id);
         if (tag) tag.textContent = "";
       });
-      hud.setVisible(false);
       companion.update({ personality: { companionEnabled: false } });
       if (interactionFX) {
         interactionFX.unmount();
@@ -472,8 +241,6 @@ async function bootstrap() {
       clearInlineAccentVariables();
     } else {
       themeEngine.applySettings(settings);
-      hud.applyVisualSettings(settings.hud);
-      hud.applyPosition(settings.hud);
       if (!interactionFX) {
         interactionFX = new InteractionFX({ onRadialAction: (id) => runRadialAction(id) });
         interactionFX.mount(settings);
@@ -592,28 +359,13 @@ async function bootstrap() {
 
   const settingsChangedHandlers = [];
 
-  // --- Token counter + HUD ---
-  const tokenCounter = new TokenCounter({ modelName: "claude" });
-  const hud = new HUD({
-    onPositionChange: (pos) => setSetting("hud.x", pos.x) && setSetting("hud.y", pos.y),
-    onDismiss: () => setSetting("hud.enabled", false),
-  });
-  hud.mount(settings);
-  // applyPosition() re-clamps against the current viewport, but nothing
-  // calls it when the window itself is resized after a drag — without this,
-  // shrinking the window can leave a previously-valid saved position
-  // pushing the HUD (and its account-usage rows) off the bottom/right edge.
-  window.addEventListener("resize", () => hud.applyPosition(settings.hud));
   companion.mount(settings);
 
-  let lastUsage = null;
-  // Never show auxiliary chrome on Claude's public sign-in/marketing route,
-  // and do not surface an empty "0 tokens" meter before a real turn exists.
+  // Never show auxiliary chrome on Claude's public sign-in/marketing route.
+  // Presence of the composer is the signal — no conversation content is read.
   function syncContextualChrome() {
     const hasComposer = !!document.querySelector('[data-testid="chat-input"]');
-    const hasUsage = !!(lastUsage && lastUsage.turnCount > 0);
     document.body.classList.toggle("bc-signed-out", !hasComposer);
-    hud.setVisible(!!(settings.hud && settings.hud.enabled && hasComposer && hasUsage));
     companion.update({
       ...settings,
       personality: { ...settings.personality, companionEnabled: !!(settings.personality && settings.personality.companionEnabled && hasComposer) },
@@ -717,159 +469,28 @@ async function bootstrap() {
   // --- Plugin loader ---
   pluginLoader = new PluginLoader({
     themeEngine,
-    hud,
     getSettings: () => settings,
     setSetting,
-    host: {
-      getLastUsage: () => lastUsage,
-      notify,
-    },
+    host: { notify },
   });
-
-  // --- New-message detection ---
-  // Turns are dispatched to plugins once their text stops changing between
-  // two consecutive ticks, so assistant messages are reported only after
-  // streaming finishes (not once per token). If several turns appear between
-  // ticks (e.g. a user message immediately followed by a settled assistant
-  // one), everything except the newest turn is already final and dispatched
-  // right away.
-  let dispatchedTurnCount = 0;
-  let pendingTurnText = null;
 
   // --- Usage Analytics Dashboard: local event logging ---
   // Off by default (settings.analytics.enabled) — nothing is logged, let
-  // alone sent anywhere, until the user opts in. "message" events feed
-  // tokens/day, messages/day, busiest-projects, and estimated cost; "plugin"
-  // events are one tick per currently-enabled plugin per dispatched
-  // message, the honest proxy this app has for "most-used skills/plugins"
-  // without instrumenting each plugin's internals individually.
-  function costForTokens(role, tokens) {
-    const rates = (settings.analytics && settings.analytics.costPerMillionTokens) || { input: 0, output: 0 };
-    const rate = role === "user" ? rates.input : rates.output;
-    return (tokens / 1000000) * (rate || 0);
-  }
-
-  function logMessageAnalytics(turn) {
-    if (!settings.analytics || !settings.analytics.enabled) return;
-    const tokens = estimateTokens(turn.text);
-    ipcRenderer.invoke("analytics:log-event", {
-      ts: Date.now(),
-      day: new Date().toISOString().slice(0, 10),
-      type: "message",
-      role: turn.role,
-      tokens,
-      model: tokenCounter.modelName,
-      project: document.title || location.href,
-      costUsd: costForTokens(turn.role, tokens),
-    }).catch(() => {});
-  }
-
+  // alone sent anywhere, until the user opts in. One tick per currently-
+  // enabled plugin per interval, the honest proxy this app has for
+  // "most-used plugins" without instrumenting each plugin's internals.
   function logPluginAnalyticsTick() {
     if (!settings.analytics || !settings.analytics.enabled) return;
     const pluginIds = pluginLoader.list().map((p) => p.id);
     if (pluginIds.length === 0) return;
     ipcRenderer.invoke("analytics:log-plugin-tick", { ts: Date.now(), day: new Date().toISOString().slice(0, 10), pluginIds }).catch(() => {});
   }
-
-  function detectAndDispatchNewMessages(turns) {
-    if (turns.length === 0) {
-      dispatchedTurnCount = 0;
-      pendingTurnText = null;
-      return;
-    }
-
-    const lastIndex = turns.length - 1;
-
-    // Any turn strictly before the current last one is necessarily final —
-    // a newer turn already exists after it — so flush those immediately.
-    while (dispatchedTurnCount < lastIndex) {
-      const turn = turns[dispatchedTurnCount];
-      pluginLoader.dispatchMessage({ role: turn.role, text: turn.text, node: turn.node });
-      logMessageAnalytics(turn);
-      logPluginAnalyticsTick();
-      bufferForIndexing(turn, dispatchedTurnCount);
-      dispatchedTurnCount += 1;
-    }
-
-    if (dispatchedTurnCount > lastIndex) return; // already dispatched the last turn too
-
-    const lastTurn = turns[lastIndex];
-    if (pendingTurnText === lastTurn.text) {
-      pluginLoader.dispatchMessage({ role: lastTurn.role, text: lastTurn.text, node: lastTurn.node });
-      logMessageAnalytics(lastTurn);
-      logPluginAnalyticsTick();
-      bufferForIndexing(lastTurn, lastIndex);
-      dispatchedTurnCount = turns.length;
-      pendingTurnText = null;
-      // The real session/weekly rate-limit only changes server-side once a
-      // message round-trip finishes (see refreshAccountUsage below) — a turn
-      // becoming "dispatched" here means its text just stopped changing
-      // between polls, i.e. streaming finished. Refetching right now instead
-      // of waiting up to 60s for the next interval tick is what actually
-      // closes the staleness gap users notice ("says 63, account page says
-      // 62"), since neither number is wrong, just briefly out of date.
-      refreshAccountUsage();
-    } else {
-      pendingTurnText = lastTurn.text;
-    }
-  }
+  setInterval(logPluginAnalyticsTick, 5 * 60 * 1000);
 
   // --- Conversation Branching: fork buttons ---
   // Shared by an in-conversation "Fork here" and by Auto-Session Snapshots'
   // "Restore" (which forks from a saved transcript instead of a live turn
   // range) — same framing either way so the new window's model has context.
-  function wrapForkPreamble(transcriptText) {
-    return [
-      "[Continuing from a forked conversation — the messages below are context from the original chat. "
-        + "Reply to the last one as if this conversation had continued from there.]",
-      "",
-      transcriptText,
-      "",
-      "[End of forked context]",
-    ].join("\n");
-  }
-
-  async function forkFromTurn(turns, idx) {
-    const upto = turns.slice(0, idx + 1);
-    const preamble = wrapForkPreamble(buildTranscriptText(upto));
-    await ipcRenderer.invoke("branching:open-fork", {
-      preambleText: preamble,
-      label: `Fork @ turn ${idx + 1} — ${document.title || "Untitled"}`,
-      forkedFromUrl: location.href,
-      forkedAtTurnIndex: idx,
-    });
-    notify("Opened a forked window — review and send when ready.", { category: "plugin" });
-  }
-
-  async function copyForCompare(text) {
-    try {
-      await navigator.clipboard.writeText(text);
-      notify("Copied — paste it into the Diff Viewer (Cmd+K → Compare Responses).", { category: "plugin" });
-    } catch (_e) {
-      notify("Couldn't copy to clipboard.");
-    }
-  }
-
-  const branchForkButtons = mountBranchForkButtons({
-    getTurns: () => collectConversationText(document),
-    onFork: (turns, idx) => forkFromTurn(turns, idx),
-    onCopyForCompare: (text) => copyForCompare(text),
-  });
-
-  // --- Inline Diff Applier for Code Blocks ---
-  // Entirely gated on File Watcher already having watched files — see
-  // core/diff-applier.js's matchCandidates() for the confidence levels.
-  const diffApplier = new DiffApplierOverlay({
-    readFile: (filePath) => ipcRenderer.invoke("fileWatcher:read", filePath),
-    writeFile: (filePath, content) => ipcRenderer.invoke("fileWatcher:write", filePath, content),
-    notify: (message) => notify(message, { category: "plugin" }),
-  });
-  const codeDiffButtons = mountCodeDiffButtons({
-    getTurns: () => collectConversationText(document),
-    getWatchedFiles: () => settings.fileWatcher.watched || [],
-    onOpen: (payload) => diffApplier.open(payload),
-  });
-
   // --- Usage Analytics Dashboard ---
   const analyticsDashboard = new AnalyticsDashboard({
     queryAnalytics: (range) => ipcRenderer.invoke("analytics:query", range),
@@ -879,123 +500,15 @@ async function bootstrap() {
     notify: (message) => notify(message, { category: "plugin" }),
   });
 
-  // --- Auto-Session Snapshots + Restore Points ---
-  // "Restore" forks a new window from the snapshot's transcript (reuses the
-  // same branching:open-fork IPC above) rather than rewinding the live
-  // claude.ai conversation, which isn't possible without its private API.
-  function snapshotId() {
-    return `sn${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  }
-
-  // Dedup, not diffing: skips silently if nothing changed since this
-  // conversation's most recent snapshot. Caps at 20 snapshots per
-  // conversation (oldest pruned) so one long-lived chat can't grow
-  // unbounded — the practical "avoid bloating storage" mechanism in place
-  // of true binary diffing.
-  function takeSnapshot(label) {
-    const turns = collectConversationText(document);
-    if (turns.length === 0) return null;
-    const transcript = buildTranscriptText(turns);
-    const list = settings.snapshots.list || [];
-    const sameConversation = list.filter((s) => s.conversationUrl === location.href);
-    const mostRecent = sameConversation[sameConversation.length - 1];
-    if (mostRecent && mostRecent.transcript === transcript) return null;
-
-    const record = {
-      id: snapshotId(),
-      label: label || `Snapshot @ ${new Date().toLocaleString()}`,
-      createdAt: Date.now(),
-      conversationUrl: location.href,
-      conversationTitle: document.title || "Untitled",
-      turnCount: turns.length,
-      transcript,
-    };
-    const others = list.filter((s) => s.conversationUrl !== location.href);
-    const keptForThisConvo = [...sameConversation, record].slice(-20);
-    const next = [...others, ...keptForThisConvo];
-    settings.snapshots.list = next;
-    setSetting("snapshots.list", next);
-    return record;
-  }
-
-  let lastAutoSnapshotAt = Date.now();
-  function maybeAutoSnapshot() {
-    if (!settings.snapshots || !settings.snapshots.enabled) return;
-    const intervalMs = Math.max(5, settings.snapshots.intervalMinutes || 30) * 60 * 1000;
-    if (Date.now() - lastAutoSnapshotAt < intervalMs) return;
-    lastAutoSnapshotAt = Date.now();
-    takeSnapshot();
-  }
-  setInterval(maybeAutoSnapshot, 60 * 1000);
-
-  function syncForkButtonsVisibility() {
-    const show = !!(settings.branching && settings.branching.enabled && settings.branching.showForkButtons);
-    branchForkButtons.setVisible(show);
-  }
-
-  function syncCodeDiffButtonsVisibility() {
-    const show = !!(settings.diffApplier && settings.diffApplier.enabled && settings.fileWatcher && settings.fileWatcher.enabled);
-    codeDiffButtons.setVisible(show);
-  }
-
-  function refreshUsage() {
-    lastUsage = tokenCounter.computeUsage(document);
-    hud.update(lastUsage);
-    syncContextualChrome();
-    detectAndDispatchNewMessages(collectConversationText(document));
-    if (settings.branching && settings.branching.enabled && settings.branching.showForkButtons) {
-      branchForkButtons.sync();
-    }
-    if (settings.diffApplier && settings.diffApplier.enabled && settings.fileWatcher && settings.fileWatcher.enabled) {
-      codeDiffButtons.sync();
-    }
-    // Self-healing: claude.ai can swap out the composer element (route
-    // change, React remount) out from under our listeners — cheap re-attach
-    // check on the same tick that already polls the DOM for usage.
-    if (!contextBudgetPlanner.composer || !document.contains(contextBudgetPlanner.composer)) {
-      contextBudgetPlanner.attach(document);
-    }
-    if (!modelRouter.composer || !document.contains(modelRouter.composer)) {
-      modelRouter.attach(document);
-    }
-    if (!macroCaptureComposer || !document.contains(macroCaptureComposer)) {
-      attachMacroCaptureIfNeeded();
-    }
-  }
-
-  // FRAGILE: see core/token-counter.js — Claude.ai has no public usage API,
-  // so we watch the conversation container for mutations (covers both new
-  // messages and in-place streaming edits to the last assistant message)
-  // plus a short polling fallback in case mutations are batched/coalesced.
-  //
-  // Scoped to claude.ai's own app root (#root / #__next), NOT document.body:
-  // every BetterClaude surface (HUD, companion, settings panel, dock, title
-  // bar) mounts as a sibling of that root, and refreshUsage() itself mutates
-  // the HUD's text on every call (see hud.update()) — observing body would
-  // pick up that mutation too, re-triggering refreshUsage() in an unbounded
-  // self-feeding loop that pins the renderer's CPU for as long as the page
-  // stays open, HUD visible or not.
-  const chatObserver = new MutationObserver(() => refreshUsage());
+  // Route changes (sign-in screen <-> workspace) swap claude.ai's app root
+  // out from under us, so the companion/cursor-FX chrome has to re-evaluate.
+  // Scoped to claude.ai's own root rather than document.body: every
+  // BetterClaude surface mounts as a sibling of that root, and
+  // syncContextualChrome() mutates some of them — observing body would
+  // re-trigger this handler in an unbounded self-feeding loop.
+  const chromeObserver = new MutationObserver(() => syncContextualChrome());
   const claudeRoot = document.getElementById("root") || document.getElementById("__next") || document.body;
-  chatObserver.observe(claudeRoot, { childList: true, subtree: true, characterData: true });
-  setInterval(refreshUsage, 1000);
-  refreshUsage();
-
-  // Real plan-level usage (session/weekly rate-limit %), straight from
-  // Anthropic's own backend — see core/account-usage.js for why this is
-  // accurate rather than estimated. Polled, not mutation-driven: it only
-  // changes server-side after a message round-trip, not on every keystroke,
-  // so there's nothing to gain from watching the DOM for it.
-  function refreshAccountUsage() {
-    fetchAccountUsage()
-      .then((usage) => hud.updateAccountUsage(usage))
-      .catch(() => {
-        // Transient failure or a plan/account that doesn't expose this —
-        // leave the last known good values on screen rather than blanking them.
-      });
-  }
-  setInterval(refreshAccountUsage, 60 * 1000);
-  refreshAccountUsage();
+  chromeObserver.observe(claudeRoot, { childList: true, subtree: true });
 
   // Zen Mode directly drives the existing Focus Mode plugin's own
   // setActive() (reusing its real DOM-detachment logic instead of
@@ -1090,8 +603,6 @@ async function bootstrap() {
     applyScheduledTheme();
     applyPluginState();
     syncZenModeWithFocusPlugin();
-    syncForkButtonsVisibility();
-    syncCodeDiffButtonsVisibility();
     syncDigestTimer();
     refreshAchievements();
     const conflictCount = (updated.teamSync && updated.teamSync.conflicts.length) || 0;
@@ -1104,8 +615,6 @@ async function bootstrap() {
 
   await applyPluginState();
   syncZenModeWithFocusPlugin();
-  syncForkButtonsVisibility();
-  syncCodeDiffButtonsVisibility();
   syncDigestTimer();
 
   // --- Streak + greeting (once per bootstrap) ---
@@ -1137,12 +646,9 @@ async function bootstrap() {
 
   // "For Everything": one flat, freshly-built list covering every indexable
   // surface — app actions, settings pages, plugins, prompt library entries,
-  // macros, and skills (installed + marketplace cache). Rebuilt fresh every
-  // time the palette opens (below) rather than kept reactively in sync, so
-  // a prompt/macro/plugin added a second ago is always there without extra
-  // wiring. Past chats are handled separately (see commandPalette's
-  // setAsyncSource call below) since that's an async lookup, not a
-  // synchronous list to filter.
+  // and skills (installed + marketplace cache). Rebuilt fresh every time the
+  // palette opens (below) rather than kept reactively in sync, so a prompt or
+  // plugin added a second ago is always there without extra wiring.
   async function indexedCommands() {
     const actions = [
       { id: "open-settings", label: "Open Settings", group: "Action", run: () => settingsPanel.open() },
@@ -1153,20 +659,12 @@ async function bootstrap() {
       { id: "open-skill-marketplace", label: "Open Skill Marketplace", group: "Skills", run: () => skillMarketplace.open() },
       { id: "insert-prompt", label: "Insert Prompt…", group: "Prompts", run: () => promptPicker.open() },
       { id: "compare-responses", label: "Compare Responses (Diff)", group: "Action", run: () => diffViewer.open() },
-      { id: "snapshot-now", label: "Snapshot This Conversation", group: "Action", run: () => panelHost.snapshotNow() },
-      { id: "search-all-chats", label: "Search All Chats", group: "Chats", run: () => semanticSearch.open() },
       { id: "open-usage-analytics", label: "Open Usage Analytics", group: "Analytics", run: () => analyticsDashboard.open() },
       {
         id: "sync-team-now",
         label: "Sync Team Plugins Now",
         group: "Action",
         run: () => ipcRenderer.invoke("teamSync:sync").catch((err) => notify(`Team Sync failed: ${err.message}`)),
-      },
-      {
-        id: "toggle-macro-recording",
-        label: macroRecorder.isRecording() ? "Stop Macro Recording" : "Start Macro Recording",
-        group: "Macros",
-        run: () => (macroRecorder.isRecording() ? finishRecording() : macroRecorder.startRecording()),
       },
       ...(settings.commandPalette.customCommands || []).map((c) => ({ id: c.id, label: c.label, group: "Action", settingPath: c.settingPath, value: c.value })),
     ];
@@ -1184,13 +682,6 @@ async function bootstrap() {
       label: `Insert Prompt: ${p.title}`,
       group: "Prompts",
       run: () => promptPicker.open(p.id),
-    }));
-
-    const macros = (settings.macros.list || []).map((m) => ({
-      id: `macro-${m.id}`,
-      label: `Replay Macro: ${m.name}`,
-      group: "Macros",
-      run: () => doReplayMacro(m),
     }));
 
     const installedSkills = Object.entries(settings.skillMarketplace.installed || {}).map(([id, record]) => ({
@@ -1223,23 +714,8 @@ async function bootstrap() {
       // Non-fatal — the palette just shows everything else without plugins this time.
     }
 
-    return [...actions, ...settingsPages, ...prompts, ...macros, ...installedSkills, ...cachedSkills, ...plugins];
+    return [...actions, ...settingsPages, ...prompts, ...installedSkills, ...cachedSkills, ...plugins];
   }
-
-  // Past chats, via Local Semantic Search's own index (#4) — only wired
-  // once that feature is actually enabled, and only once the user has
-  // typed something (an empty-query "browse all chats" isn't what this is
-  // for; "Search All Chats" above opens the full overlay for that).
-  commandPalette.setAsyncSource(async (query) => {
-    if (!settings.semanticSearch || !settings.semanticSearch.enabled) return [];
-    const results = await ipcRenderer.invoke("search:query", { query, limit: 5 });
-    return (results || []).map((r) => ({
-      id: `chat-${r.conversationUrl}-${r.snippet.slice(0, 24)}`,
-      label: `${r.title || "Untitled"} — ${r.snippet}`,
-      group: "Chats",
-      run: () => jumpToResult(r),
-    }));
-  });
 
   document.addEventListener("keydown", async (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -1267,10 +743,6 @@ async function bootstrap() {
   });
 
   ipcRenderer.on("betterclaude:trigger-prompt", (_e, promptId) => promptPicker.open(promptId));
-  ipcRenderer.on("betterclaude:trigger-macro", (_e, macroId) => {
-    const macro = (settings.macros.list || []).find((m) => m.id === macroId);
-    if (macro) doReplayMacro(macro);
-  });
 
   // --- Native File Watcher Sync ---
   // "Auto-reattach" only ever find-and-replaces the labeled block this app
@@ -1296,19 +768,6 @@ async function bootstrap() {
       synced ? `${record.label} auto-synced from disk.` : `${record.label} changed on disk — re-insert it from Settings → File Watcher.`,
       { category: "plugin" }
     );
-  });
-
-  document.addEventListener("keydown", (e) => {
-    const accel = settings.keyboardShortcuts.openChatSearch || "";
-    if (!accel) return;
-    const wantsMeta = /commandorcontrol|cmdorctrl/i.test(accel);
-    const wantsShift = /shift/i.test(accel);
-    const keyMatch = /\+([a-z0-9])$/i.exec(accel);
-    if (!keyMatch) return;
-    if ((wantsMeta ? (e.metaKey || e.ctrlKey) : true) && (wantsShift ? e.shiftKey : true) && e.key.toLowerCase() === keyMatch[1].toLowerCase()) {
-      e.preventDefault();
-      semanticSearch.toggle();
-    }
   });
 
   stopKonami = mountKonamiListener(async () => {
@@ -1517,45 +976,6 @@ async function bootstrap() {
     exportPromptLibrary: () => ipcRenderer.invoke("promptLibrary:export"),
     importPromptLibrary: () => ipcRenderer.invoke("promptLibrary:import"),
 
-    // --- Branching bridge ---
-    openBranch: (id) => ipcRenderer.invoke("branching:open-branch", id),
-    deleteBranch: (id) => ipcRenderer.invoke("branching:delete-branch", id),
-
-    // --- Snapshots bridge ---
-    snapshotNow: (label) => {
-      const record = takeSnapshot(label);
-      notify(record ? "Snapshot saved." : "Nothing's changed since the last snapshot of this conversation.", { category: "plugin" });
-      return record;
-    },
-    restoreSnapshot: (id) => {
-      const snap = (settings.snapshots.list || []).find((s) => s.id === id);
-      if (!snap) return null;
-      return ipcRenderer.invoke("branching:open-fork", {
-        preambleText: wrapForkPreamble(snap.transcript),
-        label: `Restored: ${snap.label}`,
-        forkedFromUrl: snap.conversationUrl,
-        forkedAtTurnIndex: snap.turnCount - 1,
-      });
-    },
-    exportSnapshot: (id) => ipcRenderer.invoke("snapshots:export-one", id),
-    renameSnapshot: (id, label) => {
-      const next = (settings.snapshots.list || []).map((s) => (s.id === id ? { ...s, label } : s));
-      settings.snapshots.list = next;
-      return setSetting("snapshots.list", next);
-    },
-    deleteSnapshot: (id) => {
-      const next = (settings.snapshots.list || []).filter((s) => s.id !== id);
-      settings.snapshots.list = next;
-      return setSetting("snapshots.list", next);
-    },
-
-    // --- Semantic Search bridge ---
-    openChatSearch: () => semanticSearch.open(),
-    clearSearchIndex: async () => {
-      const indexed = await ipcRenderer.invoke("search:clear-index");
-      settings.semanticSearch.indexed = indexed;
-    },
-
     // --- File Watcher bridge ---
     pickWatchedFile: async () => {
       const picked = await ipcRenderer.invoke("fileWatcher:pick-file");
@@ -1599,37 +1019,6 @@ async function bootstrap() {
       const next = settings.fileWatcher.watched.map((w) => (w.id === id ? { ...w, autoReattach } : w));
       settings.fileWatcher.watched = next;
       return setSetting("fileWatcher.watched", next);
-    },
-
-    // --- Macro Recorder bridge ---
-    isRecordingMacro: () => macroRecorder.isRecording(),
-    isReplayingMacro: () => macroRecorder.isReplaying(),
-    startRecordingMacro: (name) => macroRecorder.startRecording(name),
-    stopRecordingMacro: () => finishRecording(),
-    replayMacro: (id) => {
-      const macro = (settings.macros.list || []).find((m) => m.id === id);
-      if (macro) doReplayMacro(macro);
-    },
-    stopMacroReplay: () => { replayStopRequested = true; },
-    renameMacro: (id, name) => {
-      const next = settings.macros.list.map((m) => (m.id === id ? { ...m, name } : m));
-      settings.macros.list = next;
-      return setSetting("macros.list", next);
-    },
-    setMacroShortcut: (id, shortcut) => {
-      const next = settings.macros.list.map((m) => (m.id === id ? { ...m, shortcut: shortcut || null } : m));
-      settings.macros.list = next;
-      return setSetting("macros.list", next);
-    },
-    updateMacroSteps: (id, steps) => {
-      const next = settings.macros.list.map((m) => (m.id === id ? { ...m, steps } : m));
-      settings.macros.list = next;
-      return setSetting("macros.list", next);
-    },
-    deleteMacro: (id) => {
-      const next = settings.macros.list.filter((m) => m.id !== id);
-      settings.macros.list = next;
-      return setSetting("macros.list", next);
     },
 
     // --- Clipboard Bridge bridge ---
@@ -1699,11 +1088,6 @@ async function bootstrap() {
 
   // --- Menu / accelerator bridges from main.js ---
   ipcRenderer.on("betterclaude:toggle-settings", () => settingsPanel.toggle());
-  ipcRenderer.on("betterclaude:toggle-hud", () => {
-    const next = !settings.hud.enabled;
-    setSetting("hud.enabled", next);
-    hud.setVisible(next);
-  });
 }
 
 bootstrap().catch((err) => console.error("[BetterClaude] preload bootstrap failed", err));

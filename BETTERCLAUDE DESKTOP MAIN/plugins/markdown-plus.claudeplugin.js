@@ -1,6 +1,6 @@
 /**
  * Markdown+ — adds copy-to-clipboard buttons on code blocks and tidies up
- * code block styling. Demonstrates api.injectCSS + api.onMessage.
+ * code block styling. Demonstrates api.injectCSS + api.queryAll.
  */
 module.exports = {
   name: "Markdown+",
@@ -48,12 +48,9 @@ module.exports = {
     this._observer = new MutationObserver(decorate);
     this._observer.observe(document.body, { childList: true, subtree: true });
     decorate();
-
-    this._unsubscribe = api.onMessage(() => decorate());
   },
 
   onUnload() {
     if (this._observer) this._observer.disconnect();
-    if (this._unsubscribe) this._unsubscribe();
   },
 };

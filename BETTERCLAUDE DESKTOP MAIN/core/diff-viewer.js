@@ -1,7 +1,7 @@
 /**
  * Diff Viewer overlay — DOM-only aside from requiring the `diff` package
- * (pure JS, browser-safe, bundled by esbuild the same way gpt-tokenizer
- * already is). Two textareas holding two assistant responses to compare,
+ * (pure JS, browser-safe, bundled by esbuild). Both sides are pasted in by
+ * hand; nothing is read from the conversation. Two textareas to compare,
  * word-level diff highlighting rendered below. Modeled on
  * core/command-palette.js's mount/open/close/toggle pattern.
  */

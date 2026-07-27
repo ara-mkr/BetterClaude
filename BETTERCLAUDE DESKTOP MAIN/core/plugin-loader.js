@@ -42,8 +42,8 @@ function reorderDockChildren(dock, order) {
 }
 
 // A single shared row of icon buttons, docked below the title bar. Plugins
-// that want a persistent toggle/launcher button (focus mode, snippet
-// library, conversation search, ...) go through api.mountToolbarButton()
+// that want a persistent toggle/launcher button (snippet library, sticky
+// notes, world clock, ...) go through api.mountToolbarButton()
 // instead of each picking its own `position: fixed` coordinates — that's
 // what let three unrelated plugins stack directly on top of each other.
 // The dock auto-flows left from the right edge, so N buttons just add up
@@ -111,9 +111,8 @@ function ensureDock() {
   return dock;
 }
 
-function createPluginAPI({ id, themeEngine, hud, getSettings, setSetting, host }) {
+function createPluginAPI({ id, themeEngine, getSettings, setSetting, host }) {
   const injectedStyleId = `betterclaude-plugin-style-${id}`;
-  const messageHandlers = [];
   const dockButtons = [];
 
   return {
@@ -209,26 +208,6 @@ function createPluginAPI({ id, themeEngine, hud, getSettings, setSetting, host }
       };
     },
 
-    /** Register a callback fired with { role, text, node } for new messages. */
-    onMessage(handler) {
-      messageHandlers.push(handler);
-      return () => {
-        const idx = messageHandlers.indexOf(handler);
-        if (idx >= 0) messageHandlers.splice(idx, 1);
-      };
-    },
-
-    /** Host calls this to fan a detected message out to plugin handlers. */
-    _dispatchMessage(payload) {
-      messageHandlers.forEach((h) => {
-        try {
-          h(payload);
-        } catch (err) {
-          console.error(`[BetterClaude plugin:${id}] onMessage handler threw`, err);
-        }
-      });
-    },
-
     /** Register a value under settings.plugins.data[id][key], persisted by the host. */
     registerSetting(key, defaultValue) {
       const settings = getSettings();
@@ -254,10 +233,6 @@ function createPluginAPI({ id, themeEngine, hud, getSettings, setSetting, host }
       return themeEngine.settings ? themeEngine.settings.appearance.activeTheme : null;
     },
 
-    getUsage() {
-      return host.getLastUsage ? host.getLastUsage() : null;
-    },
-
     /** DOM query helper scoped to document, exposed so plugins don't need `window`. */
     query(selector) {
       return document.querySelector(selector);
@@ -281,9 +256,8 @@ function createPluginAPI({ id, themeEngine, hud, getSettings, setSetting, host }
 }
 
 class PluginLoader {
-  constructor({ themeEngine, hud, getSettings, setSetting, host = {} }) {
+  constructor({ themeEngine, getSettings, setSetting, host = {} }) {
     this.themeEngine = themeEngine;
-    this.hud = hud;
     this.getSettings = getSettings;
     this.setSetting = setSetting;
     this.host = host;
@@ -296,7 +270,6 @@ class PluginLoader {
     const api = createPluginAPI({
       id,
       themeEngine: this.themeEngine,
-      hud: this.hud,
       getSettings: this.getSettings,
       setSetting: this.setSetting,
       host: this.host,
@@ -327,10 +300,6 @@ class PluginLoader {
 
   unloadAll() {
     Array.from(this.loaded.keys()).forEach((id) => this.unload(id));
-  }
-
-  dispatchMessage(payload) {
-    this.loaded.forEach((entry) => entry.api._dispatchMessage(payload));
   }
 
   list() {

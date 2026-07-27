@@ -58,24 +58,6 @@ function setComposerText(composer, value) {
   }
 }
 
-// Same defensive-selector-chain style as core/token-counter.js's
-// MESSAGE_SELECTORS: claude.ai's markup/class names aren't stable across
-// releases, so this matches on the most likely data-testid/aria-label hooks
-// first and falls back to a wider net rather than one brittle selector.
-function findSendButton(root = document) {
-  return root.querySelector(
-    'button[aria-label*="Send" i], form button[type="submit"], [data-testid*="send-button" i]'
-  );
-}
-
-// Plain "User: …\nAssistant: …" join of turns (as returned by
-// core/token-counter.js's collectConversationText) — shared by Conversation
-// Branching's fork preamble and Auto-Session Snapshots' stored transcripts,
-// so both features format a transcript exactly the same way.
-function buildTranscriptText(turns) {
-  return (turns || []).map((t) => `${t.role === "user" ? "User" : "Assistant"}: ${t.text}`).join("\n");
-}
-
 // Appends (default) or replaces the composer's current text, then fires a
 // real "input" event so claude.ai's own React state picks up the change.
 // Returns true if a composer was found and written to.
@@ -111,10 +93,8 @@ function waitForComposer({ root = document, timeoutMs = 8000, intervalMs = 150 }
 
 module.exports = {
   findComposer,
-  findSendButton,
   getComposerText,
   setComposerText,
   insertIntoComposer,
   waitForComposer,
-  buildTranscriptText,
 };

@@ -30,7 +30,7 @@ module.exports = {
     wrap.appendChild(toggleField("Zen Mode", fr.zenMode, (v) => this._set("focusReading.zenMode", v)));
     wrap.appendChild(el("p", {
       class: "bc-hint",
-      text: "Zen Mode builds on the existing Focus Mode plugin (hides the sidebar/chrome) and additionally hides the HUD and plugin dock — so only the conversation is visible.",
+      text: "Zen Mode builds on the existing Focus Mode plugin (hides the sidebar/chrome) and additionally hides the companion and plugin dock — so only the conversation is visible.",
     }));
 
     wrap.appendChild(toggleField("Reading Mode", fr.readingMode, (v) => {
@@ -66,9 +66,8 @@ module.exports = {
     wrap.appendChild(el("p", {
       class: "bc-hint",
       text: "Cmd/Ctrl+K opens the palette anywhere, fuzzy-searching everything at once: app actions, every settings "
-        + "page, plugins, prompt library entries, macros, installed + cached marketplace skills, and — once Local "
-        + "Semantic Search is enabled — past chats. Custom commands below are bounded to “set setting X to value "
-        + "Y” — never arbitrary code.",
+        + "page, plugins, prompt library entries, and installed + cached marketplace skills. Custom commands below "
+        + "are bounded to “set setting X to value Y” — never arbitrary code.",
     }));
 
     const list = el("div", { class: "bc-plugin-list" });

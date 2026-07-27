@@ -16,13 +16,7 @@
  *   host.applyAccentPreview(hex)
  *   host.refreshSkillsCache() / host.openSkillMarketplace() / host.revealSkill(id) / host.uninstallSkill(id)
  *   host.exportPromptLibrary() / host.importPromptLibrary()
- *   host.openBranch(id) / host.deleteBranch(id)
- *   host.snapshotNow(label) / host.restoreSnapshot(id) / host.exportSnapshot(id) / host.renameSnapshot(id, label) / host.deleteSnapshot(id)
- *   host.openChatSearch() / host.clearSearchIndex()
  *   host.pickWatchedFile() / host.stopWatchingFile(id) / host.insertWatchedFile(id) / host.setAutoReattach(id, bool)
- *   host.isRecordingMacro() / host.startRecordingMacro(name) / host.stopRecordingMacro()
- *   host.isReplayingMacro() / host.replayMacro(id) / host.stopMacroReplay()
- *   host.renameMacro(id, name) / host.setMacroShortcut(id, shortcut) / host.updateMacroSteps(id, steps) / host.deleteMacro(id)
  *   host.getClipboardBridgeStatus() / host.onClipboardBridgeStatus(cb) / host.pushClipboardNow() / host.testClipboardBridgeConnection()
  *   host.openAnalyticsDashboard()
  *   host.syncTeamNow() / host.getTeamSyncDiff(relPath) / host.applyTeamSyncFile(relPath) / host.keepLocalTeamSyncFile(relPath) / host.openTeamSyncFolder()
@@ -43,14 +37,7 @@ const powerUserSection = require("./sections/power-user");
 const playfulSection = require("./sections/playful");
 const skillMarketplaceSection = require("./sections/skill-marketplace");
 const promptLibrarySection = require("./sections/prompt-library");
-const branchesSection = require("./sections/branches");
-const contextBudgetSection = require("./sections/context-budget");
-const snapshotsSection = require("./sections/snapshots");
-const semanticSearchSection = require("./sections/semantic-search");
-const modelRoutingSection = require("./sections/model-routing");
 const fileWatcherSection = require("./sections/file-watcher");
-const diffApplierSection = require("./sections/diff-applier");
-const macrosSection = require("./sections/macros");
 const clipboardBridgeSection = require("./sections/clipboard-bridge");
 const analyticsSection = require("./sections/analytics");
 const teamSyncSection = require("./sections/team-sync");
@@ -103,20 +90,12 @@ const SECTIONS = [
   "Profiles",
   "Automations",
   "Playful",
-  "Usage HUD",
   "Usage Analytics",
   "Plugins",
   "Team Sync",
   "Skill Marketplace",
   "Prompt Library",
-  "Branches",
-  "Context Budget",
-  "Snapshots",
-  "Semantic Search",
-  "Model Routing",
   "File Watcher",
-  "Diff Applier",
-  "Macros",
   "Clipboard Bridge",
   "Keyboard Shortcuts",
 ];
@@ -233,20 +212,12 @@ class SettingsPanel {
       "Profiles": () => this._renderProfiles(),
       "Automations": () => this._renderAutomations(),
       "Playful": () => this._renderPlayful(),
-      "Usage HUD": () => this._renderHUD(),
       "Usage Analytics": () => this._renderAnalytics(),
       "Plugins": () => this._renderPlugins(),
       "Team Sync": () => this._renderTeamSync(),
       "Skill Marketplace": () => this._renderSkillMarketplace(),
       "Prompt Library": () => this._renderPromptLibrary(),
-      "Branches": () => this._renderBranches(),
-      "Context Budget": () => this._renderContextBudget(),
-      "Snapshots": () => this._renderSnapshots(),
-      "Semantic Search": () => this._renderSemanticSearch(),
-      "Model Routing": () => this._renderModelRouting(),
       "File Watcher": () => this._renderFileWatcher(),
-      "Diff Applier": () => this._renderDiffApplier(),
-      "Macros": () => this._renderMacros(),
       "Clipboard Bridge": () => this._renderClipboardBridge(),
       "Keyboard Shortcuts": () => this._renderShortcuts(),
     };
@@ -1015,7 +986,7 @@ class SettingsPanel {
         applyPreviewStyle();
 
         // Drag-to-pan directly on the preview — same named-handler
-        // add/remove-on-release pattern as core/hud.js's _wireDrag, so a
+        // add/remove-on-release pattern used elsewhere for dragging, so a
         // re-render of this section (every save() call re-renders) can
         // never leave a stale mousemove/mouseup listener attached.
         let dragState = null;
@@ -1209,7 +1180,7 @@ class SettingsPanel {
     const glass = el("input", { type: "checkbox" });
     glass.checked = !!settings.appearance.glassPanels;
     glass.addEventListener("change", () => this._set("appearance.glassPanels", glass.checked));
-    wrap.appendChild(field("Frosted-glass panels (Settings, HUD, popovers)", glass));
+    wrap.appendChild(field("Frosted-glass panels (Settings, overlays, popovers)", glass));
 
     this.contentEl.appendChild(wrap);
     refreshWarn();
@@ -1394,40 +1365,6 @@ class SettingsPanel {
     this.contentEl.appendChild(wrap);
   }
 
-  _renderHUD() {
-    const { settings } = this;
-    const wrap = el("div", { class: "bc-section" });
-    wrap.appendChild(el("h2", { text: "Usage HUD" }));
-
-    const enabled = el("input", { type: "checkbox" });
-    enabled.checked = settings.hud.enabled;
-    enabled.addEventListener("change", () => this._set("hud.enabled", enabled.checked));
-    wrap.appendChild(field("Show HUD", enabled));
-
-    const opacity = el("input", { type: "range", min: "0.2", max: "1", step: "0.05", value: settings.hud.opacity });
-    const opacityLabel = el("span", { class: "bc-range-value", text: `${Math.round(settings.hud.opacity * 100)}%` });
-    opacity.addEventListener("input", () => {
-      opacityLabel.textContent = `${Math.round(opacity.value * 100)}%`;
-      this._set("hud.opacity", Number(opacity.value));
-    });
-    wrap.appendChild(field("Opacity", el("div", { class: "bc-range-row" }, [opacity, opacityLabel])));
-
-    const scale = el("input", { type: "range", min: "0.7", max: "1.6", step: "0.05", value: settings.hud.scale });
-    const scaleLabel = el("span", { class: "bc-range-value", text: `${Math.round(settings.hud.scale * 100)}%` });
-    scale.addEventListener("input", () => {
-      scaleLabel.textContent = `${Math.round(scale.value * 100)}%`;
-      this._set("hud.scale", Number(scale.value));
-    });
-    wrap.appendChild(field("Size", el("div", { class: "bc-range-row" }, [scale, scaleLabel])));
-
-    const showAccountUsage = el("input", { type: "checkbox" });
-    showAccountUsage.checked = settings.hud.showAccountUsage !== false;
-    showAccountUsage.addEventListener("change", () => this._set("hud.showAccountUsage", showAccountUsage.checked));
-    wrap.appendChild(field("Show real account usage (session/weekly limits)", showAccountUsage));
-
-    this.contentEl.appendChild(wrap);
-  }
-
   _renderPlugins() {
     const wrap = el("div", { class: "bc-section" });
     wrap.appendChild(el("h2", { text: "Plugins" }));
@@ -1511,14 +1448,7 @@ Object.assign(
   playfulSection,
   skillMarketplaceSection,
   promptLibrarySection,
-  branchesSection,
-  contextBudgetSection,
-  snapshotsSection,
-  semanticSearchSection,
-  modelRoutingSection,
   fileWatcherSection,
-  diffApplierSection,
-  macrosSection,
   clipboardBridgeSection,
   analyticsSection,
   teamSyncSection,

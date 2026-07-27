@@ -540,12 +540,6 @@ function buildAppMenu() {
     {
       label: "View",
       submenu: [
-        {
-          label: "Toggle HUD",
-          accelerator: store.get("keyboardShortcuts.toggleHUD"),
-          click: () => mainWindow && mainWindow.webContents.send("betterclaude:toggle-hud"),
-        },
-        { type: "separator" },
         { role: "reload" },
         { role: "forceReload" },
         { role: "toggleDevTools" },
@@ -575,10 +569,10 @@ ipcMain.handle("settings:get", () => mergeDefaults(store.store));
 
 ipcMain.handle("settings:set", (_e, keyPath, value) => {
   store.set(keyPath, value);
-  // Only prompt/macro shortcuts touch globalShortcut, and this handler also
-  // fires on every slider "input" tick elsewhere in the app, so it's gated
-  // to the two keyPaths that can actually change a registered accelerator.
-  if (keyPath === "promptLibrary.prompts" || keyPath === "macros.list") registerAllShortcuts();
+  // Only prompt shortcuts touch globalShortcut, and this handler also fires
+  // on every slider "input" tick elsewhere in the app, so it's gated to the
+  // one keyPath that can actually change a registered accelerator.
+  if (keyPath === "promptLibrary.prompts") registerAllShortcuts();
   if (keyPath.startsWith("clipboardBridge.")) startClipboardBridge();
   if (keyPath.startsWith("teamSync.")) startTeamSync();
   const updated = mergeDefaults(store.store);
@@ -739,25 +733,6 @@ ipcMain.handle("weather:get", async (_e, { lat, lon }) => {
   return { code: cw.weathercode, isDay: cw.is_day === 1 };
 });
 
-// --- IPC: Auto-Session Snapshots ---
-// Restore reuses branching:open-fork (createBranchWindow) directly — no
-// handler needed here for that. This one just exports a single snapshot's
-// transcript to a file, same dialog.showSaveDialog pattern as everything
-// else that writes a file (settings:export, promptLibrary:export).
-ipcMain.handle("snapshots:export-one", async (_e, id) => {
-  const list = store.get("snapshots.list", []);
-  const snap = list.find((s) => s.id === id);
-  if (!snap) return false;
-  const result = await dialog.showSaveDialog(mainWindow, {
-    title: "Export Snapshot",
-    defaultPath: `${(snap.label || "snapshot").replace(/[^a-z0-9-_ ]/gi, "_")}.txt`,
-    filters: [{ name: "Text", extensions: ["txt"] }],
-  });
-  if (result.canceled || !result.filePath) return false;
-  fs.writeFileSync(result.filePath, snap.transcript || "", "utf8");
-  return true;
-});
-
 // --- IPC: Prompt Library import/export ---
 ipcMain.handle("promptLibrary:export", async () => {
   const result = await dialog.showSaveDialog(mainWindow, {
@@ -795,13 +770,11 @@ ipcMain.handle("promptLibrary:import", async () => {
   return broadcastSettings();
 });
 
-// --- Global keyboard shortcuts (Prompt Library + Macros) ---
+// --- Global keyboard shortcuts (Prompt Library) ---
 // The only use of Electron's globalShortcut in this app — everything else
 // (menu accelerators) goes through Menu.buildFromTemplate instead, which is
-// scoped to the app menu rather than system-wide. Per-prompt/per-macro
-// bindings need to fire even when claude.ai isn't the focused window, hence
-// globalShortcut. Both registration passes share one unregisterAll() up
-// front (registerAllShortcuts) so neither clobbers the other's bindings.
+// scoped to the app menu rather than system-wide. Per-prompt bindings need
+// to fire even when claude.ai isn't the focused window, hence globalShortcut.
 function registerPromptShortcuts() {
   const prompts = store.get("promptLibrary.prompts", []);
   prompts.forEach((p) => {
@@ -820,27 +793,9 @@ function registerPromptShortcuts() {
   });
 }
 
-function registerMacroShortcuts() {
-  const macros = store.get("macros.list", []);
-  macros.forEach((m) => {
-    if (!m.shortcut) return;
-    try {
-      globalShortcut.register(m.shortcut, () => {
-        if (!mainWindow) return;
-        mainWindow.show();
-        mainWindow.focus();
-        mainWindow.webContents.send("betterclaude:trigger-macro", m.id);
-      });
-    } catch (_err) {
-      // Invalid/unavailable accelerator — skip it, same as prompts above.
-    }
-  });
-}
-
 function registerAllShortcuts() {
   globalShortcut.unregisterAll();
   registerPromptShortcuts();
-  registerMacroShortcuts();
 }
 
 // --- IPC: profiles (also backs "Time Capsule") ---
@@ -1034,354 +989,6 @@ ipcMain.handle("skills:reveal", (_e, id) => {
 // and, once that page's own preload bootstrap sees the #bc-fork= hash, pre-
 // fills the composer with the captured transcript — the user reviews and
 // sends it themselves (see preload.js's bootstrap() hash handling).
-function genId(prefix) {
-  return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-}
-
-// forkId -> preamble text, held in memory only (never put in the URL, which
-// would leak transcript content into window/browser history) and consumed
-// exactly once by the new window's own preload bootstrap.
-const pendingForks = new Map();
-// branchId -> the live BrowserWindow for it, so "Open" can refocus an
-// already-open branch instead of spawning a duplicate.
-const branchWindows = new Map();
-
-function createSecondaryClaudeWindow(bounds) {
-  const win = new BrowserWindow({
-    ...bounds,
-    minWidth: 760,
-    minHeight: 480,
-    ...titleBarOptions,
-    title: "BetterClaude",
-    icon: APP_ICON_PATH,
-    backgroundColor: "#14101f",
-    webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      // Same partition as the main window so the claude.ai login session
-      // (and cookies/localStorage) carry over — this is a second window
-      // into the same account, not a fresh/logged-out browser profile.
-      partition: "persist:betterclaude",
-    },
-  });
-  win.on("page-title-updated", (e) => {
-    e.preventDefault();
-    win.setTitle("BetterClaude");
-  });
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (isAllowedAuthPopup(url)) return { action: "allow" };
-    if (!url.startsWith("https://claude.ai")) {
-      shell.openExternal(url);
-      return { action: "deny" };
-    }
-    return { action: "allow" };
-  });
-  return win;
-}
-
-function tiledBoundsForBranchWindow() {
-  const display = mainWindow && !mainWindow.isDestroyed()
-    ? screen.getDisplayMatching(mainWindow.getBounds())
-    : screen.getPrimaryDisplay();
-  const work = display.workArea;
-  const half = Math.floor(work.width / 2);
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setBounds({ x: work.x, y: work.y, width: half, height: work.height });
-  }
-  return { x: work.x + half, y: work.y, width: work.width - half, height: work.height };
-}
-
-function createBranchWindow({ preambleText, label, forkedFromUrl, forkedAtTurnIndex }) {
-  const branchId = genId("br");
-  const forkId = genId("fk");
-  pendingForks.set(forkId, preambleText || "");
-
-  const win = createSecondaryClaudeWindow(tiledBoundsForBranchWindow());
-
-  const branches = store.get("branching.branches", []);
-  const record = {
-    id: branchId,
-    label: label || `Fork @ ${new Date().toLocaleString()}`,
-    createdAt: Date.now(),
-    forkedFromUrl: forkedFromUrl || null,
-    forkedAtTurnIndex: forkedAtTurnIndex != null ? forkedAtTurnIndex : null,
-    conversationUrl: null,
-  };
-  store.set("branching.branches", [...branches, record]);
-  broadcastSettings();
-
-  // claude.ai is a client-rendered SPA — the moment the user's first send
-  // actually creates a conversation, its route changes via history.pushState
-  // (did-navigate-in-page, not a full did-navigate) to /chat/<uuid>. That's
-  // the earliest point a real, reopenable conversation URL exists.
-  win.webContents.on("did-navigate-in-page", (_e, url) => {
-    if (!/\/chat\//.test(url)) return;
-    const current = store.get("branching.branches", []);
-    const idx = current.findIndex((b) => b.id === branchId);
-    if (idx === -1 || current[idx].conversationUrl === url) return;
-    current[idx] = { ...current[idx], conversationUrl: url };
-    store.set("branching.branches", current);
-    broadcastSettings();
-  });
-
-  win.on("closed", () => branchWindows.delete(branchId));
-  branchWindows.set(branchId, win);
-  win.loadURL(`https://claude.ai/new#bc-fork=${forkId}`);
-  return branchId;
-}
-
-ipcMain.handle("branching:open-fork", (_e, payload) => createBranchWindow(payload || {}));
-
-ipcMain.handle("branching:consume-pending-fork", (_e, forkId) => {
-  const text = pendingForks.get(forkId) || "";
-  pendingForks.delete(forkId);
-  return text;
-});
-
-ipcMain.handle("branching:open-branch", (_e, branchId) => {
-  const existingWin = branchWindows.get(branchId);
-  if (existingWin && !existingWin.isDestroyed()) {
-    existingWin.show();
-    existingWin.focus();
-    return true;
-  }
-  const record = store.get("branching.branches", []).find((b) => b.id === branchId);
-  if (!record) return false;
-  const win = createSecondaryClaudeWindow(tiledBoundsForBranchWindow());
-  win.on("closed", () => branchWindows.delete(branchId));
-  branchWindows.set(branchId, win);
-  win.loadURL(record.conversationUrl || record.forkedFromUrl || "https://claude.ai/new");
-  return true;
-});
-
-ipcMain.handle("branching:delete-branch", (_e, branchId) => {
-  const existingWin = branchWindows.get(branchId);
-  if (existingWin && !existingWin.isDestroyed()) existingWin.close();
-  branchWindows.delete(branchId);
-  store.set("branching.branches", store.get("branching.branches", []).filter((b) => b.id !== branchId));
-  return broadcastSettings().branching.branches;
-});
-
-// --- Local Semantic Search ---
-// Indexing is opportunistic: only conversations actually opened in
-// BetterClaude ever get indexed (electron/preload.js flushes finalized
-// turns here), never a bulk import of claude.ai's history — there's no
-// public API for that, and pulling it from claude.ai's private API is
-// exactly the category of thing already ruled out for Branching.
-//
-// Storage: one small JSON file per conversation under userData/search-index/
-// (cheap incremental writes) plus an in-memory corpus rebuilt from those
-// files, used directly by both indexing and querying. This is the
-// "flat-file index" alternative the feature explicitly allows in place of
-// SQLite + a vector extension — chosen for the same native-module-avoidance
-// reason adm-zip/plain-JSON caching were chosen over better-sqlite3 for the
-// Skill Marketplace.
-let searchIndexLoaded = false;
-const searchConversations = new Map(); // conversationUrl -> { conversationUrl, title, updatedAt, turns: [{idx, role, text, ts, embedding?}] }
-
-function getUserSearchIndexDir() {
-  const dir = path.join(app.getPath("userData"), "search-index");
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
-function searchIndexFilePath(conversationUrl) {
-  const id = Buffer.from(conversationUrl).toString("base64url").slice(0, 150);
-  return path.join(getUserSearchIndexDir(), `${id}.json`);
-}
-
-function loadSearchIndex() {
-  if (searchIndexLoaded) return;
-  searchIndexLoaded = true;
-  const dir = getUserSearchIndexDir();
-  fs.readdirSync(dir).filter((f) => f.endsWith(".json")).forEach((f) => {
-    try {
-      const data = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"));
-      if (data && data.conversationUrl) searchConversations.set(data.conversationUrl, data);
-    } catch (_e) {
-      // Skip a corrupt file rather than fail indexing for everything else.
-    }
-  });
-}
-
-function searchIndexCounts() {
-  loadSearchIndex();
-  let turns = 0;
-  searchConversations.forEach((c) => { turns += c.turns.length; });
-  return { conversations: searchConversations.size, turns };
-}
-
-function tokenize(text) {
-  return (text || "").toLowerCase().match(/[a-z0-9]+/g) || [];
-}
-
-// Generic OpenAI-compatible embeddings contract: POST {input, model} with a
-// Bearer key, expects { data: [{ embedding: [...] }] } back. Only ever
-// called when the user has explicitly configured an endpoint + key.
-async function fetchHostedEmbedding(text) {
-  const cfg = store.get("semanticSearch.embeddings", {});
-  if (!cfg.endpoint || !cfg.apiKey) throw new Error("Hosted embeddings not configured");
-  const res = await fetch(cfg.endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.apiKey}` },
-    body: JSON.stringify({ input: text, ...(cfg.model ? { model: cfg.model } : {}) }),
-  });
-  if (!res.ok) throw new Error(`Embeddings request failed (HTTP ${res.status})`);
-  const data = await res.json();
-  const vec = data && data.data && data.data[0] && data.data[0].embedding;
-  if (!Array.isArray(vec)) throw new Error("Unexpected embeddings response shape");
-  return vec;
-}
-
-function embeddingCosine(a, b) {
-  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return null;
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  if (na === 0 || nb === 0) return 0;
-  return dot / (Math.sqrt(na) * Math.sqrt(nb));
-}
-
-// term -> weight Maps in, cosine similarity out. Used for TF-IDF vectors.
-function sparseCosine(vecA, vecB) {
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  vecA.forEach((wa, term) => {
-    normA += wa * wa;
-    const wb = vecB.get(term);
-    if (wb) dot += wa * wb;
-  });
-  vecB.forEach((wb) => { normB += wb * wb; });
-  if (normA === 0 || normB === 0) return 0;
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
-// Recomputed per query rather than incrementally maintained — the corpus is
-// personal-scale (one person's chat history), so a fresh TF/DF pass per
-// query is fast enough and far simpler than incremental-IDF bookkeeping.
-function buildCorpusDocs() {
-  loadSearchIndex();
-  const docs = [];
-  searchConversations.forEach((conv) => {
-    conv.turns.forEach((t) => {
-      docs.push({ conversationUrl: conv.conversationUrl, title: conv.title, idx: t.idx, role: t.role, text: t.text, embedding: t.embedding });
-    });
-  });
-  return docs;
-}
-
-ipcMain.handle("search:index-turns", async (_e, payload) => {
-  const { conversationUrl, title, turns } = payload || {};
-  loadSearchIndex();
-  if (!conversationUrl || !Array.isArray(turns) || turns.length === 0) return searchIndexCounts();
-
-  const existing = searchConversations.get(conversationUrl) || { conversationUrl, title, updatedAt: 0, turns: [] };
-  const byIdx = new Map(existing.turns.map((t) => [t.idx, t]));
-  const embeddingsWanted = store.get("semanticSearch.embeddings.mode", "local") === "hosted";
-  let changed = false;
-
-  for (const t of turns) {
-    const prev = byIdx.get(t.idx);
-    if (prev && prev.text === t.text) continue; // unchanged — skip re-indexing/re-embedding
-    changed = true;
-    const doc = { idx: t.idx, role: t.role, text: t.text, ts: Date.now() };
-    if (embeddingsWanted) {
-      try {
-        doc.embedding = await fetchHostedEmbedding(t.text);
-      } catch (_e) {
-        // Indexing still succeeds without an embedding — that turn just
-        // only ever contributes to TF-IDF ranking, not the semantic blend.
-      }
-    }
-    byIdx.set(t.idx, doc);
-  }
-  if (!changed && existing.title === title) return searchIndexCounts();
-
-  const record = {
-    conversationUrl,
-    title: title || existing.title || "Untitled",
-    updatedAt: Date.now(),
-    turns: Array.from(byIdx.values()).sort((a, b) => a.idx - b.idx),
-  };
-  searchConversations.set(conversationUrl, record);
-  fs.writeFileSync(searchIndexFilePath(conversationUrl), JSON.stringify(record), "utf8");
-
-  const counts = searchIndexCounts();
-  store.set("semanticSearch.indexed", counts);
-  broadcastSettings();
-  return counts;
-});
-
-ipcMain.handle("search:query", async (_e, { query, limit = 20 } = {}) => {
-  const q = (query || "").trim();
-  if (!q) return [];
-  const docs = buildCorpusDocs();
-  if (docs.length === 0) return [];
-
-  const df = new Map();
-  const docTf = docs.map((d) => {
-    const tf = new Map();
-    tokenize(d.text).forEach((tok) => tf.set(tok, (tf.get(tok) || 0) + 1));
-    Array.from(tf.keys()).forEach((tok) => df.set(tok, (df.get(tok) || 0) + 1));
-    return tf;
-  });
-  const N = docs.length;
-  const idf = (term) => Math.log((N + 1) / ((df.get(term) || 0) + 1)) + 1;
-
-  const qTf = new Map();
-  tokenize(q).forEach((tok) => qTf.set(tok, (qTf.get(tok) || 0) + 1));
-  const qVec = new Map();
-  qTf.forEach((tf, term) => qVec.set(term, tf * idf(term)));
-
-  let queryEmbedding = null;
-  if (store.get("semanticSearch.embeddings.mode", "local") === "hosted") {
-    try {
-      queryEmbedding = await fetchHostedEmbedding(q);
-    } catch (_e) {
-      // Falls back to TF-IDF-only ranking below.
-    }
-  }
-
-  const scored = docs.map((d, i) => {
-    const dVec = new Map();
-    docTf[i].forEach((tf, term) => dVec.set(term, tf * idf(term)));
-    const tfidfScore = sparseCosine(qVec, dVec);
-    let score = tfidfScore;
-    if (queryEmbedding && d.embedding) {
-      const embScore = embeddingCosine(queryEmbedding, d.embedding);
-      if (embScore != null) score = tfidfScore * 0.4 + embScore * 0.6;
-    }
-    return { d, score };
-  });
-
-  return scored
-    .filter(({ score }) => score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map(({ d, score }) => ({
-      conversationUrl: d.conversationUrl,
-      title: d.title,
-      role: d.role,
-      snippet: d.text.length > 240 ? `${d.text.slice(0, 240)}…` : d.text,
-      score: Math.round(score * 1000) / 1000,
-    }));
-});
-
-ipcMain.handle("search:clear-index", () => {
-  const dir = getUserSearchIndexDir();
-  fs.readdirSync(dir).filter((f) => f.endsWith(".json")).forEach((f) => fs.rmSync(path.join(dir, f)));
-  searchConversations.clear();
-  store.set("semanticSearch.indexed", { conversations: 0, turns: 0 });
-  return broadcastSettings().semanticSearch.indexed;
-});
 
 // --- Native File Watcher Sync ---
 // Never fakes claude.ai's own native file-upload UI — "attach" is a labeled
@@ -1428,27 +1035,6 @@ ipcMain.handle("fileWatcher:pick-file", async () => {
 
 ipcMain.handle("fileWatcher:start", (_e, filePath) => startFileWatcher(filePath));
 ipcMain.handle("fileWatcher:stop", (_e, filePath) => stopFileWatcher(filePath));
-ipcMain.handle("fileWatcher:read", (_e, filePath) => {
-  try {
-    return fs.readFileSync(filePath, "utf8");
-  } catch (err) {
-    throw new Error(`Couldn't read "${filePath}": ${err.message}`);
-  }
-});
-
-// Used by the Inline Diff Applier's "Apply" action (core/diff-applier.js) to
-// overwrite a watched file with a matched code block's contents. The file's
-// own chokidar watcher (started above) picks up the resulting on-disk
-// change exactly like an external edit would, so the normal file-changed ->
-// stale/auto-reattach flow in electron/preload.js runs unchanged.
-ipcMain.handle("fileWatcher:write", (_e, filePath, content) => {
-  try {
-    fs.writeFileSync(filePath, content, "utf8");
-    return true;
-  } catch (err) {
-    throw new Error(`Couldn't write "${filePath}": ${err.message}`);
-  }
-});
 
 // --- Cross-Device Clipboard Bridge ---
 // Off by default; only ever active while clipboardBridge.enabled is true
@@ -1597,15 +1183,6 @@ function csvEscape(value) {
   const s = value == null ? "" : String(value);
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
-
-ipcMain.handle("analytics:log-event", async (_e, event) => {
-  await analyticsDbReady;
-  try {
-    analyticsDb.logEvent(event);
-  } catch (err) {
-    console.error("[BetterClaude] analytics log failed", err);
-  }
-});
 
 ipcMain.handle("analytics:log-plugin-tick", async (_e, { ts, day, pluginIds }) => {
   await analyticsDbReady;
@@ -1786,7 +1363,6 @@ app.whenReady().then(() => {
   buildAppMenu();
   setupAutoUpdater();
   registerAllShortcuts();
-  store.set("semanticSearch.indexed", searchIndexCounts());
   // Re-arm file watchers from the saved list so watching survives a restart.
   (store.get("fileWatcher.watched", []) || []).forEach((w) => {
     if (w && w.path && fs.existsSync(w.path)) startFileWatcher(w.path);

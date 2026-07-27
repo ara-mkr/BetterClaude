@@ -428,7 +428,7 @@ function auditComposerAdapter() {
   record("composer", "shared composer adapter supports Claude's contenteditable chat-input", contentEditable,
     contentEditable ? "chat-input + contenteditable fallback present" : "textarea-only composer adapter");
 
-  const consumers = ["context-budget.js", "model-router.js", "file-sync-indicator.js"];
+  const consumers = ["file-sync-indicator.js"];
   const stale = consumers.filter((file) => /composer\.value/.test(stripJsComments(fs.readFileSync(path.join(ROOT, "core", file), "utf8"))));
   record("composer", "core composer consumers avoid textarea-only reads", stale.length === 0,
     stale.length ? `stale .value use: ${stale.join(", ")}` : "all use the shared adapter");
@@ -458,14 +458,12 @@ function auditPersistence() {
 
 function auditFirstRunChrome() {
   const defaults = mergeDefaults({});
-  record("first run", "usage HUD is opt-in by default", defaults.hud.enabled === false,
-    `hud.enabled = ${defaults.hud.enabled}`);
   record("first run", "companion is opt-in by default", defaults.personality.companionEnabled === false,
     `companionEnabled = ${defaults.personality.companionEnabled}`);
   const preload = stripJsComments(fs.readFileSync(path.join(ROOT, "electron", "preload.js"), "utf8"));
-  record("first run", "signed-out/empty routes hide auxiliary chrome", /syncContextualChrome/.test(preload)
-    && /lastUsage\.turnCount > 0/.test(preload) && /data-testid=["']chat-input["']/.test(preload),
-  "HUD and companion require a composer plus a real conversation turn");
+  record("first run", "signed-out routes hide auxiliary chrome", /syncContextualChrome/.test(preload)
+    && /data-testid=["']chat-input["']/.test(preload),
+  "companion and cursor FX require a composer to be present");
 }
 
 /* ---------------- Custom appearance state transitions ---------------- */

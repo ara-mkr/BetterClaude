@@ -162,36 +162,18 @@ const DEFAULT_SETTINGS = {
     widgetGalleryView: "grid", // "grid" | "list" | "card"
     pinnedWidgets: [],
   },
-  hud: {
-    // A zeroed-out usage meter is noise on a fresh install. It remains
-    // available in Settings once someone actually wants it.
-    enabled: false,
-    x: null, // null = default corner position
-    y: null,
-    corner: "bottom-right", // used until dragged
-    opacity: 0.92,
-    scale: 1,
-    // Real session/weekly plan-usage rows (core/account-usage.js), below the
-    // estimated context-window section. On by default; off hides the section
-    // for anyone who only wants the per-conversation token estimate.
-    showAccountUsage: true,
-  },
   plugins: {
     // pluginId -> boolean enabled
     enabled: {
       "markdown-plus": true,
-      // Off by default: a floating "Export Chat" button nobody asked for.
-      // Still available from Settings -> Plugins for anyone who wants it.
-      "conversation-export": false,
       // Off by default: this floats over the bottom-left corner unprompted,
       // which overlaps the sidebar. Users can flip it on from Settings ->
       // Plugins if they want the canned-prompt shortcuts.
       "quick-prompts": false,
       "focus-mode": false,
-      // Off by default: both add a floating icon button unprompted, same
-      // rationale as quick-prompts/conversation-export above.
+      // Off by default: adds a floating icon button unprompted, same
+      // rationale as quick-prompts above.
       "snippet-library": false,
-      "conversation-search": false,
       // New widget plugins (Settings -> Widgets gallery), each adds a dock
       // button — off by default for the same reason quick-prompts/
       // snippet-library are: nobody asked for an extra floating icon yet.
@@ -205,21 +187,8 @@ const DEFAULT_SETTINGS = {
   },
   keyboardShortcuts: {
     toggleSettings: "CommandOrControl+,",
-    toggleHUD: "CommandOrControl+Shift+H",
     toggleAlwaysOnTop: "CommandOrControl+Shift+T",
     openPromptPicker: "CommandOrControl+Shift+P",
-    openChatSearch: "CommandOrControl+Shift+F",
-  },
-  // Multi-Model Routing — off by default (silently changing which model
-  // answers should be opt-in). Rule matching + the model-picker click-through
-  // both live in core/model-router.js; array order = priority, first match
-  // wins. Fails open: a selector miss just sends on whatever model is
-  // already selected, never blocks.
-  modelRouting: {
-    enabled: false,
-    defaultModel: "",
-    // { id, label, pattern, isRegex, modelMatch, enabled }
-    rules: [],
   },
   // Native File Watcher Sync — "attach" inserts the file's content as a
   // labeled fenced code block (core/file-sync-indicator.js), not a fake of
@@ -233,33 +202,12 @@ const DEFAULT_SETTINGS = {
     // indicator.js's marker()), not stored separately.
     watched: [],
   },
-  // Macro Recorder. Recording state itself is transient (not persisted) —
-  // see core/macro-recorder.js.
-  macros: {
-    enabled: true,
-    // { id, name, shortcut, steps: [{type:"text",text} | {type:"prompt",promptId,values}], createdAt }
-    list: [],
-  },
-  // Inline Diff Applier for Code Blocks — depends entirely on Native File
-  // Watcher Sync (fileWatcher above) already having at least one watched
-  // file: with none watched this is invisible no matter what, since
-  // core/diff-applier.js's matchCandidates() returns [] and no "Diff &
-  // Apply" button is ever shown over a response's code blocks.
-  diffApplier: {
-    enabled: true,
-  },
   // Usage Analytics Dashboard — off by default, like the other background-
-  // logging features (semanticSearch, skillMarketplace). Historical charts
-  // are built from usage events logged locally as you go (electron/
-  // analytics-db.js, a WASM SQLite database under userData/analytics.sqlite)
-  // — distinct from the live Usage HUD, which never persists anything.
-  // costPerMillionTokens is a user-editable estimate (there's no public
-  // Claude pricing API to query), used only to compute the "estimated cost"
-  // chart/total; input/output are tracked separately since role is logged
-  // per message (see core/token-counter.js's turn.role).
+  // logging features (skillMarketplace). Historical charts are built from
+  // usage events logged locally as you go (electron/analytics-db.js, a WASM
+  // SQLite database under userData/analytics.sqlite).
   analytics: {
     enabled: false,
-    costPerMillionTokens: { input: 3, output: 15 },
   },
   // Team/Shared Plugin Sync — off by default. Points at a git repo of
   // *.claudeplugin.js / theme *.css files (electron/team-sync.js shells out
@@ -298,38 +246,6 @@ const DEFAULT_SETTINGS = {
     ttlMinutes: 5,
     lastSyncedAt: null,
   },
-  // Pre-send breakdown — see core/context-budget.js. Distinct from hud.*,
-  // which is a passive live readout; this is a planning step that only ever
-  // interrupts a send once usage crosses warnThresholdPercent.
-  contextBudget: {
-    enabled: true,
-    warnThresholdPercent: 75,
-  },
-  // Auto-Session Snapshots + Restore Points. "Restore" forks a new window
-  // from the snapshot's transcript (reuses branching:open-fork) rather than
-  // rewinding the live claude.ai conversation, which isn't possible without
-  // its private API.
-  snapshots: {
-    enabled: true,
-    intervalMinutes: 30,
-    // { id, label, createdAt, conversationUrl, conversationTitle, turnCount, transcript }
-    list: [],
-  },
-  // Local Semantic Search — off by default like Skill Marketplace, since
-  // it's a background-indexing feature. Indexing is opportunistic (built up
-  // from conversations actually opened in BetterClaude), never a bulk import
-  // of claude.ai's history. "local" embeddings mode = dependency-free
-  // TF-IDF/cosine similarity; "hosted" = user's own embeddings API key.
-  semanticSearch: {
-    enabled: false,
-    indexed: { conversations: 0, turns: 0 },
-    embeddings: {
-      mode: "local", // "local" | "hosted"
-      endpoint: "",
-      apiKey: "",
-      model: "",
-    },
-  },
   // GitHub-backed catalog of public Claude Skill repos. Off by default (it's
   // a network feature that hits api.github.com) — see ui/settings-panel/
   // sections/skill-marketplace.js. "Install" only ever downloads SKILL.md +
@@ -350,15 +266,6 @@ const DEFAULT_SETTINGS = {
     // { id, title, body, tags: [], folder, shortcut, createdAt, updatedAt }
     prompts: [],
     folders: [],
-  },
-  // DOM-automated conversation forking — see core/branch-fork-buttons.js.
-  // No calls to claude.ai's private chat API: forking pre-fills a new
-  // window's composer and lets the user send it themselves.
-  branching: {
-    enabled: true,
-    showForkButtons: true,
-    // { id, label, createdAt, forkedFromUrl, forkedAtTurnIndex, conversationUrl }
-    branches: [],
   },
   cursor: {
     style: "default", // "default" | "dot" | "crosshair"
@@ -418,8 +325,8 @@ const DEFAULT_SETTINGS = {
       update: { enabled: true, color: "#22c55e", icon: "" },
     },
     // Smart Notification Digest — off by default. When on, background
-    // task-completion notifications (macro replay finished, Team Sync
-    // applied files, clipboard synced, etc. — anything passed a `category`)
+    // task-completion notifications (Team Sync applied files, clipboard
+    // synced, skill installed, etc. — anything passed a `category`)
     // are queued instead of shown one at a time, then flushed as one native
     // OS notification per interval summarizing what changed. Failures always
     // bypass the queue (electron/preload.js's notify() `urgent` option) and
@@ -589,16 +496,7 @@ function clampSettings(settings) {
     settings.skillMarketplace.cache = { items: [], fetchedAt: null };
   }
   if (settings.promptLibrary && !Array.isArray(settings.promptLibrary.prompts)) settings.promptLibrary.prompts = [];
-  if (settings.branching && !Array.isArray(settings.branching.branches)) settings.branching.branches = [];
-  if (settings.snapshots && !Array.isArray(settings.snapshots.list)) settings.snapshots.list = [];
-  if (settings.semanticSearch) {
-    if (!["local", "hosted"].includes(settings.semanticSearch.embeddings?.mode)) {
-      settings.semanticSearch.embeddings = { ...settings.semanticSearch.embeddings, mode: "local" };
-    }
-  }
-  if (settings.modelRouting && !Array.isArray(settings.modelRouting.rules)) settings.modelRouting.rules = [];
   if (settings.fileWatcher && !Array.isArray(settings.fileWatcher.watched)) settings.fileWatcher.watched = [];
-  if (settings.macros && !Array.isArray(settings.macros.list)) settings.macros.list = [];
   if (settings.teamSync) {
     if (!Array.isArray(settings.teamSync.conflicts)) settings.teamSync.conflicts = [];
     if (!Array.isArray(settings.teamSync.pendingUpdates)) settings.teamSync.pendingUpdates = [];
