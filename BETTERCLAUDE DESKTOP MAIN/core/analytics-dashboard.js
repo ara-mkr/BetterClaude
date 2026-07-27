@@ -1,22 +1,21 @@
 /**
  * Usage Analytics Dashboard overlay — DOM-only, no Node/Electron APIs.
- * Historical charts (tokens/day, messages/day, estimated cost/day,
- * most-used skills/plugins, busiest projects) built entirely from usage
- * events logged locally as they happen — see electron/analytics-db.js (a
- * WASM SQLite store via sql.js, under userData/analytics.sqlite). No
- * external analytics service is ever involved. Mirrors
+ * Charts which plugins are active, built entirely from usage events logged
+ * locally as they happen — see electron/analytics-db.js (a WASM SQLite
+ * store via sql.js, under userData/analytics.sqlite). No external analytics
+ * service is ever involved, and no conversation content is read. Mirrors
  * core/skill-marketplace.js's full-screen overlay mount/open/close/toggle
  * pattern.
  *
  * host:
- *   host.queryAnalytics({from, to}) -> Promise<{tokensByDay, messagesByDay, costByDay, topPlugins, topProjects, totals}>
+ *   host.queryAnalytics({from, to}) -> Promise<{topPlugins, ...}>
  *   host.exportCsv({from, to}) -> Promise<path|null>
  *   host.savePng(dataUrl, suggestedName) -> Promise<path|null>
  *   host.clearAnalytics() -> Promise
  *   host.notify(message)
  */
 
-const { renderLineChart, renderBarChart } = require("./analytics-charts");
+const { renderBarChart } = require("./analytics-charts");
 
 function isoDay(date) {
   return date.toISOString().slice(0, 10);
@@ -62,25 +61,9 @@ class AnalyticsDashboard {
         </div>
         <div class="bc-an-body" data-bc-an-body>
           <div class="bc-an-totals" data-bc-an-totals></div>
-          <div class="bc-an-chart-block">
-            <div class="bc-an-chart-title"><span>Tokens / day</span><button type="button" class="bc-an-png" data-bc-an-png="tokens">PNG</button></div>
-            <canvas data-bc-an-canvas="tokens"></canvas>
-          </div>
-          <div class="bc-an-chart-block">
-            <div class="bc-an-chart-title"><span>Messages / day</span><button type="button" class="bc-an-png" data-bc-an-png="messages">PNG</button></div>
-            <canvas data-bc-an-canvas="messages"></canvas>
-          </div>
-          <div class="bc-an-chart-block">
-            <div class="bc-an-chart-title"><span>Estimated cost / day (USD)</span><button type="button" class="bc-an-png" data-bc-an-png="cost">PNG</button></div>
-            <canvas data-bc-an-canvas="cost"></canvas>
-          </div>
-          <div class="bc-an-chart-block">
+          <div class="bc-an-chart-block bc-an-chart-wide">
             <div class="bc-an-chart-title"><span>Most-used skills/plugins</span><button type="button" class="bc-an-png" data-bc-an-png="plugins">PNG</button></div>
             <canvas data-bc-an-canvas="plugins"></canvas>
-          </div>
-          <div class="bc-an-chart-block bc-an-chart-wide">
-            <div class="bc-an-chart-title"><span>Busiest projects (by messages)</span><button type="button" class="bc-an-png" data-bc-an-png="projects">PNG</button></div>
-            <canvas data-bc-an-canvas="projects"></canvas>
           </div>
         </div>
       </div>
@@ -159,11 +142,10 @@ class AnalyticsDashboard {
       totalsEl.textContent = "No data yet — usage is logged as you use claude.ai with BetterClaude running (Settings → Usage Analytics).";
       return;
     }
-    const { totals } = this.data;
+    const pluginTicks = this.data.topPlugins.reduce((sum, r) => sum + (r.count || 0), 0);
     [
-      ["Messages", totals.messages.toLocaleString()],
-      ["Tokens", totals.tokens.toLocaleString()],
-      ["Estimated cost", `$${(totals.costUsd || 0).toFixed(2)}`],
+      ["Plugins tracked", String(this.data.topPlugins.length)],
+      ["Activity ticks", pluginTicks.toLocaleString()],
     ].forEach(([label, value]) => {
       const tile = document.createElement("div");
       tile.className = "bc-an-tile";
@@ -178,29 +160,9 @@ class AnalyticsDashboard {
       totalsEl.appendChild(tile);
     });
 
-    renderLineChart(this.el.querySelector('[data-bc-an-canvas="tokens"]'), {
-      labels: this.data.tokensByDay.map((r) => r.day.slice(5)),
-      series: this.data.tokensByDay.map((r) => r.tokens || 0),
-    }, { color: "#8b5cf6" });
-
-    renderLineChart(this.el.querySelector('[data-bc-an-canvas="messages"]'), {
-      labels: this.data.messagesByDay.map((r) => r.day.slice(5)),
-      series: this.data.messagesByDay.map((r) => r.messages || 0),
-    }, { color: "#22c55e" });
-
-    renderLineChart(this.el.querySelector('[data-bc-an-canvas="cost"]'), {
-      labels: this.data.costByDay.map((r) => r.day.slice(5)),
-      series: this.data.costByDay.map((r) => Number((r.costUsd || 0).toFixed(4))),
-    }, { color: "#f59e0b" });
-
     renderBarChart(this.el.querySelector('[data-bc-an-canvas="plugins"]'), {
       labels: this.data.topPlugins.map((r) => r.pluginId),
       values: this.data.topPlugins.map((r) => r.count || 0),
-    });
-
-    renderBarChart(this.el.querySelector('[data-bc-an-canvas="projects"]'), {
-      labels: this.data.topProjects.map((r) => r.project || "Untitled"),
-      values: this.data.topProjects.map((r) => r.messages || 0),
     }, { width: 900 });
   }
 
