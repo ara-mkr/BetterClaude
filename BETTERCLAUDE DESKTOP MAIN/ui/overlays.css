@@ -555,3 +555,50 @@
 .bc-snake-score { font: 13px -apple-system, sans-serif; color: #ece7fb; }
 .bc-snake-canvas { border-radius: 8px; border: 1px solid #3a2e5c; }
 .bc-snake-hint { font: 11px -apple-system, sans-serif; color: #a99bd1; }
+/* Focus ring for the while-you-wait board, which is click-to-focus (its keys
+   are element-scoped so they can't eat composer typing) — without a visible
+   ring there's no way to tell whether arrow keys will do anything. */
+.bc-snake-wrap:focus { outline: none; }
+.bc-snake-wrap:focus .bc-snake-canvas { border-color: var(--bc-accent, #8b5cf6); }
+
+/* --- Snake while Claude is working (electron/preload.js) --- */
+/* Deliberately NOT a modal like #bc-minigame-modal: the response streaming in
+   behind it is the thing the user is actually waiting for, so this stays a
+   small corner panel with no backdrop and no pointer capture over the rest of
+   the page. Bottom-RIGHT because the mascot companion and the sidebar both
+   already claim the bottom-left. */
+#bc-waiting-snake {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147482950;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: rgba(28, 22, 48, 0.97);
+  border: 1px solid #3a2e5c;
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+#bc-waiting-snake.bc-open { display: flex; }
+.bc-ws-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.bc-ws-title { font: 12px -apple-system, sans-serif; color: #a99bd1; }
+.bc-ws-close {
+  background: transparent;
+  border: 1px solid #3a2e5c;
+  color: #ece7fb;
+  border-radius: 8px;
+  /* A bare ✕ glyph is a ~12px target; pad the box out instead of growing the
+     glyph so the dismiss is actually clickable. */
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  cursor: pointer;
+  font: 12px -apple-system, sans-serif;
+  line-height: 1;
+}
+.bc-ws-close:hover { background: rgba(255, 255, 255, 0.08); }
+@media (prefers-reduced-motion: no-preference) {
+  #bc-waiting-snake.bc-open { animation: bc-toast-popup-in 200ms ease; }
+}

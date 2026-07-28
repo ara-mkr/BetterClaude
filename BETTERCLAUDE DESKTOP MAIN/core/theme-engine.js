@@ -35,6 +35,11 @@ const BASE_STYLE_ID = "betterclaude-base";
 // treat it as a guess until it's confirmed against a real "new chat" screen.
 const SELECTORS = {
   sidebar: 'nav:has([data-testid="pin-sidebar-toggle"])',
+  // claude.ai's own pin/unpin control for the sidebar (the pin glyph near the
+  // top-right of the nav). Same verified testid the sidebar selector above
+  // hangs off — hiding this key never breaks that, because :has() matches a
+  // display:none child just fine.
+  sidebarPin: '[data-testid="pin-sidebar-toggle"]',
   sidebarToggle: 'button[aria-label*="sidebar" i]',
   chatHeader: 'header',
   composer: '[data-testid="chat-input"]',
@@ -238,7 +243,16 @@ const PAGE_ROOT_SCOPE = `body *${OWN_CHROME_EXCLUDE}`;
 function buildBaseCSS(settings) {
   const { layout, fonts } = settings;
   const ae = settings.appearanceEditor || {};
-  const hideRules = (layout.hiddenElements || [])
+  // layout.hideSidebarPin is a first-class setting rather than a preseeded
+  // entry in hiddenElements: hiddenElements is a user-editable array, and a
+  // default that lives inside an array can't be told apart from a value the
+  // user chose, so it would silently come back every time the array was
+  // rewritten. Folding it in here keeps one code path for the CSS.
+  const hiddenKeys = [
+    ...(layout.hiddenElements || []),
+    ...(layout.hideSidebarPin ? ["sidebarPin"] : []),
+  ];
+  const hideRules = [...new Set(hiddenKeys)]
     .map((key) => SELECTORS[key])
     .filter(Boolean)
     .map((sel) => `${sel} { display: none !important; }`)

@@ -995,14 +995,34 @@ form:has(> * > [data-testid="chat-input"]):not(:has(nav)),
 form:has(> * > * > [data-testid="chat-input"]):not(:has(nav)) {
   background: var(--bc-composer-bg) !important;
   border-color: var(--bc-composer-border) !important;
+  /* Whichever of these ancestors is the real card, claude.ai insets it
+     slightly from the outer rounded card it sits in — so a square-cornered
+     fill here draws a visibly sharp rectangle inside a rounded box (verified
+     on a live "new chat" screen). Round it for the same reason as the
+     chat-input rule below. Still no border-width and no explicit size, so
+     this cannot recreate the old "cut-off rectangle" (that came from a
+     mismatched border + width, neither of which is set here), and stacked
+     same-color fills on nested ancestors still merge into one region. */
+  border-radius: ${RADIUS} !important;
 }
 [data-testid="chat-input"] {
   /* Safety net (see comment above): same --bc-composer-bg as the card rules
-     above, flat fill only — no border/radius/width — so it merges seamlessly
+     above, flat fill only — no border, no width — so it merges seamlessly
      when an ancestor rule also matched, and still guarantees readable text
-     when none of them did. */
+     when none of them did.
+     The one exception to "flat fill only" is the radius below. The old
+     hard-square fill read as a distinct sharp-cornered rectangle sitting
+     inside the rounded composer card whenever it was even slightly lighter
+     or darker than that card — the "rectangle inside the chatbox" bug.
+     Adding ONLY a radius (still no border, no width, no explicit size)
+     cannot reintroduce the original "cut-off rectangle" bug: that one came
+     from a mismatched border + width drawing a visibly separate box short of
+     the card's right edge, neither of which is set here. Worst case the
+     corners round slightly more or less than the native card's — cosmetic,
+     and strictly closer to it than square corners were. */
   background: var(--bc-composer-bg) !important;
   color: var(--bc-composer-fg) !important;
+  border-radius: ${RADIUS} !important;
 }
 /* ProseMirror renders its placeholder either as a [data-placeholder]
    attribute-carrying node or an .is-empty node, with the visible text
@@ -1016,6 +1036,71 @@ form:has(> * > * > [data-testid="chat-input"]):not(:has(nav)) {
 [data-testid="chat-input"] [data-placeholder],
 [data-testid="chat-input"][data-placeholder] {
   color: var(--bc-composer-placeholder) !important;
+}
+
+/* The "Claude is AI and can make mistakes" strip under the composer.
+   claude.ai wraps it in a div carrying its own "bg-bg-100" utility — an
+   OPAQUE fill (measured live: rgb(32, 32, 31)) that is invisible in the
+   stock app only because it happens to equal the stock page background.
+   Against any BetterClaude theme it stops matching and reads as a solid box
+   sitting behind the warning, which is not what the real app looks like.
+   Three things are corrected here, all measured on the live element:
+     - background -> transparent, so the line floats on the page like it does
+       in the stock app instead of sitting in a slab;
+     - font-size -> 12px. Its "text-xs" (0.75rem = 12px) was being overridden
+       to 15px by this scaffold's own base font-size rule, which is why the
+       small print wasn't small. An explicit px value is used rather than an
+       em/rem so it can't drift with the user's base-size setting — this is
+       fine print, not body copy;
+     - color -> the muted token, since claude.ai's own "text-text-500" muting
+       loses to the scaffold's forced page text color.
+   Scoped through :has() to the sticky container that actually holds the
+   composer, so it can only ever match the strip attached to the composer and
+   not some other small centered text elsewhere in the app. Both the
+   "text-xs" and "text-center" hooks are listed because either utility alone
+   is enough to identify it if claude.ai drops the other.
+   NOTE: no backticks anywhere in this comment — it sits inside a template
+   literal, where one stray backtick silently ends the string and breaks the
+   entire module. */
+[class*="sticky"]:has([data-testid="chat-input"]) > div[class*="text-xs"]${OWN_CHROME_EXCLUDE},
+[class*="sticky"]:has([data-testid="chat-input"]) > div[class*="text-center"]${OWN_CHROME_EXCLUDE} {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  color: var(--bc-text-muted) !important;
+  font-size: 12px !important;
+}
+/* The link inside the strip is a page element too, so the same page-wide
+   forced text color lands on it directly and the muting above would stop at
+   the wrapper. OWN_CHROME_EXCLUDE is carried here for the same reason as
+   above: without it this selector loses to that rule's ID-heavy
+   specificity, and the declaration would sit in the stylesheet doing
+   nothing — measured, not assumed (the computed color stayed the full page
+   text color until the exclusion was appended). No hex literal is written
+   in this comment on purpose: it ships inside every generated theme file,
+   and the audit rejects hardcoded hex there. */
+[class*="sticky"]:has([data-testid="chat-input"]) > div[class*="text-xs"] a${OWN_CHROME_EXCLUDE},
+[class*="sticky"]:has([data-testid="chat-input"]) > div[class*="text-center"] a${OWN_CHROME_EXCLUDE} {
+  color: var(--bc-text-muted) !important;
+  font-size: 12px !important;
+}
+
+/* Popovers that open UPWARD out of the composer (the model picker is the
+   one users hit constantly). Measured live: the menu's bottom edge landed at
+   y=775 with the trigger at y=779 — a 4px gap — which put the menu's lower
+   border flush against the composer card it opens out of, so the two boxes
+   read as one welded shape instead of a menu floating above a card.
+   Only elements the popper has actually placed above their trigger are
+   touched (data-side="top"), so menus that open downward, sideways, or from
+   anywhere else in the app keep their native offset.
+   The transform goes on the menu CONTENT, not on the popper wrapper: the
+   wrapper is what the positioning logic owns, and overwriting its transform
+   is how you break placement entirely. The content's own transform was
+   measured as "none", so this is a purely visual nudge that leaves every
+   anchor calculation untouched. */
+[role="menu"][data-side="top"],
+[role="listbox"][data-side="top"] {
+  transform: translateY(-8px) !important;
 }
 
 /* All buttons: relational radius (never a raw px), resting state only.

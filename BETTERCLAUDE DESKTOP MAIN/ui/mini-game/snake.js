@@ -1,6 +1,14 @@
 /**
- * A tiny, self-contained Snake game — the "hidden mini-game accessible from
- * the settings screen" (Settings -> Playful). DOM/canvas only, no deps.
+ * A tiny, self-contained Snake game. DOM/canvas only, no deps.
+ *
+ * Two hosts today, with different key-capture needs:
+ *   - the Cmd+K "Play Snake" modal, which owns the whole screen and can take
+ *     every arrow/WASD press ({ keyScope: "document" }, the default);
+ *   - the while-Claude-is-working popup (electron/preload.js), which floats
+ *     over a live page whose composer is still typeable — capturing WASD on
+ *     document there would eat the user's own typing, so it passes
+ *     { keyScope: "element" } and only steers once the board itself is
+ *     focused (click or Tab onto it).
  */
 
 const GRID_SIZE = 18;
@@ -14,10 +22,14 @@ const KEY_MAP = {
   ArrowRight: { x: 1, y: 0 }, d: { x: 1, y: 0 }, D: { x: 1, y: 0 },
 };
 
-function mountSnakeGame(container) {
+function mountSnakeGame(container, { keyScope = "document" } = {}) {
   container.innerHTML = "";
   const wrap = document.createElement("div");
   wrap.className = "bc-snake-wrap";
+  // Element scope needs a focusable host to receive keydown at all. -1 keeps
+  // it out of the page's Tab order (this popup is opt-in entertainment, not a
+  // step on the way to the composer) while still accepting a click-to-focus.
+  if (keyScope === "element") wrap.tabIndex = -1;
 
   const scoreEl = document.createElement("div");
   scoreEl.className = "bc-snake-score";
@@ -30,7 +42,9 @@ function mountSnakeGame(container) {
 
   const hint = document.createElement("div");
   hint.className = "bc-snake-hint";
-  hint.textContent = "Arrow keys or WASD to move.";
+  hint.textContent = keyScope === "element"
+    ? "Click the board, then arrow keys or WASD."
+    : "Arrow keys or WASD to move.";
 
   wrap.appendChild(scoreEl);
   wrap.appendChild(canvas);
@@ -66,7 +80,12 @@ function mountSnakeGame(container) {
     }
     if (gameOver && e.key === "Enter") reset();
   }
-  document.addEventListener("keydown", onKeydown);
+  const keyTarget = keyScope === "element" ? wrap : document;
+  keyTarget.addEventListener("keydown", onKeydown);
+  // Clicking the canvas is the natural "I want to play now" gesture; without
+  // this the element-scoped listener would never fire (a <canvas> isn't
+  // focusable, so the click alone leaves focus wherever it already was).
+  if (keyScope === "element") canvas.addEventListener("mousedown", () => wrap.focus());
 
   function tick() {
     if (gameOver) return;
@@ -117,7 +136,7 @@ function mountSnakeGame(container) {
   return {
     destroy() {
       clearInterval(interval);
-      document.removeEventListener("keydown", onKeydown);
+      keyTarget.removeEventListener("keydown", onKeydown);
       container.innerHTML = "";
     },
   };

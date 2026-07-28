@@ -199,6 +199,39 @@ body > #__next {
      which this rule doesn't add. */
   overflow: hidden;
 }
+/* overflow:hidden above stops content escaping the window, but clipping is
+   not the same as fitting: measured live in a conversation (viewport 860px,
+   #root correctly 814px), claude.ai's first real child under #root still
+   laid itself out at a literal 860px and ran 46px past the visible bottom.
+   Everything below it is percentage-sized (h-full / h-[calc(100%…)]), so the
+   whole column inherited that overflow and the sticky composer's box ended
+   at y=868 — its lower edge, its bottom padding, and the "Claude can make
+   mistakes" line beneath it all fell into the clipped sliver, which is why
+   the chatbox appeared welded to the bottom of the window.
+   max-height alone does NOT fix this, which is worth stating so nobody
+   "simplifies" it back: clamping a parent's max-height doesn't change the
+   percentage basis its children resolve against. Capping only the first
+   wrapper left the next one still resolving its own height against the
+   parent's *specified* 100vh, so the column below it stayed 860px and the
+   composer's bottom stayed clipped (measured — cardBottom was still 868
+   with max-height-only). An explicit height: 100% is what makes each level
+   definite so the next level inherits the real, reduced height.
+   Depth-bounded to three levels for the same reason as the composer
+   selectors in core/tokens.js — enough to clear claude.ai's current shell
+   wrappers (the outermost is display:contents, where both properties are a
+   harmless no-op) without becoming an unbounded descendant rule that could
+   flatten a legitimate inner scroll region. Every level this touches is the
+   app shell, which already wants to be exactly full height; the inner
+   scrollers below it are percentage-sized and simply follow. */
+body > #root > div,
+body > #root > div > div,
+body > #root > div > div > div,
+body > #__next > div,
+body > #__next > div > div,
+body > #__next > div > div > div {
+  height: 100% !important;
+  max-height: 100% !important;
+}
 
 /* Claude's public sign-in surface places its brand mark at the very top of
    the app root. On macOS hiddenInset windows, the native titlebar occupies

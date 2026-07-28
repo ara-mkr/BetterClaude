@@ -860,6 +860,97 @@ async function bootstrap() {
     }
   }
 
+  // --- Snake while Claude is working ---
+  // claude.ai exposes no "is generating" flag we can read. What it does do,
+  // for exactly the duration of a response, is swap the composer's send
+  // button for a stop button — so that button's presence is the signal.
+  //
+  // A single selector here would be a silent-failure trap: if claude.ai
+  // renames one testid the game simply never appears, nothing throws, and
+  // every automated check still reports green. Hence a union of the
+  // plausible hooks (testid first, then aria-labels). None of them is
+  // verified against the live site as of this change — the union exists
+  // precisely because of that, and STOP_BUTTON_SELECTORS is the single place
+  // to fix if the popup ever stops showing up.
+  const STOP_BUTTON_SELECTORS = [
+    '[data-testid="stop-button"]',
+    'button[data-testid="stop-response"]',
+    'button[aria-label="Stop response"]',
+    'button[aria-label*="stop response" i]',
+    'button[aria-label*="stop generating" i]',
+  ].join(",");
+
+  const WAITING_POLL_MS = 400;
+
+  function claudeIsWorking() {
+    return !!document.querySelector(STOP_BUTTON_SELECTORS);
+  }
+
+  function openWaitingGame() {
+    let panel = document.getElementById("bc-waiting-snake");
+    if (panel && panel._gameHandle) return; // already up for this wait
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = "bc-waiting-snake";
+      panel.innerHTML = `
+        <div class="bc-ws-head">
+          <span class="bc-ws-title">While you wait…</span>
+          <button class="bc-ws-close" data-bc-ws-close aria-label="Dismiss the game">✕</button>
+        </div>
+        <div data-bc-ws-container></div>`;
+      document.body.appendChild(panel);
+      // Dismissing marks only THIS wait as dismissed — waitingRunDismissed is
+      // reset on the next not-working -> working edge, so the game returns
+      // the next time Claude is thinking, which is the point of it.
+      panel.querySelector("[data-bc-ws-close]").addEventListener("click", () => {
+        waitingRunDismissed = true;
+        closeWaitingGame();
+      });
+    }
+    panel.classList.add("bc-open");
+    // keyScope "element": this floats over a page whose composer is still
+    // typeable, and Snake's WASD bindings would otherwise swallow real
+    // typing (see ui/mini-game/snake.js).
+    panel._gameHandle = mountSnakeGame(panel.querySelector("[data-bc-ws-container]"), { keyScope: "element" });
+  }
+
+  function closeWaitingGame() {
+    const panel = document.getElementById("bc-waiting-snake");
+    if (!panel) return;
+    panel.classList.remove("bc-open");
+    if (panel._gameHandle) {
+      panel._gameHandle.destroy();
+      panel._gameHandle = null;
+    }
+  }
+
+  let waitingRunDismissed = false;
+  let waitingShowAt = 0;
+  let wasWorking = false;
+
+  // Polled rather than folded into chromeObserver above: that observer fires
+  // on every streamed token, and this only cares about a state edge.
+  setInterval(() => {
+    const working = claudeIsWorking();
+    if (working && !wasWorking) {
+      // A new response started — a previous dismissal doesn't carry over.
+      waitingRunDismissed = false;
+      const delay = (settings.playful && settings.playful.snakeDelayMs) || 0;
+      waitingShowAt = Date.now() + delay;
+    }
+    wasWorking = working;
+
+    if (!working) {
+      closeWaitingGame();
+      return;
+    }
+    if (settings.general && settings.general.enabled === false) return;
+    if (!settings.playful || settings.playful.snakeWhileWaiting === false) return;
+    if (waitingRunDismissed) return;
+    if (Date.now() < waitingShowAt) return;
+    openWaitingGame();
+  }, WAITING_POLL_MS);
+
   // --- Auto-updater bridge ---
   let updateStatus = { state: "idle" };
   const updateStatusHandlers = [];
@@ -1065,7 +1156,9 @@ async function bootstrap() {
     applyProfile: async (id) => {
       settings = await ipcRenderer.invoke("profiles:apply", id);
     },
-    openMiniGame: () => openMiniGame(),
+    // No openMiniGame here on purpose: Settings no longer launches the game
+    // (it only toggles the while-you-wait popup). Cmd+K -> "Play Snake"
+    // still calls the local openMiniGame() directly.
     applyWeatherTheme: () => applyScheduledWeatherTheme(),
   };
 

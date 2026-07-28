@@ -143,12 +143,21 @@ const DEFAULT_SETTINGS = {
     dyslexiaMode: false,
   },
   layout: {
-    // null = don't touch claude.ai's own sidebar width at all. Forcing a
-    // fixed pixel width (even one that "sounds" reasonable) can trip
-    // claude.ai's own responsive/collapse logic and drop it into an
-    // icon-only rail with no chat names — so this only kicks in once a
-    // user explicitly picks a width in Settings -> Layout.
+    // null = don't touch claude.ai's own sidebar width at all; a number
+    // forces that width. The Layout section's slider writes a number as soon
+    // as it's dragged, and a "Use claude.ai's default width" button puts it
+    // back to null — it used to sit disabled behind a separate "recommended"
+    // checkbox, which read as the control being permanently locked.
     sidebarWidthPx: null,
+    // claude.ai's own pin/collapse toggle for the sidebar. Hidden by default
+    // because this app wants the sidebar left open at a chosen width (chat
+    // titles and section names visible) rather than collapsed to an icon
+    // rail. Hidden with display:none rather than removed, specifically
+    // because theme-engine's sidebar selector reaches the <nav> THROUGH this
+    // button (`nav:has([data-testid="pin-sidebar-toggle"])`) — :has() still
+    // matches a display:none child, so all sidebar theming survives; actually
+    // deleting the node would silently un-theme the entire sidebar.
+    hideSidebarPin: true,
     sidebarPosition: "left", // "left" | "right"
     compactMode: false,
     hiddenElements: [], // array of element keys, see core/theme-engine.js SELECTORS
@@ -184,6 +193,19 @@ const DEFAULT_SETTINGS = {
       "goal-tracker": false,
     },
     data: {},
+  },
+  playful: {
+    // Snake is no longer something you sit and play inside the settings
+    // panel. It surfaces where waiting actually happens: while Claude is
+    // generating a response, as a dismissable corner popup (see
+    // electron/preload.js mountWaitingGame). Dismissing it with the X only
+    // dismisses THAT wait — it comes back on the next one, which is the
+    // point of it.
+    snakeWhileWaiting: true,
+    // How long Claude has to stay busy before the popup appears. Short
+    // answers finish well inside this, so the game never flashes up and
+    // vanishes on a one-line reply.
+    snakeDelayMs: 2000,
   },
   keyboardShortcuts: {
     toggleSettings: "CommandOrControl+,",

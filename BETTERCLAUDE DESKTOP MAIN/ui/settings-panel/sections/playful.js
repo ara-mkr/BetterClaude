@@ -12,10 +12,19 @@ module.exports = {
     const wrap = el("div", { class: "bc-section" });
     wrap.appendChild(el("h2", { text: "Playful" }));
 
-    wrap.appendChild(el("button", {
-      class: "bc-btn",
-      text: "Play Snake",
-      onclick: () => this.host.openMiniGame(),
+    // Snake is deliberately NOT playable from inside this panel any more.
+    // Settings is where you configure things; the game belongs where the
+    // waiting actually is — floating over the conversation while Claude is
+    // generating. This section only owns the on/off switch for that.
+    const playful = settings.playful || {};
+    wrap.appendChild(toggleField(
+      "Play Snake while Claude is working",
+      playful.snakeWhileWaiting !== false,
+      (v) => this._set("playful.snakeWhileWaiting", v),
+    ));
+    wrap.appendChild(el("p", {
+      class: "bc-hint",
+      text: "A small Snake board pops up in the corner whenever Claude is generating a response, and disappears on its own once the answer lands. Its ✕ dismisses that one wait — it comes back the next time Claude is thinking.",
     }));
 
     wrap.appendChild(el("h2", { text: "Loading-screen tips", class: "bc-ae-subhead" }));

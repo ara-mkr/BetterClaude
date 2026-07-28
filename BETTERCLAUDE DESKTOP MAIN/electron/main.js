@@ -14,6 +14,7 @@ app.setName("BetterClaude");
 
 const { mergeDefaults, DEFAULT_SETTINGS } = require("../core/settings-schema");
 const { buildThemeCSSFromVars } = require("../core/theme-engine");
+const { extractThemeVars } = require("../core/tokens");
 const { attachWindowState, getInitialBounds } = require("./window-state");
 const { TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y } = require("./window-chrome");
 const { autoUpdater } = require("electron-updater");
@@ -599,6 +600,38 @@ function broadcastSettings() {
   const updated = mergeDefaults(store.store);
   BrowserWindow.getAllWindows().forEach((w) => w.webContents.send("betterclaude:settings-changed", updated));
   return updated;
+}
+
+// A Custom appearance is stored as a FROZEN copy of its base theme's CSS
+// (beginCustomAppearance below), which also freezes the scaffold that CSS
+// was generated with. Every later fix in core/tokens.js — composer
+// geometry, the disclaimer strip, focus rings, hit targets — then silently
+// never reaches anyone on a custom theme, while bundled presets pick it up
+// on the next `npm run regen-themes`. That is a real silent-failure trap:
+// the code is updated, the audit is green, and the one surface the user is
+// actually looking at is untouched.
+//
+// Re-deriving on startup closes it. Only the --bc-* variables are carried
+// over (extractThemeVars) — those ARE the user's choices; everything else
+// in the stored string is generated scaffold that should track the current
+// code. Colors are preserved exactly, so this is invisible except that
+// scaffold fixes finally land.
+function refreshCustomThemeScaffold() {
+  const current = mergeDefaults(store.store);
+  const stored = current.appearance.customThemeCSS;
+  if (current.appearance.activeTheme !== "custom" || !stored) return;
+  try {
+    const vars = extractThemeVars(stored);
+    // Bail rather than overwrite if the stored CSS yielded nothing
+    // parseable — a stale-but-working theme beats replacing a user's colors
+    // with scaffold defaults.
+    if (!vars || !vars["--bc-bg"]) return;
+    const nameMatch = stored.match(/BetterClaude scaffold:\s*(.+?)\s*\*\//);
+    const rebuilt = buildThemeCSSFromVars(vars, nameMatch ? nameMatch[1] : "Custom");
+    if (rebuilt && rebuilt !== stored) store.set("appearance.customThemeCSS", rebuilt);
+  } catch (err) {
+    console.error("[BetterClaude] could not refresh the custom theme scaffold:", err);
+  }
 }
 
 function beginCustomAppearance() {
@@ -1372,6 +1405,10 @@ app.whenReady().then(() => {
   }
 
   seedBuiltinPlugins();
+  // Before any window opens, so the first paint already uses the current
+  // scaffold rather than flashing a stale custom theme (see the function's
+  // comment for why a frozen customThemeCSS is a silent-failure trap).
+  refreshCustomThemeScaffold();
   createWindow();
   if (isDev) startDevAutoReload();
   buildTray();

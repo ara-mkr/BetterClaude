@@ -639,14 +639,34 @@ form:has(> * > [data-testid="chat-input"]):not(:has(nav)),
 form:has(> * > * > [data-testid="chat-input"]):not(:has(nav)) {
   background: var(--bc-composer-bg) !important;
   border-color: var(--bc-composer-border) !important;
+  /* Whichever of these ancestors is the real card, claude.ai insets it
+     slightly from the outer rounded card it sits in \u2014 so a square-cornered
+     fill here draws a visibly sharp rectangle inside a rounded box (verified
+     on a live "new chat" screen). Round it for the same reason as the
+     chat-input rule below. Still no border-width and no explicit size, so
+     this cannot recreate the old "cut-off rectangle" (that came from a
+     mismatched border + width, neither of which is set here), and stacked
+     same-color fills on nested ancestors still merge into one region. */
+  border-radius: ${RADIUS} !important;
 }
 [data-testid="chat-input"] {
   /* Safety net (see comment above): same --bc-composer-bg as the card rules
-     above, flat fill only \u2014 no border/radius/width \u2014 so it merges seamlessly
+     above, flat fill only \u2014 no border, no width \u2014 so it merges seamlessly
      when an ancestor rule also matched, and still guarantees readable text
-     when none of them did. */
+     when none of them did.
+     The one exception to "flat fill only" is the radius below. The old
+     hard-square fill read as a distinct sharp-cornered rectangle sitting
+     inside the rounded composer card whenever it was even slightly lighter
+     or darker than that card \u2014 the "rectangle inside the chatbox" bug.
+     Adding ONLY a radius (still no border, no width, no explicit size)
+     cannot reintroduce the original "cut-off rectangle" bug: that one came
+     from a mismatched border + width drawing a visibly separate box short of
+     the card's right edge, neither of which is set here. Worst case the
+     corners round slightly more or less than the native card's \u2014 cosmetic,
+     and strictly closer to it than square corners were. */
   background: var(--bc-composer-bg) !important;
   color: var(--bc-composer-fg) !important;
+  border-radius: ${RADIUS} !important;
 }
 /* ProseMirror renders its placeholder either as a [data-placeholder]
    attribute-carrying node or an .is-empty node, with the visible text
@@ -660,6 +680,71 @@ form:has(> * > * > [data-testid="chat-input"]):not(:has(nav)) {
 [data-testid="chat-input"] [data-placeholder],
 [data-testid="chat-input"][data-placeholder] {
   color: var(--bc-composer-placeholder) !important;
+}
+
+/* The "Claude is AI and can make mistakes" strip under the composer.
+   claude.ai wraps it in a div carrying its own "bg-bg-100" utility \u2014 an
+   OPAQUE fill (measured live: rgb(32, 32, 31)) that is invisible in the
+   stock app only because it happens to equal the stock page background.
+   Against any BetterClaude theme it stops matching and reads as a solid box
+   sitting behind the warning, which is not what the real app looks like.
+   Three things are corrected here, all measured on the live element:
+     - background -> transparent, so the line floats on the page like it does
+       in the stock app instead of sitting in a slab;
+     - font-size -> 12px. Its "text-xs" (0.75rem = 12px) was being overridden
+       to 15px by this scaffold's own base font-size rule, which is why the
+       small print wasn't small. An explicit px value is used rather than an
+       em/rem so it can't drift with the user's base-size setting \u2014 this is
+       fine print, not body copy;
+     - color -> the muted token, since claude.ai's own "text-text-500" muting
+       loses to the scaffold's forced page text color.
+   Scoped through :has() to the sticky container that actually holds the
+   composer, so it can only ever match the strip attached to the composer and
+   not some other small centered text elsewhere in the app. Both the
+   "text-xs" and "text-center" hooks are listed because either utility alone
+   is enough to identify it if claude.ai drops the other.
+   NOTE: no backticks anywhere in this comment \u2014 it sits inside a template
+   literal, where one stray backtick silently ends the string and breaks the
+   entire module. */
+[class*="sticky"]:has([data-testid="chat-input"]) > div[class*="text-xs"]${OWN_CHROME_EXCLUDE},
+[class*="sticky"]:has([data-testid="chat-input"]) > div[class*="text-center"]${OWN_CHROME_EXCLUDE} {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  color: var(--bc-text-muted) !important;
+  font-size: 12px !important;
+}
+/* The link inside the strip is a page element too, so the same page-wide
+   forced text color lands on it directly and the muting above would stop at
+   the wrapper. OWN_CHROME_EXCLUDE is carried here for the same reason as
+   above: without it this selector loses to that rule's ID-heavy
+   specificity, and the declaration would sit in the stylesheet doing
+   nothing \u2014 measured, not assumed (the computed color stayed the full page
+   text color until the exclusion was appended). No hex literal is written
+   in this comment on purpose: it ships inside every generated theme file,
+   and the audit rejects hardcoded hex there. */
+[class*="sticky"]:has([data-testid="chat-input"]) > div[class*="text-xs"] a${OWN_CHROME_EXCLUDE},
+[class*="sticky"]:has([data-testid="chat-input"]) > div[class*="text-center"] a${OWN_CHROME_EXCLUDE} {
+  color: var(--bc-text-muted) !important;
+  font-size: 12px !important;
+}
+
+/* Popovers that open UPWARD out of the composer (the model picker is the
+   one users hit constantly). Measured live: the menu's bottom edge landed at
+   y=775 with the trigger at y=779 \u2014 a 4px gap \u2014 which put the menu's lower
+   border flush against the composer card it opens out of, so the two boxes
+   read as one welded shape instead of a menu floating above a card.
+   Only elements the popper has actually placed above their trigger are
+   touched (data-side="top"), so menus that open downward, sideways, or from
+   anywhere else in the app keep their native offset.
+   The transform goes on the menu CONTENT, not on the popper wrapper: the
+   wrapper is what the positioning logic owns, and overwriting its transform
+   is how you break placement entirely. The content's own transform was
+   measured as "none", so this is a purely visual nudge that leaves every
+   anchor calculation untouched. */
+[role="menu"][data-side="top"],
+[role="listbox"][data-side="top"] {
+  transform: translateY(-8px) !important;
 }
 
 /* All buttons: relational radius (never a raw px), resting state only.
@@ -983,6 +1068,11 @@ ${animate ? `
       var BASE_STYLE_ID = "betterclaude-base";
       var SELECTORS = {
         sidebar: 'nav:has([data-testid="pin-sidebar-toggle"])',
+        // claude.ai's own pin/unpin control for the sidebar (the pin glyph near the
+        // top-right of the nav). Same verified testid the sidebar selector above
+        // hangs off — hiding this key never breaks that, because :has() matches a
+        // display:none child just fine.
+        sidebarPin: '[data-testid="pin-sidebar-toggle"]',
         sidebarToggle: 'button[aria-label*="sidebar" i]',
         chatHeader: "header",
         composer: '[data-testid="chat-input"]',
@@ -1084,7 +1174,11 @@ ${animate ? `
       function buildBaseCSS(settings) {
         const { layout, fonts } = settings;
         const ae = settings.appearanceEditor || {};
-        const hideRules = (layout.hiddenElements || []).map((key) => SELECTORS[key]).filter(Boolean).map((sel) => `${sel} { display: none !important; }`).join("\n");
+        const hiddenKeys = [
+          ...layout.hiddenElements || [],
+          ...layout.hideSidebarPin ? ["sidebarPin"] : []
+        ];
+        const hideRules = [...new Set(hiddenKeys)].map((key) => SELECTORS[key]).filter(Boolean).map((sel) => `${sel} { display: none !important; }`).join("\n");
         const hasCustomWidth = layout.sidebarWidthPx != null;
         const ratio = shapeRatio(ae.shape || "rounded");
         const sizeScale = clampNumber(
@@ -1821,12 +1915,21 @@ ${text}` : text;
           dyslexiaMode: false
         },
         layout: {
-          // null = don't touch claude.ai's own sidebar width at all. Forcing a
-          // fixed pixel width (even one that "sounds" reasonable) can trip
-          // claude.ai's own responsive/collapse logic and drop it into an
-          // icon-only rail with no chat names — so this only kicks in once a
-          // user explicitly picks a width in Settings -> Layout.
+          // null = don't touch claude.ai's own sidebar width at all; a number
+          // forces that width. The Layout section's slider writes a number as soon
+          // as it's dragged, and a "Use claude.ai's default width" button puts it
+          // back to null — it used to sit disabled behind a separate "recommended"
+          // checkbox, which read as the control being permanently locked.
           sidebarWidthPx: null,
+          // claude.ai's own pin/collapse toggle for the sidebar. Hidden by default
+          // because this app wants the sidebar left open at a chosen width (chat
+          // titles and section names visible) rather than collapsed to an icon
+          // rail. Hidden with display:none rather than removed, specifically
+          // because theme-engine's sidebar selector reaches the <nav> THROUGH this
+          // button (`nav:has([data-testid="pin-sidebar-toggle"])`) — :has() still
+          // matches a display:none child, so all sidebar theming survives; actually
+          // deleting the node would silently un-theme the entire sidebar.
+          hideSidebarPin: true,
           sidebarPosition: "left",
           // "left" | "right"
           compactMode: false,
@@ -1866,6 +1969,19 @@ ${text}` : text;
             "goal-tracker": false
           },
           data: {}
+        },
+        playful: {
+          // Snake is no longer something you sit and play inside the settings
+          // panel. It surfaces where waiting actually happens: while Claude is
+          // generating a response, as a dismissable corner popup (see
+          // electron/preload.js mountWaitingGame). Dismissing it with the X only
+          // dismisses THAT wait — it comes back on the next one, which is the
+          // point of it.
+          snakeWhileWaiting: true,
+          // How long Claude has to stay busy before the popup appears. Short
+          // answers finish well inside this, so the game never flashes up and
+          // vanishes on a one-line reply.
+          snakeDelayMs: 2e3
         },
         keyboardShortcuts: {
           toggleSettings: "CommandOrControl+,",

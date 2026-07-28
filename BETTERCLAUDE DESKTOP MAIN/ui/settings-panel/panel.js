@@ -24,7 +24,7 @@
 
 const { openColorPopover } = require("./color-popover");
 const { THEME_LABELS } = require("./theme-labels");
-const { el, field } = require("./dom-helpers");
+const { el, field, toggleField } = require("./dom-helpers");
 const { COMPONENT_FAMILIES, contrastRatio, WCAG_AA_BODY } = require("../../core/tokens");
 const { featuredBundles } = require("../../core/vibe-bundles");
 const ICONS = require("../../core/icons");
@@ -1315,29 +1315,48 @@ class SettingsPanel {
     const wrap = el("div", { class: "bc-section" });
     wrap.appendChild(el("h2", { text: "Layout" }));
 
+    // The slider is always live now. It used to render `disabled` behind a
+    // separate "use claude.ai's normal sidebar (recommended)" checkbox that
+    // defaulted to on, so out of the box the width control looked broken —
+    // you could drag it and nothing happened. Dragging writes the width
+    // immediately; the reset button below is the way back to claude.ai's own
+    // width (null = don't touch it at all).
     const isCustomWidth = settings.layout.sidebarWidthPx != null;
-    const autoToggle = el("input", { type: "checkbox" });
-    autoToggle.checked = !isCustomWidth;
     const width = el("input", {
       type: "range", min: "180", max: "420",
       value: settings.layout.sidebarWidthPx != null ? settings.layout.sidebarWidthPx : 280,
     });
-    const widthLabel = el("span", { class: "bc-range-value", text: `${width.value}px` });
-    width.disabled = !isCustomWidth;
-    autoToggle.addEventListener("change", () => {
-      width.disabled = autoToggle.checked;
-      this._set("layout.sidebarWidthPx", autoToggle.checked ? null : Number(width.value));
+    const widthLabel = el("span", {
+      class: "bc-range-value",
+      text: isCustomWidth ? `${width.value}px` : `${width.value}px (auto)`,
     });
     width.addEventListener("input", () => {
       widthLabel.textContent = `${width.value}px`;
       this._set("layout.sidebarWidthPx", Number(width.value));
     });
-    wrap.appendChild(field("Use claude.ai's normal sidebar (recommended)", autoToggle));
+    wrap.appendChild(field("Sidebar width", el("div", { class: "bc-range-row" }, [width, widthLabel])));
+    wrap.appendChild(el("button", {
+      class: "bc-btn bc-btn-secondary",
+      text: "Use claude.ai's default width",
+      onclick: () => {
+        this._set("layout.sidebarWidthPx", null);
+        this.renderSection();
+      },
+    }));
     wrap.appendChild(el("p", {
       class: "bc-hint",
-      text: "Forcing a custom width can trip claude.ai's own responsive layout and collapse the sidebar to icons-only. Leave this on unless you know what you want.",
+      text: "\"(auto)\" means claude.ai's own width is untouched — drag the slider to force a fixed one. Wider keeps full chat titles and section names readable instead of truncating them.",
     }));
-    wrap.appendChild(field("Sidebar width", el("div", { class: "bc-range-row" }, [width, widthLabel])));
+
+    wrap.appendChild(toggleField(
+      "Hide claude.ai's sidebar pin button",
+      settings.layout.hideSidebarPin !== false,
+      (v) => this._set("layout.hideSidebarPin", v),
+    ));
+    wrap.appendChild(el("p", {
+      class: "bc-hint",
+      text: "Removes the pin glyph near the top of the sidebar. With it hidden the sidebar keeps whatever expanded state it's in now — turn this back off if you ever want to collapse it again.",
+    }));
 
     const position = el("select", {}, [
       el("option", { value: "left", text: "Left" }),
