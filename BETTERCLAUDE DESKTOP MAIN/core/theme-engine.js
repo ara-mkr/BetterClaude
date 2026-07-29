@@ -359,6 +359,24 @@ code, pre, kbd, samp {
 .leading-none, .leading-none * {
   line-height: 1 !important;
 }
+/* Sub-pixel residue from the fix above: the label div's own box still lands
+   ~0.5px lower than its fixed-size sibling icon (rounding in claude.ai's own
+   layout math, not something a line-height fix can close), and glyph optics
+   (no descender in most model names) read as sitting even lower than that.
+   Nudge the model picker's label up slightly to compensate. */
+[data-testid="model-selector-dropdown"] .leading-none {
+  transform: translateY(-1px);
+}
+/* The model picker trigger's hover/open highlight is a separate absolutely-
+   positioned inset-0 layer (class cds-btn-squish) sized to exactly match
+   the button's own height, which only leaves ~15px of clearance to the
+   composer card's bottom edge — tight enough to read as the glow touching
+   the composer border. Inset it a few px on top/bottom so the highlight is
+   visibly shorter than the button and sits clear of that edge. */
+[data-testid="model-selector-dropdown"] .cds-btn-squish {
+  top: 4px !important;
+  bottom: 4px !important;
+}
 /* No "message" testid/class exists on the live site to scope this to, so it
    targets real headings anywhere in the app content instead. :where() keeps
    specificity at zero (matching the body rule above) and, crucially, keeps
