@@ -53,6 +53,7 @@
       "plugins/**/*",
       "build/*.bundle.js",
       "assets/**/*",
+      "resources/**/*",
       "package.json",
       "!**/*.map",
       "!esbuild.config.js"
