@@ -36,6 +36,9 @@ const BUDDIES = [
       typing: "astronaut-typing.webm",
       thinking: "astronaut-thinking.webm",
       blastoff: "astronaut-blastoff.webm",
+      // Played only while the buddy is held, so it is deliberately outside
+      // `cycle`. Opens on a startled take, then settles into a run.
+      drag: "astronaut-drag.webm",
     },
     // Order of the working-state loop. Advanced by each clip's `ended` event,
     // never by a timer, so it stays correct if clip durations drift.

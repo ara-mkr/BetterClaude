@@ -73,3 +73,46 @@ These builds are **unsigned**. That's expected in this setup — there's no Appl
 - **Windows**: unsigned installers trigger SmartScreen warnings ("Windows protected your PC"). Users can click "More info" → "Run anyway", but for public distribution without that warning you need a code signing certificate (EV certs also get you instant SmartScreen reputation).
 
 Neither of these is configured here — add signing identities/certificates to the `mac`/`win` build config (and `CSC_LINK`/`CSC_KEY_PASSWORD` env vars, or their Windows equivalents) when you're ready to distribute publicly.
+
+**⚠️ This directly limits in-app auto-update (see below):**
+
+- **macOS — auto-update will not complete unsigned.** `electron-updater` verifies that the downloaded build's code signature matches the running app before swapping it in. On an unsigned or ad-hoc-signed build the download succeeds and then install fails with a code-signature error. macOS auto-update effectively **requires** a Developer ID Application certificate + notarization. Until then, macOS users must update by downloading the new `.dmg` manually — which is exactly why every failure path in the UI offers an "Open Releases" button.
+- **Windows — auto-update does work unsigned.** NSIS updates apply without a certificate. The cost is a SmartScreen "unrecognized publisher" prompt on each install until the build is signed and has accumulated reputation.
+
+## Releasing (in-app auto-update)
+
+Updates are served straight from **GitHub Releases** — no backend server. `build.publish` in `package.json` points `electron-updater` at `ara-mkr/betterclaude`; electron-builder writes a `latest-mac.yml` / `latest.yml` feed next to the artifacts, and the app polls that.
+
+Cutting a release:
+
+```bash
+# 1. Bump the version (must be semver; this is the value the app compares against).
+#    `npm version` writes package.json AND creates the matching git tag.
+npm version patch          # 0.2.0 -> 0.2.1   (or: minor / major / 0.3.0)
+
+# 2. Push the commit and the tag. The tag MUST be vX.Y.Z — electron-builder
+#    derives the GitHub release from it, and electron-updater matches on it.
+git push && git push --tags
+
+# 3. Build every target and upload the artifacts + update feed to the
+#    GitHub release in one step.
+export GH_TOKEN=<a GitHub personal access token with `repo` scope>
+npm run build:core && npx electron-builder --mac --arm64 --x64 --win --x64 --publish always
+```
+
+Notes:
+
+- `npm version` refuses to run on a dirty working tree — commit first.
+- The release is created as a **draft**. Add the changelog to the release body and publish it; that body is what the in-app banner shows as its "what's new" blurb (stripped to plain text, capped at 160 chars — see `summarizeReleaseNotes` in `electron/main.js`).
+- `GH_TOKEN` is only needed for `--publish`; plain `npm run build:all` still works offline.
+- Keep the `package.json` version and the git tag in lockstep. A tag without the matching `version` bump produces a release the running app will not offer as an update.
+- There is **no CI/GitHub Actions workflow** for this yet — the sequence above is manual.
+- Bumping the version also advances `electron-store`'s migration pointer; see the comment above the `new Store(...)` call in `electron/main.js` before adding a settings migration keyed to a new version.
+
+### How it behaves in the app
+
+- Checks the feed ~5s after launch (skipped if Settings → Appearance → Updates → "Automatically check for updates" is off), plus on demand via that section's "Check now" and the Help → Check for Updates… menu item.
+- Nothing downloads automatically (`autoDownload = false`) and nothing installs on quit (`autoInstallOnAppQuit = false`) — both require an explicit click.
+- An available update raises a dismissible bottom-right banner (`core/update-banner.js`). "Later" suppresses **that version only**; the next release surfaces again.
+- Background check failures stay silent (Settings shows them); only a hand-triggered check surfaces an error in the banner, always alongside an "Open Releases" fallback.
+- Running unpackaged (`npm start`) reports "Updates only check in packaged builds" rather than a confusing feed error.

@@ -1,11 +1,26 @@
 #betterclaude-settings-panel {
   position: fixed;
-  /* Inset below the custom title bar (46px, see ui/title-bar.css) rather than
-     the full viewport — the title bar's z-index is intentionally higher (it
-     must stay clickable/draggable while the modal is open), so a plain
-     inset:0 here let it visually clip the top of the vertically-centered
-     modal. */
-  top: 46px;
+  /* Inset below the custom title bar rather than the full viewport — the
+     title bar's z-index is intentionally higher (it must stay clickable/
+     draggable while the modal is open), so a plain inset:0 here let it
+     visually clip the top of the vertically-centered modal.
+
+     Read from --bc-tb-h (published by ui/title-bar.css from the shared
+     TITLE_BAR_HEIGHT constant) instead of repeating the number, which is how
+     this file came to hardcode a height that electron/window-chrome.js no
+     longer agreed with.
+
+     The 0px fallback is load-bearing, not defensive filler: this sheet ships
+     to two targets. Electron injects it through preload's injectStaticCSS
+     alongside title-bar.css, so the variable is defined and resolves to the
+     bar's real height. The browser extension copies ui/*.css verbatim
+     (BetterClaudeExtension/build.js) and lists this file in its manifest,
+     but never loads title-bar.css and never mounts a title bar at all —
+     there is no window chrome to replace in a tab. So the variable is
+     undefined there and the panel correctly claims the full viewport,
+     instead of the dead 46px band the old hardcoded value reserved for a
+     bar that does not exist in that build. */
+  top: var(--bc-tb-h, 0px);
   right: 0;
   bottom: 0;
   left: 0;

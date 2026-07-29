@@ -20,6 +20,9 @@
  *   host.getClipboardBridgeStatus() / host.onClipboardBridgeStatus(cb) / host.pushClipboardNow() / host.testClipboardBridgeConnection()
  *   host.openAnalyticsDashboard()
  *   host.syncTeamNow() / host.getTeamSyncDiff(relPath) / host.applyTeamSyncFile(relPath) / host.keepLocalTeamSyncFile(relPath) / host.openTeamSyncFolder()
+ *   host.getAppInfo() -> Promise<{version, isPackaged, githubUrl, releasesUrl}>
+ *   host.getUpdateStatus() / host.onUpdateStatus(cb)
+ *   host.checkForUpdates() / host.downloadUpdate() / host.installUpdate() / host.openReleasesPage()
  */
 
 const { openColorPopover } = require("./color-popover");
@@ -32,7 +35,7 @@ const ICONS = require("../../core/icons");
 const cursorSoundSection = require("./sections/cursor-sound");
 const motionNotificationsSection = require("./sections/motion-notifications");
 const focusInputSection = require("./sections/focus-input");
-const widgetsPersonalitySection = require("./sections/widgets-personality");
+const widgetsSection = require("./sections/widgets");
 const buddiesSection = require("./sections/buddies");
 const powerUserSection = require("./sections/power-user");
 const playfulSection = require("./sections/playful");
@@ -84,7 +87,6 @@ const SECTIONS = [
   "Layout",
   "Animation & Motion",
   "Widgets",
-  "Personality & Fun",
   "Buddies",
   "Notifications",
   "Focus & Reading",
@@ -207,7 +209,6 @@ class SettingsPanel {
       "Layout": () => this._renderLayout(),
       "Animation & Motion": () => this._renderMotion(),
       "Widgets": () => this._renderWidgets(),
-      "Personality & Fun": () => this._renderPersonality(),
       "Buddies": () => this._renderBuddies(),
       "Notifications": () => this._renderNotifications(),
       "Focus & Reading": () => this._renderFocusReading(),
@@ -305,6 +306,27 @@ class SettingsPanel {
       });
     }
 
+    wrap.appendChild(toggleField(
+      "Automatically check for updates",
+      (settings.updates || {}).autoCheck !== false,
+      (v) => this._set("updates.autoCheck", v),
+    ));
+    wrap.appendChild(el("p", {
+      class: "bc-hint",
+      text: "Checks the GitHub Releases feed shortly after launch. Nothing is ever downloaded or installed without you clicking through first.",
+    }));
+
+    // Version line — the only place the app prints its own version; the
+    // value comes from package.json via app.getVersion() over IPC rather
+    // than being duplicated as a literal anywhere in the renderer.
+    const versionLine = el("p", { class: "bc-hint", text: "BetterClaude" });
+    wrap.appendChild(versionLine);
+    if (this.host.getAppInfo) {
+      this.host.getAppInfo().then((info) => {
+        versionLine.textContent = `BetterClaude v${info.version}${info.isPackaged ? "" : " (dev build)"}`;
+      }).catch(() => {});
+    }
+
     this.contentEl.appendChild(wrap);
   }
 
@@ -325,6 +347,11 @@ class SettingsPanel {
     };
     info.appendChild(el("strong", { text: "Auto-update" }));
     info.appendChild(el("span", { text: labels[status.state] || "Not checked yet." }));
+    // Release blurb, when GitHub gave us one. textContent (via el's `text`),
+    // never `html` — this is a release body we don't author.
+    if (status.state === "available" && status.notes) {
+      info.appendChild(el("span", { class: "bc-hint", text: status.notes }));
+    }
     box.appendChild(info);
 
     const actionBtn = el("button", { class: "bc-btn bc-btn-secondary" });
@@ -340,6 +367,19 @@ class SettingsPanel {
       actionBtn.onclick = () => this.host.checkForUpdates();
     }
     box.appendChild(actionBtn);
+
+    // Auto-update can fail for reasons the user can't act on (unsigned
+    // build, no release published yet, offline, API rate limit). Leave a
+    // manual path to the new version rather than dead-ending — but keep
+    // "Check now" above so the failure is also retryable.
+    if (status.state === "error" && this.host.openReleasesPage) {
+      const releasesBtn = el("button", {
+        class: "bc-btn bc-btn-secondary",
+        text: "Open Releases",
+      });
+      releasesBtn.onclick = () => this.host.openReleasesPage();
+      box.appendChild(releasesBtn);
+    }
   }
 
   _renderThemes() {
@@ -1465,7 +1505,7 @@ Object.assign(
   cursorSoundSection,
   motionNotificationsSection,
   focusInputSection,
-  widgetsPersonalitySection,
+  widgetsSection,
   buddiesSection,
   powerUserSection,
   playfulSection,

@@ -337,6 +337,83 @@
   .bc-toast-popup { animation: none; }
 }
 
+/* --- In-app update banner (core/update-banner.js) ---
+   Sits just below the toast tier so a toast fired at the same moment still
+   reads on top, and anchors bottom-right rather than centre so it never
+   covers claude.ai's composer. */
+#betterclaude-update-banner {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483600;
+  display: none;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: #1c1630;
+  border: 1px solid #3a2e5c;
+  border-left: 3px solid var(--bc-accent, #6059e6);
+  border-radius: 12px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.45);
+  color: #ece7fb;
+  font: 13px -apple-system, sans-serif;
+  animation: bc-toast-popup-in 200ms ease;
+}
+#betterclaude-update-banner.bc-open { display: flex; }
+.bc-update-text { display: flex; flex-direction: column; gap: 3px; }
+.bc-update-text strong { font-size: 13px; font-weight: 600; }
+.bc-update-blurb {
+  font-size: 12px;
+  opacity: 0.72;
+  line-height: 1.45;
+  /* Release bodies are arbitrary length — cap the blurb at three lines
+     rather than letting the banner grow to fill the viewport. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.bc-update-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.bc-update-progress-fill {
+  height: 100%;
+  background: var(--bc-accent, #6059e6);
+  border-radius: 999px;
+  transition: width 160ms linear;
+}
+.bc-update-actions { display: flex; gap: 8px; }
+.bc-update-btn {
+  flex: 1;
+  padding: 7px 12px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.bc-update-primary {
+  background: var(--bc-accent, #6059e6);
+  color: #fff;
+}
+.bc-update-primary:hover { filter: brightness(1.1); }
+.bc-update-ghost {
+  background: transparent;
+  border-color: #3a2e5c;
+  color: #ece7fb;
+}
+.bc-update-ghost:hover { background: rgba(255, 255, 255, 0.08); }
+.bc-update-btn:focus-visible { outline: 2px solid var(--bc-accent, #6059e6); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  #betterclaude-update-banner { animation: none; }
+  .bc-update-progress-fill { transition: none; }
+}
+
 /* --- Diff Viewer (Cmd+K -> "Compare Responses") --- */
 #bc-diff-viewer-overlay {
   position: fixed;

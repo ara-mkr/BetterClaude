@@ -36,6 +36,8 @@ const { buildFileBlock, findAndReplaceInComposer, insertFileBlock } = require(".
 const { deriveChannelId, deriveKey, encryptText, decryptText } = require("./clipboard-bridge");
 const { renderLineChart, renderBarChart } = require("./analytics-charts");
 const { AnalyticsDashboard, presetRange } = require("./analytics-dashboard");
+const { UpdateBanner, BANNER_ID } = require("./update-banner");
+const { mountTopStripGuard, probeReservedStrip } = require("./top-strip-guard");
 
 module.exports = {
   ThemeEngine,
@@ -84,4 +86,11 @@ module.exports = {
   renderBarChart,
   AnalyticsDashboard,
   presetRange,
+  // In-app updates (GitHub Releases feed; transport supplied by the host).
+  UpdateBanner,
+  BANNER_ID,
+  // Diagnostic: warns when claude.ai's own chrome ends up underneath the
+  // custom title bar. Inert in the extension build, which reserves no strip.
+  mountTopStripGuard,
+  probeReservedStrip,
 };

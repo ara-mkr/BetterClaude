@@ -33,26 +33,51 @@
     pointer-events: none;
   }
   .hidden { display: none !important; }
-  #stage.dragging { cursor: grabbing; }
+  /* Native macOS open/closed-hand cursors -- exactly what `grab`/`grabbing`
+     render as on this platform. */
   #stage.hot { cursor: grab; }
+  #stage.dragging { cursor: grabbing; }
+
+  /* Held, the buddy shrinks a touch and rises, so he reads as hovering in the
+     cursor's grip rather than running along a floor. Keyframes rather than a
+     transition: the element animates in from display:none, and transitions
+     don't run on that. */
+  #drag { transform: scale(0.9) translateY(-3%); }
+  #stage.dragging #drag { animation: buddy-lift 160ms ease-out; }
+  @keyframes buddy-lift {
+    from { transform: scale(1) translateY(0); }
+    to   { transform: scale(0.9) translateY(-3%); }
+  }
 </style>
 </head>
 <body>
 <div id="stage">
   <img id="idle" alt="">
+  <video id="drag" class="hidden" muted playsinline loop preload="auto"></video>
 </div>
 <script>
 (() => {
   const stage = document.getElementById("stage");
   const idleEl = document.getElementById("idle");
+  const dragEl = document.getElementById("drag");
 
   let cfg = null;            // { buddy, assets, animations, hitBox }
   let videos = {};           // state -> <video>
   let working = false;
   let cycleIndex = 0;
-  let current = null;        // currently visible video state, or null for idle
+  let current = null;        // cycle state that owns the stage, or null for idle
 
   // --- rendering -----------------------------------------------------------
+
+  // Being held beats every work state: the buddy runs in your hand whatever
+  // Claude is doing behind him. The work cycle keeps advancing underneath,
+  // hidden, so putting him down doesn't rewind it.
+  //
+  // Gated on the element's own src rather than on cfg, so a clip that failed
+  // to load stays disabled instead of being retried on every pickup.
+  function dragActive() {
+    return stage.classList.contains("dragging") && dragEl.hasAttribute("src") && animationsOn();
+  }
 
   function showIdle() {
     current = null;
@@ -63,14 +88,15 @@
       try { v.currentTime = 0; } catch (_e) { /* not seekable yet */ }
       v.classList.add("hidden");
     });
-    idleEl.classList.remove("hidden");
+    if (!dragActive()) idleEl.classList.remove("hidden");
   }
 
   function playState(state) {
     const v = videos[state];
     if (!v) return showIdle();
     current = state;
-    Object.entries(videos).forEach(([k, el]) => el.classList.toggle("hidden", k !== state));
+    Object.entries(videos).forEach(([k, el]) =>
+      el.classList.toggle("hidden", k !== state || dragActive()));
     idleEl.classList.add("hidden");
     try { v.currentTime = 0; } catch (_e) { /* ignore */ }
     // Autoplay is allowed here (muted, no audio track at all), but play()
@@ -111,6 +137,14 @@
     if (!cfg || !cfg.buddy) return;
 
     idleEl.src = cfg.assets.idle;
+
+    // The drag clip lives outside `cycle`, so it is wired up here rather than
+    // in the loop below. A buddy without one simply never swaps on pickup.
+    if (dragEl.dataset.buddy !== cfg.buddy.id) {
+      dragEl.dataset.buddy = cfg.buddy.id;
+      if (cfg.assets.drag) dragEl.src = cfg.assets.drag;
+      else dragEl.removeAttribute("src");
+    }
 
     // Rebuild the video elements only when the buddy actually changes;
     // otherwise a settings tick would reload every clip mid-animation.
@@ -162,16 +196,53 @@
 
   window.addEventListener("mousemove", (e) => {
     if (dragging) {
+      // A click (pickup released without moving) opens the main window
+      // instead of just being a no-op drag, so track whether this pointer
+      // ever actually traveled since mousedown.
+      if (!moved && Math.hypot(e.clientX - downX, e.clientY - downY) > CLICK_SLOP) moved = true;
       window.buddyAPI.dragMove(e.screenX, e.screenY);
       return;
     }
     setInteractive(overSprite(e.clientX, e.clientY));
   });
 
+  // Swap the stage over to the drag clip and back. Kept separate from the
+  // window-moving IPC so a buddy with no drag asset still drags normally.
+  function setDragVisual(on) {
+    if (!dragActive() && on) return;      // no drag clip, or animations are off
+    if (on) {
+      idleEl.classList.add("hidden");
+      Object.values(videos).forEach((v) => v.classList.add("hidden"));
+      dragEl.classList.remove("hidden");
+      // Always restart: every pickup should open on the startled take.
+      try { dragEl.currentTime = 0; } catch (_e) { /* not seekable yet */ }
+      const p = dragEl.play();
+      if (p && p.catch) p.catch(() => {});
+      return;
+    }
+    dragEl.pause();
+    dragEl.classList.add("hidden");
+    // Hand the stage back to whatever the work cycle reached while he was up.
+    if (current !== null && videos[current]) videos[current].classList.remove("hidden");
+    else idleEl.classList.remove("hidden");
+  }
+
+  let downX = 0, downY = 0, moved = false;
+  const CLICK_SLOP = 4; // px of travel still counted as a click, not a drag
+
   window.addEventListener("mousedown", (e) => {
     if (e.button !== 0 || !overSprite(e.clientX, e.clientY)) return;
     dragging = true;
-    stage.classList.add("dragging");
+    downX = e.clientX;
+    downY = e.clientY;
+    moved = false;
+    // Re-assert rather than trust the cached flag: the click itself just
+    // proved the pointer is over the sprite, and the cursor must not silently
+    // stay default if "hot" had been cleared (e.g. a mouseleave) between the
+    // last hover tick and this click.
+    setInteractive(true);
+    stage.classList.add("dragging");   // before setDragVisual: dragActive() reads it
+    setDragVisual(true);
     window.buddyAPI.dragStart(e.screenX, e.screenY);
     e.preventDefault();
   });
@@ -180,7 +251,11 @@
     if (!dragging) return;
     dragging = false;
     stage.classList.remove("dragging");
+    setDragVisual(false);
     window.buddyAPI.dragEnd();
+    // Dock icon is hidden, so picking the buddy up and putting it straight
+    // back down (no travel) is how you reopen the main window.
+    if (!moved) window.buddyAPI.openMain();
   };
   window.addEventListener("mouseup", endDrag);
   // The pointer can outrun the window during a fast drag and leave it; without
@@ -189,6 +264,14 @@
   window.addEventListener("blur", endDrag);
 
   // --- wire up -------------------------------------------------------------
+
+  // A broken drag clip must not leave an empty stage mid-drag; drop back to
+  // the normal states and let the pickup carry on with just the cursor change.
+  dragEl.addEventListener("error", () => {
+    console.error("[BetterClaude] buddy drag clip failed to load:", dragEl.currentSrc);
+    dragEl.removeAttribute("src");
+    setDragVisual(false);
+  });
 
   window.buddyAPI.onState(build);
   window.buddyAPI.onWorking((w) => {

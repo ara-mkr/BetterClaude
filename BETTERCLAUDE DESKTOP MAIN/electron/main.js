@@ -24,6 +24,15 @@ const { deriveChannelId, encryptText, decryptText } = require("../core/clipboard
 const analyticsDb = require("./analytics-db");
 const teamSync = require("./team-sync");
 
+// Single source of truth for the repo that backs the update feed and every
+// "view on GitHub" affordance. Must stay in lockstep with package.json's
+// build.publish block: electron-updater reads the actual feed URL from the
+// app-update.yml electron-builder generates out of THAT, not from here, so a
+// mismatch means the fallback link points somewhere the update didn't come from.
+const GITHUB_REPO = "ara-mkr/betterclaude";
+const GITHUB_URL = `https://github.com/${GITHUB_REPO}`;
+const RELEASES_URL = `${GITHUB_URL}/releases/latest`;
+
 const THEMES_DIR = path.join(__dirname, "..", "themes");
 const BUILTIN_PLUGINS_DIR = path.join(__dirname, "..", "plugins");
 const ASSETS_DIR = path.join(__dirname, "..", "assets");
@@ -136,6 +145,22 @@ function closeSplashWindow() {
 }
 
 // --- Auto-updater ---
+//
+// CODE SIGNING — read before shipping a public release:
+//   * macOS: electron-updater REFUSES to apply an update whose signature
+//     doesn't match the running app. An unsigned/ad-hoc-signed build will
+//     download fine and then fail at install with a code-signature error,
+//     and Gatekeeper additionally quarantines the downloaded .dmg/.zip so
+//     first-launch shows "app is damaged / can't be opened". Fixing this
+//     needs an Apple Developer ID Application cert + notarization
+//     (electron-builder `mac.notarize`). NOT attempted here.
+//   * Windows: NSIS updates DO apply unsigned, but SmartScreen shows an
+//     "unrecognized publisher" warning on every install until the build is
+//     signed with an EV/OV code-signing cert and has built reputation.
+//   Until both are in place, treat the in-app updater as best-effort: the
+//   "error" state below deliberately carries releasesUrl so the UI can
+//   always fall back to a manual download instead of dead-ending.
+//
 // state: "idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "error"
 let updateStatus = { state: "idle" };
 
@@ -143,17 +168,43 @@ function broadcastUpdateStatus() {
   BrowserWindow.getAllWindows().forEach((w) => w.webContents.send("betterclaude:update-status", updateStatus));
 }
 
+// GitHub release bodies arrive either as a raw markdown/HTML string or, when
+// several releases were skipped, as [{ version, note }, ...]. Collapse both
+// into one short plain-text line — the banner has room for a blurb, not a
+// changelog, and injecting release HTML into claude.ai's DOM is not something
+// we want to do with text we don't control.
+function summarizeReleaseNotes(raw) {
+  const text = Array.isArray(raw)
+    ? raw.map((r) => (r && r.note) || "").join(" ")
+    : String(raw || "");
+  const plain = text
+    .replace(/<[^>]*>/g, " ")       // strip tags
+    .replace(/^[#>*\-\s]+/gm, " ")  // strip markdown bullet/heading marks
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!plain) return "";
+  return plain.length > 160 ? `${plain.slice(0, 157)}…` : plain;
+}
+
 function setupAutoUpdater() {
   // Ask before spending the user's bandwidth — checkForUpdates() alone just
   // reports availability, downloadUpdate() is a separate, explicit step
   // triggered from the renderer once the user opts in.
   autoUpdater.autoDownload = false;
+  // Never install behind the user's back on quit; the renderer's
+  // "Restart & Install" button is the only path to quitAndInstall().
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.on("checking-for-update", () => {
     updateStatus = { state: "checking" };
     broadcastUpdateStatus();
   });
   autoUpdater.on("update-available", (info) => {
-    updateStatus = { state: "available", version: info.version };
+    updateStatus = {
+      state: "available",
+      version: info.version,
+      notes: summarizeReleaseNotes(info.releaseNotes),
+      releasesUrl: RELEASES_URL,
+    };
     broadcastUpdateStatus();
   });
   autoUpdater.on("update-not-available", () => {
@@ -161,15 +212,20 @@ function setupAutoUpdater() {
     broadcastUpdateStatus();
   });
   autoUpdater.on("error", (err) => {
-    updateStatus = { state: "error", error: err.message };
+    updateStatus = { state: "error", error: err.message, releasesUrl: RELEASES_URL };
     broadcastUpdateStatus();
   });
   autoUpdater.on("download-progress", (progress) => {
-    updateStatus = { state: "downloading", percent: Math.round(progress.percent) };
+    updateStatus = {
+      state: "downloading",
+      percent: Math.round(progress.percent),
+      version: updateStatus.version,
+      notes: updateStatus.notes,
+    };
     broadcastUpdateStatus();
   });
-  autoUpdater.on("update-downloaded", () => {
-    updateStatus = { state: "downloaded" };
+  autoUpdater.on("update-downloaded", (info) => {
+    updateStatus = { state: "downloaded", version: (info && info.version) || updateStatus.version };
     broadcastUpdateStatus();
   });
 }
@@ -612,6 +668,15 @@ ipcMain.on("buddy:set-interactive", (_e, interactive) => {
   buddyWindow.setIgnoreMouseEvents(!interactive, { forward: true });
 });
 
+// A plain click (mousedown/up with no drag distance in between) on the
+// buddy — the Dock icon is hidden, so this and the tray are the only ways
+// back into the main window.
+ipcMain.on("buddy:open-main", () => {
+  if (!mainWindow || mainWindow.isDestroyed()) { createWindow(); return; }
+  mainWindow.show();
+  mainWindow.focus();
+});
+
 // Reported by the claude.ai preload, which is the only place that can see the
 // page's generating state. Broadcast rather than polled so the overlay reacts
 // on the state edge.
@@ -708,11 +773,8 @@ function createWindow() {
 
 function buildTray() {
   const icon = nativeImage.createFromPath(TRAY_ICON_PATH);
-  // Template image: macOS renders it as a monochrome silhouette (alpha-only shape,
-  // color discarded) and auto-inverts it for light/dark menu bars and the
-  // highlighted/clicked state. Requires the PNG to be monochrome-with-alpha,
-  // which assets/tray-icon.png and tray-icon@2x.png are.
-  if (!icon.isEmpty()) icon.setTemplateImage(true);
+  // Full-color logo mark, not a template image -- template mode would strip
+  // the color and render only the alpha silhouette.
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.setToolTip("BetterClaude");
 
@@ -786,7 +848,11 @@ function buildAppMenu() {
       submenu: [
         {
           label: "BetterClaude on GitHub",
-          click: () => shell.openExternal("https://github.com/"),
+          click: () => shell.openExternal(GITHUB_URL),
+        },
+        {
+          label: "Release Notes",
+          click: () => shell.openExternal(RELEASES_URL),
         },
         {
           label: "Check for Updates…",
@@ -1542,20 +1608,45 @@ ipcMain.handle("window:is-always-on-top", () => (mainWindow ? mainWindow.isAlway
 // would just surface a confusing "not found" error from electron-updater.
 async function checkForUpdates() {
   if (!app.isPackaged) {
-    updateStatus = { state: "error", error: "Updates only check in packaged builds, not `npm start`." };
+    updateStatus = {
+      state: "error",
+      error: "Updates only check in packaged builds, not `npm start`.",
+      releasesUrl: RELEASES_URL,
+    };
     broadcastUpdateStatus();
     return updateStatus;
   }
   try {
     await autoUpdater.checkForUpdates();
   } catch (err) {
-    updateStatus = { state: "error", error: err.message };
+    // Network down, rate-limited, no published release yet, or no
+    // app-update.yml in the bundle — all land here. Carrying releasesUrl
+    // lets the UI offer a manual download rather than dead-ending.
+    updateStatus = { state: "error", error: err.message, releasesUrl: RELEASES_URL };
     broadcastUpdateStatus();
   }
   return updateStatus;
 }
 
 ipcMain.handle("updater:check", () => checkForUpdates());
+
+// Version is read from package.json by Electron itself, so this stays the
+// one source of truth for every place the UI prints it.
+ipcMain.handle("app:get-info", () => ({
+  version: app.getVersion(),
+  isPackaged: app.isPackaged,
+  githubUrl: GITHUB_URL,
+  releasesUrl: RELEASES_URL,
+}));
+
+ipcMain.handle("updater:open-releases", () => shell.openExternal(RELEASES_URL));
+
+// "Later" on the banner suppresses THIS version only — the next release
+// surfaces again (see core/settings-schema.js's updates.dismissedVersion).
+ipcMain.handle("updater:dismiss", (_e, version) => {
+  store.set("updates.dismissedVersion", version || null);
+  broadcastSettings();
+});
 
 ipcMain.handle("updater:download", async () => {
   try {
@@ -1623,8 +1714,11 @@ function startDevAutoReload() {
 }
 
 app.whenReady().then(() => {
+  // Menu-bar-only app: no Dock/Cmd+Tab presence. The tray icon and the buddy
+  // overlay (click, not drag) are the only ways back in once the window is
+  // closed/hidden.
   if (process.platform === "darwin" && app.dock) {
-    app.dock.setIcon(nativeImage.createFromPath(APP_ICON_PATH));
+    app.dock.hide();
   }
 
   seedBuiltinPlugins();
@@ -1662,8 +1756,13 @@ app.whenReady().then(() => {
   startTeamSync();
   // Background check shortly after launch; silent (no native OS dialog) —
   // the renderer surfaces it via betterclaude:update-status instead so it
-  // can be dismissed/actioned inside our own UI.
-  setTimeout(() => checkForUpdates(), 5000);
+  // can be dismissed/actioned inside our own UI. Delayed so it never
+  // competes with first paint. Opt-out via Settings -> Appearance ->
+  // Updates; "Check now" there stays available either way.
+  setTimeout(() => {
+    if (store.get("updates.autoCheck") === false) return;
+    checkForUpdates();
+  }, 5000);
 
   nativeTheme.on("updated", () => {
     BrowserWindow.getAllWindows().forEach((w) =>

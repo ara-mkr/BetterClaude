@@ -33,6 +33,24 @@ measurement rather than assumption -- see the printed diagnostics:
     reference colour is taken from frame 0 (clean) and reused for the clip.
     The fill still cannot eat the smoke, because smoke is far from the
     reference colour and so is never a fill candidate in the first place.
+
+
+The shadow pass
+---------------
+Some assets are drawn standing on a soft blue-grey contact shadow (measured
+~(180,185,200)) and kick up pale dust around the boots. That sits ~69 away from
+the background reference, far outside the fill threshold, so the colour pass
+above leaves it behind and the buddy floats over a grey smudge.
+
+The shadow pass widens the candidate set to "pale and near-neutral" -- min
+channel >= LIGHT_FLOOR, channel spread <= SAT_MAX -- which covers the shadow and
+the dust, while the character's dark outlines still stop the fill at the
+silhouette exactly as before. Connectivity is again what protects the white
+suit and boots: they are pale too, but they are not reachable from the border.
+
+It is opt-in per asset (SHADOW_KEYED) rather than global because it is NOT safe
+everywhere: the blast-off plume is pale, near-neutral AND border-connected, so
+this pass would erase the whole plume.
 """
 
 import argparse
@@ -72,11 +90,23 @@ FEATHER_SIGMA = 0.8
 # white fringe; at 640px wide on art this soft it costs no visible detail.
 ERODE_PX = 1.0
 
+# Shadow-pass tuning. The contact shadow bottoms out around min-channel 176 and
+# the character's outlines sit below 100, so 150 separates them with margin.
+# The shadow's own spread is ~20; the orange trim and blue visor are far higher,
+# so 60 keeps the pass away from anything actually coloured.
+LIGHT_FLOOR = 150
+SAT_MAX = 60
+
 SRC_NAMES = {
     "typing": "ASTRONAUT TYPING.mp4",
     "thinking": "ASTRONAUT THINKING.mp4",
     "blastoff": "ASTRONAUT FLYING.mp4",
+    "drag": "ASTRONAUT RUNNING.mp4",
 }
+
+# Assets that are drawn on a contact shadow. Blast-off is deliberately absent:
+# see "The shadow pass" above -- it would eat the smoke plume.
+SHADOW_KEYED = {"typing", "thinking", "drag", "idle"}
 
 
 def run(cmd, **kw):
@@ -123,7 +153,7 @@ def border_reference(img, strip=6):
     return np.median(b, axis=0).astype(np.float32)
 
 
-def alpha_matte(img, ref, threshold, stats=None):
+def alpha_matte(img, ref, threshold, stats=None, shadow_key=False):
     """Edge-connected background removal. Returns float alpha in [0,1]."""
     f = img.astype(np.float32)
 
@@ -131,6 +161,10 @@ def alpha_matte(img, ref, threshold, stats=None):
     blurred = np.stack([ndimage.gaussian_filter(f[:, :, c], PRE_BLUR_SIGMA) for c in range(3)], axis=2)
     dist = np.sqrt(((blurred - ref) ** 2).sum(axis=2))
     candidate = dist <= threshold
+
+    if shadow_key:
+        lo = blurred.min(axis=2)
+        candidate |= (lo >= LIGHT_FLOOR) & ((blurred.max(axis=2) - lo) <= SAT_MAX)
 
     # "Flood fill inward from every border pixel" == label the candidate
     # regions and keep those that reach the border. One O(n) pass instead of
@@ -180,8 +214,8 @@ def decontaminate(img, alpha, ref):
     return np.where(a > 0.05, np.clip(out, 0, 255), f).astype(np.uint8)
 
 
-def to_rgba(img, ref, threshold, stats=None):
-    a = alpha_matte(img, ref, threshold, stats)
+def to_rgba(img, ref, threshold, stats=None, shadow_key=False):
+    a = alpha_matte(img, ref, threshold, stats, shadow_key)
     rgb = decontaminate(img, a, ref)
     return np.dstack([rgb, (a * 255.0 + 0.5).astype(np.uint8)])
 
@@ -219,7 +253,7 @@ def encode_webm(frames_iter, dst, w, h, fps, crf):
     return count
 
 
-def process_clip(src, dst, threshold, crf, verbose):
+def process_clip(src, dst, threshold, crf, verbose, shadow_key=False):
     w, h, nframes, fps = probe(src)
     state = {"ref": None}
     stats = []
@@ -231,8 +265,9 @@ def process_clip(src, dst, threshold, crf, verbose):
                 # sitting on the border, which would poison the reference.
                 state["ref"] = border_reference(fr)
                 if verbose:
-                    print(f"    background reference = {state['ref'].round(1)}")
-            rgba = to_rgba(fr, state["ref"], threshold, stats)
+                    print(f"    background reference = {state['ref'].round(1)}"
+                          f"{'  +shadow pass' if shadow_key else ''}")
+            rgba = to_rgba(fr, state["ref"], threshold, stats, shadow_key)
             yield resize_rgba(rgba, OUT_W, OUT_H)
 
     n = encode_webm(gen(), dst, OUT_W, OUT_H, fps if fps else FPS, crf)
@@ -244,7 +279,7 @@ def process_clip(src, dst, threshold, crf, verbose):
     return n, state["ref"], min(borders)
 
 
-def process_idle(src, dst, threshold, align_to, verbose):
+def process_idle(src, dst, threshold, align_to, verbose, shadow_key=False):
     """The still is 1024x559 while the clips are 1280x720, and its character is
     drawn smaller. Compositing it onto the shared canvas -- scaled and
     bottom-aligned to the thinking clip's character -- is what stops the buddy
@@ -253,7 +288,7 @@ def process_idle(src, dst, threshold, align_to, verbose):
     ref = border_reference(img)
     if verbose:
         print(f"    background reference = {ref.round(1)}")
-    rgba = to_rgba(img, ref, threshold)
+    rgba = to_rgba(img, ref, threshold, None, shadow_key)
     bb = content_bbox(rgba)
     if bb is None:
         raise RuntimeError("idle image: no content found")
@@ -291,8 +326,14 @@ def main():
     ap.add_argument("--out", default=None, help="defaults to <repo>/resources/buddies/<buddy>")
     ap.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     ap.add_argument("--crf", type=int, default=30)
+    ap.add_argument("--only", action="append", metavar="STATE",
+                    choices=sorted(SRC_NAMES) + ["idle"],
+                    help="rebuild only these assets (repeatable). Rebuilding "
+                         "'idle' alone still requires the thinking clip, which "
+                         "it is aligned to.")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
+    only = set(args.only) if args.only else None
 
     verbose = not args.quiet
     src_dir = Path(args.src).expanduser()
@@ -303,13 +344,19 @@ def main():
         Path(__file__).resolve().parent.parent / "resources" / "buddies" / args.buddy
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    want_idle = only is None or "idle" in only
     stills = sorted([p for p in src_dir.iterdir()
                      if p.suffix.lower() in (".jpg", ".jpeg", ".png")])
-    if len(stills) != 1:
+    if want_idle and len(stills) != 1:
         sys.exit(f"expected exactly 1 still image in {src_dir}, found {len(stills)}: "
                  f"{[p.name for p in stills]}")
 
-    missing = [n for n in SRC_NAMES.values() if not (src_dir / n).exists()]
+    # The idle still is aligned to the thinking clip, so that clip must be
+    # readable even when it is not itself being rebuilt.
+    needed = {s for s in SRC_NAMES if only is None or s in only}
+    if want_idle:
+        needed.add("thinking")
+    missing = [SRC_NAMES[s] for s in sorted(needed) if not (src_dir / SRC_NAMES[s]).exists()]
     if missing:
         sys.exit(f"missing expected clips in {src_dir}: {missing}")
 
@@ -320,21 +367,26 @@ def main():
     # Do the clips first: the idle still is aligned to the thinking clip's
     # character, so that measurement has to exist before the still is built.
     thinking_bbox = None
-    for state in ("typing", "thinking", "blastoff"):
+    for state in ("typing", "thinking", "blastoff", "drag"):
         src = src_dir / SRC_NAMES[state]
-        dst = out_dir / f"{args.buddy}-{state}.webm"
-        print(f"  {state:9s} {src.name}")
-        process_clip(src, dst, args.threshold, args.crf, verbose)
-        if state == "thinking":
+        if only is None or state in only:
+            dst = out_dir / f"{args.buddy}-{state}.webm"
+            print(f"  {state:9s} {src.name}")
+            process_clip(src, dst, args.threshold, args.crf, verbose,
+                         state in SHADOW_KEYED)
+        if state == "thinking" and want_idle:
             w, h, _, _ = probe(src)
             first = next(iter_frames(src, w, h))
-            thinking_bbox = content_bbox(to_rgba(first, border_reference(first), args.threshold))
+            thinking_bbox = content_bbox(to_rgba(
+                first, border_reference(first), args.threshold,
+                None, "thinking" in SHADOW_KEYED))
             if verbose:
                 print(f"    reference character bbox = {thinking_bbox}")
 
-    print(f"  {'idle':9s} {stills[0].name}")
-    process_idle(stills[0], out_dir / f"{args.buddy}-idle.png",
-                 args.threshold, thinking_bbox, verbose)
+    if want_idle:
+        print(f"  {'idle':9s} {stills[0].name}")
+        process_idle(stills[0], out_dir / f"{args.buddy}-idle.png",
+                     args.threshold, thinking_bbox, verbose, "idle" in SHADOW_KEYED)
 
     print("\nwrote:")
     for p in sorted(out_dir.iterdir()):

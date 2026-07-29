@@ -29,19 +29,40 @@ const { AnalyticsDashboard } = require("../core/analytics-dashboard");
 const { VIBE_BUNDLES, pickRandomBundle, bundleForMood, bundleForSeason, applyBundle } = require("../core/vibe-bundles");
 const { mapWeatherCodeToBundle } = require("../core/weather");
 const { shouldSuppress, notificationStyleClass } = require("../core/notifications");
+const { UpdateBanner } = require("../core/update-banner");
 const { insertIntoComposer } = require("../core/compose-insert");
+const { mountTopStripGuard } = require("../core/top-strip-guard");
 
 const { mountTitleBar } = require("../ui/title-bar");
+const { TITLE_BAR_HEIGHT } = require("./window-chrome");
 const { SettingsPanel, SECTIONS } = require("../ui/settings-panel/panel");
 const { mountSnakeGame } = require("../ui/mini-game/snake");
 
 const fs = require("fs");
 const path = require("path");
 
+// Geometry the main process and the injected stylesheets must agree on
+// byte-for-byte. Rather than typing the number in both places (exactly how
+// ui/title-bar.css ended up hardcoding `46px` in eight places, and
+// panel.css a ninth, while electron/window-chrome.js still said 38), the
+// sheets carry a `__BC_*__` placeholder substituted from the shared
+// constant as the sheet is injected. Add an entry here to expose another
+// constant to CSS; never re-type one in a stylesheet.
+const CSS_SUBSTITUTIONS = {
+  __BC_TITLE_BAR_HEIGHT__: String(TITLE_BAR_HEIGHT),
+};
+
 function injectStaticCSS(id, filePath) {
   const tag = document.createElement("style");
   tag.id = id;
-  tag.textContent = fs.readFileSync(filePath, "utf8");
+  let css = fs.readFileSync(filePath, "utf8");
+  // split/join rather than String.replace with a /g regex: these values are
+  // plain integers today, but a substituted value containing `$&` or `$1`
+  // would be silently reinterpreted as a replacement pattern by replace().
+  for (const [token, value] of Object.entries(CSS_SUBSTITUTIONS)) {
+    css = css.split(token).join(value);
+  }
+  tag.textContent = css;
   document.head.appendChild(tag);
 }
 
@@ -113,6 +134,13 @@ async function bootstrap() {
 
   // --- Compare Responses (manual paste) ---
   const diffViewer = new DiffViewer();
+
+  // Declared (not initialized) here, constructed further down in the
+  // auto-updater section: the "betterclaude:settings-changed" handler below
+  // calls syncUpdateBanner(), and a settings write during bootstrap (the
+  // streak bump) can broadcast before that construction runs — a `const`
+  // declared down there would TDZ-fault instead of no-opping.
+  let updateBanner = null;
 
   // Declared (not initialized) here, assigned further down once notify
   // are ready — effectiveSoundSettings below can run before that assignment
@@ -361,11 +389,29 @@ async function bootstrap() {
 
   companion.mount(settings);
 
+  // Warns (console only, never mutates the page) if claude.ai's own chrome
+  // ends up underneath our opaque title bar, the way Claude's top-level tab
+  // bar did when the Code tab moved into that strip. Development builds
+  // only: it exists so a regression of that class is caught here rather than
+  // reported as "BetterClaude broke Code", and shipping it to users would
+  // just print console noise nobody reads. Height comes from the same
+  // TITLE_BAR_HEIGHT the CSS is generated from, so the probed band is always
+  // exactly the band the bar covers.
+  const { isPackaged } = await ipcRenderer.invoke("app:get-info");
+  const topStripGuard = mountTopStripGuard({
+    getHeight: () => TITLE_BAR_HEIGHT,
+    enabled: !isPackaged,
+  });
+
   // Never show auxiliary chrome on Claude's public sign-in/marketing route.
   // Presence of the composer is the signal — no conversation content is read.
   function syncContextualChrome() {
     const hasComposer = !!document.querySelector('[data-testid="chat-input"]');
     document.body.classList.toggle("bc-signed-out", !hasComposer);
+    // Route changes are exactly when Claude re-lays-out its top chrome, and
+    // this already runs on every one of them (mount + the chromeObserver
+    // below), so the guard needs no observer of its own. Debounced inside.
+    topStripGuard.checkSoon();
     companion.update({
       ...settings,
       personality: { ...settings.personality, companionEnabled: !!(settings.personality && settings.personality.companionEnabled && hasComposer) },
@@ -605,6 +651,10 @@ async function bootstrap() {
     syncZenModeWithFocusPlugin();
     syncDigestTimer();
     refreshAchievements();
+    // "Later" writes updates.dismissedVersion, so the banner has to
+    // re-evaluate against the new value rather than wait for the next
+    // update-status broadcast (which may never come).
+    syncUpdateBanner();
     const conflictCount = (updated.teamSync && updated.teamSync.conflicts.length) || 0;
     if (conflictCount > lastTeamSyncConflictCount) {
       notify(`Team Sync: ${conflictCount} conflict${conflictCount === 1 ? "" : "s"} need review — Settings → Team Sync.`, { category: "plugin" });
@@ -956,12 +1006,43 @@ async function bootstrap() {
   }, WAITING_POLL_MS);
 
   // --- Auto-updater bridge ---
+  // main.js broadcasts state; nothing here polls. The banner is the
+  // interrupting surface, Settings -> Appearance -> Updates is the passive
+  // one, and both read the same single `updateStatus` value.
   let updateStatus = { state: "idle" };
   const updateStatusHandlers = [];
+
+  updateBanner = new UpdateBanner({
+    onDownload: () => ipcRenderer.invoke("updater:download"),
+    onInstall: () => ipcRenderer.invoke("updater:install"),
+    onDismiss: (version) => ipcRenderer.invoke("updater:dismiss", version),
+    onOpenReleases: () => ipcRenderer.invoke("updater:open-releases"),
+  });
+  updateBanner.mount();
+
+  function syncUpdateBanner() {
+    if (!updateBanner) return;
+    updateBanner.update(updateStatus, {
+      dismissedVersion: (settings.updates && settings.updates.dismissedVersion) || null,
+    });
+  }
+
   ipcRenderer.on("betterclaude:update-status", (_e, status) => {
     updateStatus = status;
+    syncUpdateBanner();
     updateStatusHandlers.forEach((cb) => cb(status));
   });
+
+  // Seed from whatever main already knows. A renderer that reloads (claude.ai
+  // route change, dev auto-reload) starts a fresh preload at state "idle" and
+  // would otherwise drop an already-detected update on the floor, since the
+  // broadcast that announced it has long since fired.
+  ipcRenderer.invoke("updater:get-status").then((status) => {
+    if (!status || status.state === "idle") return;
+    updateStatus = status;
+    syncUpdateBanner();
+    updateStatusHandlers.forEach((cb) => cb(status));
+  }).catch(() => {});
 
   // --- Cross-Device Clipboard Bridge bridge ---
   // The actual relay push/pull + OS clipboard read/write happens in
@@ -995,9 +1076,16 @@ async function bootstrap() {
     importSettings: () => ipcRenderer.invoke("settings:import"),
     getUpdateStatus: () => updateStatus,
     onUpdateStatus: (cb) => updateStatusHandlers.push(cb),
-    checkForUpdates: () => ipcRenderer.invoke("updater:check"),
+    // A hand-triggered check is the one case where a failure should surface
+    // in the banner too — a silent background failure stays in Settings.
+    checkForUpdates: () => {
+      if (updateBanner) updateBanner.setShowErrors(true);
+      return ipcRenderer.invoke("updater:check");
+    },
     downloadUpdate: () => ipcRenderer.invoke("updater:download"),
     installUpdate: () => ipcRenderer.invoke("updater:install"),
+    openReleasesPage: () => ipcRenderer.invoke("updater:open-releases"),
+    getAppInfo: () => ipcRenderer.invoke("app:get-info"),
     selectTheme,
     applyThemePreview: (id) => themeEngine.setTheme(id),
     applyCustomCSSPreview: (code) => themeEngine.setCustomCSS(code),

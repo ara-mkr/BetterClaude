@@ -1266,6 +1266,24 @@ code, pre, kbd, samp {
 .leading-none, .leading-none * {
   line-height: 1 !important;
 }
+/* Sub-pixel residue from the fix above: the label div's own box still lands
+   ~0.5px lower than its fixed-size sibling icon (rounding in claude.ai's own
+   layout math, not something a line-height fix can close), and glyph optics
+   (no descender in most model names) read as sitting even lower than that.
+   Nudge the model picker's label up slightly to compensate. */
+[data-testid="model-selector-dropdown"] .leading-none {
+  transform: translateY(-1px);
+}
+/* The model picker trigger's hover/open highlight is a separate absolutely-
+   positioned inset-0 layer (class cds-btn-squish) sized to exactly match
+   the button's own height, which only leaves ~15px of clearance to the
+   composer card's bottom edge \u2014 tight enough to read as the glow touching
+   the composer border. Inset it a few px on top/bottom so the highlight is
+   visibly shorter than the button and sits clear of that edge. */
+[data-testid="model-selector-dropdown"] .cds-btn-squish {
+  top: 4px !important;
+  bottom: 4px !important;
+}
 /* No "message" testid/class exists on the live site to scope this to, so it
    targets real headings anywhere in the app content instead. :where() keeps
    specificity at zero (matching the body rule above) and, crucially, keeps
@@ -2051,6 +2069,19 @@ ${text}` : text;
           pendingUpdates: []
           // { relPath, kind, filename } — only populated when autoApply is false
         },
+        // In-app updates via GitHub Releases (electron-updater). ON by default,
+        // unlike the other network features here: this one only ever contacts the
+        // project's own release feed, downloads nothing without an explicit click
+        // (autoDownload is forced false in electron/main.js), and a user who
+        // can't discover updates is a user stuck on a build with known bugs.
+        updates: {
+          autoCheck: true,
+          // Version string the user pressed "Later" on, so the in-app banner
+          // stays dismissed for THAT version but reappears for the next one.
+          // Deliberately not a plain boolean — a permanent "never show updates"
+          // flag is what `autoCheck: false` already is.
+          dismissedVersion: null
+        },
         // Cross-Device Clipboard Bridge — off by default (it's both a network
         // feature and one that reads/writes the OS clipboard). Payloads are
         // end-to-end encrypted with a key derived from `passphrase` before ever
@@ -2182,7 +2213,7 @@ ${text}` : text;
         },
         personality: {
           // Keep the app's first-run surface focused on Claude itself; the mascot
-          // is opt-in from Settings -> Personality & Fun.
+          // is opt-in.
           companionEnabled: false,
           userName: "",
           statusMessage: "",
@@ -3465,7 +3496,10 @@ body.bc-zen-mode #betterclaude-plugin-dock {
             idle: "astronaut-idle.png",
             typing: "astronaut-typing.webm",
             thinking: "astronaut-thinking.webm",
-            blastoff: "astronaut-blastoff.webm"
+            blastoff: "astronaut-blastoff.webm",
+            // Played only while the buddy is held, so it is deliberately outside
+            // `cycle`. Opens on a startled take, then settles into a run.
+            drag: "astronaut-drag.webm"
           },
           // Order of the working-state loop. Advanced by each clip's `ended` event,
           // never by a timer, so it stays correct if clip durations drift.
@@ -7316,6 +7350,224 @@ ${content}
     }
   });
 
+  // core/update-banner.js
+  var require_update_banner = __commonJS({
+    "core/update-banner.js"(exports, module) {
+      var BANNER_ID = "betterclaude-update-banner";
+      var UpdateBanner = class {
+        constructor({ onDownload, onInstall, onDismiss, onOpenReleases } = {}) {
+          this.onDownload = onDownload || (() => {
+          });
+          this.onInstall = onInstall || (() => {
+          });
+          this.onDismiss = onDismiss || (() => {
+          });
+          this.onOpenReleases = onOpenReleases || (() => {
+          });
+          this.el = null;
+          this.showErrors = false;
+          this.status = { state: "idle" };
+          this.dismissedVersion = null;
+        }
+        mount() {
+          if (this.el) return this.el;
+          const node = document.createElement("div");
+          node.id = BANNER_ID;
+          node.setAttribute("role", "status");
+          node.setAttribute("aria-live", "polite");
+          document.body.appendChild(node);
+          this.el = node;
+          return node;
+        }
+        destroy() {
+          if (this.el) this.el.remove();
+          this.el = null;
+        }
+        // Called on every betterclaude:update-status broadcast, and again
+        // whenever settings change (dismissedVersion may have moved).
+        update(status, { dismissedVersion = null } = {}) {
+          this.status = status || { state: "idle" };
+          this.dismissedVersion = dismissedVersion;
+          this.render();
+        }
+        // A manual "Check now" opts this session into seeing failures inline;
+        // background checks stay silent so a flaky network can't nag.
+        setShowErrors(value) {
+          this.showErrors = !!value;
+        }
+        _shouldShow() {
+          const { state, version } = this.status;
+          if (state === "available") return version !== this.dismissedVersion;
+          if (state === "downloading" || state === "downloaded") return true;
+          if (state === "error") return this.showErrors;
+          return false;
+        }
+        render() {
+          if (!this.el) return;
+          if (!this._shouldShow()) {
+            this.el.classList.remove("bc-open");
+            this.el.innerHTML = "";
+            return;
+          }
+          const { state, version, notes, percent, error } = this.status;
+          this.el.innerHTML = "";
+          this.el.classList.add("bc-open");
+          const text = document.createElement("div");
+          text.className = "bc-update-text";
+          const title = document.createElement("strong");
+          const blurb = document.createElement("span");
+          blurb.className = "bc-update-blurb";
+          if (state === "error") {
+            title.textContent = "Update check failed";
+            blurb.textContent = error || "Couldn't reach the update server.";
+          } else if (state === "downloaded") {
+            title.textContent = `Version ${version || ""} ready`.trim();
+            blurb.textContent = "Restart to finish installing.";
+          } else if (state === "downloading") {
+            title.textContent = `Downloading v${version || ""}`.trim();
+            blurb.textContent = `${percent || 0}%`;
+          } else {
+            title.textContent = `Update available: v${version}`;
+            blurb.textContent = notes || "New version available";
+          }
+          text.appendChild(title);
+          text.appendChild(blurb);
+          this.el.appendChild(text);
+          if (state === "downloading") {
+            const track = document.createElement("div");
+            track.className = "bc-update-progress";
+            const fill = document.createElement("div");
+            fill.className = "bc-update-progress-fill";
+            fill.style.width = `${Math.max(0, Math.min(100, percent || 0))}%`;
+            track.appendChild(fill);
+            this.el.appendChild(track);
+          }
+          const actions = document.createElement("div");
+          actions.className = "bc-update-actions";
+          if (state === "available") {
+            actions.appendChild(this._button("Download & Install", "bc-update-primary", () => this.onDownload()));
+            actions.appendChild(this._button("Later", "bc-update-ghost", () => {
+              this.onDismiss(version);
+              this.dismissedVersion = version;
+              this.render();
+            }));
+          } else if (state === "downloaded") {
+            actions.appendChild(this._button("Restart & Install", "bc-update-primary", () => this.onInstall()));
+            actions.appendChild(this._button("Later", "bc-update-ghost", () => {
+              this.status = { state: "idle" };
+              this.render();
+            }));
+          } else if (state === "error") {
+            actions.appendChild(this._button("Open Releases", "bc-update-primary", () => this.onOpenReleases()));
+            actions.appendChild(this._button("Dismiss", "bc-update-ghost", () => {
+              this.showErrors = false;
+              this.render();
+            }));
+          }
+          if (actions.childNodes.length) this.el.appendChild(actions);
+        }
+        _button(label, className, onClick) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = `bc-update-btn ${className}`;
+          btn.textContent = label;
+          btn.addEventListener("click", onClick);
+          return btn;
+        }
+      };
+      module.exports = { UpdateBanner, BANNER_ID };
+    }
+  });
+
+  // core/top-strip-guard.js
+  var require_top_strip_guard = __commonJS({
+    "core/top-strip-guard.js"(exports, module) {
+      var OWN_ID_PREFIXES = ["betterclaude-", "bc-"];
+      function isOwnChrome(el) {
+        const stopAt = [document.body, document.documentElement];
+        for (let n = el; n && n.nodeType === 1 && !stopAt.includes(n); n = n.parentElement) {
+          const id = n.id || "";
+          if (OWN_ID_PREFIXES.some((prefix) => id.startsWith(prefix))) return true;
+          const classes = n.classList;
+          if (classes && Array.prototype.some.call(classes, (c) => c.startsWith("bc-"))) return true;
+        }
+        return false;
+      }
+      function describeElement(el) {
+        if (!el || el.nodeType !== 1) return "<unknown>";
+        const parts = [el.tagName.toLowerCase()];
+        if (el.id) parts.push(`#${el.id}`);
+        const testid = el.getAttribute("data-testid");
+        if (testid) parts.push(`[data-testid="${testid}"]`);
+        const label = el.getAttribute("aria-label");
+        if (label) parts.push(`[aria-label="${label}"]`);
+        const text = (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 40);
+        if (text) parts.push(`"${text}"`);
+        return parts.join(" ");
+      }
+      function probeReservedStrip(height, samples = 9) {
+        if (!height || height <= 0 || typeof document.elementsFromPoint !== "function") return [];
+        const width = document.documentElement.clientWidth || window.innerWidth || 0;
+        if (width <= 0) return [];
+        const rows = [0.25, 0.5, 0.75].map((f) => Math.round(height * f)).map((y) => Math.min(Math.max(y, 1), Math.max(height - 1, 1)));
+        const bySignature = /* @__PURE__ */ new Map();
+        for (let i = 0; i < samples; i += 1) {
+          const x = Math.round((i + 0.5) / samples * width);
+          for (const y of rows) {
+            const stack = document.elementsFromPoint(x, y) || [];
+            const hit = stack.find(
+              (el) => el !== document.body && el !== document.documentElement && !isOwnChrome(el)
+            );
+            if (!hit) continue;
+            const signature = describeElement(hit);
+            if (!bySignature.has(signature)) bySignature.set(signature, { element: hit, signature, x, y });
+          }
+        }
+        return [...bySignature.values()];
+      }
+      function mountTopStripGuard({ getHeight, enabled = true, warn = console.warn, maxWarnings = 5 } = {}) {
+        const reported = /* @__PURE__ */ new Set();
+        let warnings = 0;
+        let scheduled = null;
+        function check() {
+          if (!enabled || warnings >= maxWarnings) return [];
+          const height = typeof getHeight === "function" ? getHeight() : 0;
+          const collisions = probeReservedStrip(height);
+          for (const collision of collisions) {
+            if (reported.has(collision.signature)) continue;
+            reported.add(collision.signature);
+            warnings += 1;
+            warn(
+              `[BetterClaude] Page content sits underneath the ${height}px title bar and cannot be clicked: ${collision.signature} (at ${collision.x},${collision.y}). Claude's own chrome has moved into the strip BetterClaude reserves. The app root's containing-block transform in ui/title-bar.css should keep fixed-positioned chrome out of this band \u2014 if this fired, something is escaping it (most likely an element portalled to <body> rather than into the app root, which that transform cannot reach).`,
+              collision.element
+            );
+            if (warnings >= maxWarnings) break;
+          }
+          return collisions;
+        }
+        function checkSoon() {
+          if (scheduled) return;
+          scheduled = setTimeout(() => {
+            scheduled = null;
+            check();
+          }, 250);
+        }
+        function unmount() {
+          if (scheduled) clearTimeout(scheduled);
+          scheduled = null;
+        }
+        return { check, checkSoon, unmount };
+      }
+      module.exports = {
+        mountTopStripGuard,
+        probeReservedStrip,
+        isOwnChrome,
+        describeElement,
+        OWN_ID_PREFIXES
+      };
+    }
+  });
+
   // core/index.js
   var require_index = __commonJS({
     "core/index.js"(exports, module) {
@@ -7350,6 +7602,8 @@ ${content}
       var { deriveChannelId, deriveKey, encryptText, decryptText } = require_clipboard_bridge();
       var { renderLineChart, renderBarChart } = require_analytics_charts();
       var { AnalyticsDashboard, presetRange } = require_analytics_dashboard();
+      var { UpdateBanner, BANNER_ID } = require_update_banner();
+      var { mountTopStripGuard, probeReservedStrip } = require_top_strip_guard();
       module.exports = {
         ThemeEngine,
         SELECTORS,
@@ -7396,7 +7650,14 @@ ${content}
         renderLineChart,
         renderBarChart,
         AnalyticsDashboard,
-        presetRange
+        presetRange,
+        // In-app updates (GitHub Releases feed; transport supplied by the host).
+        UpdateBanner,
+        BANNER_ID,
+        // Diagnostic: warns when claude.ai's own chrome ends up underneath the
+        // custom title bar. Inert in the extension build, which reserves no strip.
+        mountTopStripGuard,
+        probeReservedStrip
       };
     }
   });

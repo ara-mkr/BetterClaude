@@ -23,6 +23,10 @@ contextBridge.exposeInMainWorld("buddyAPI", {
   dragMove: (screenX, screenY) => ipcRenderer.send("buddy:drag-move", { screenX, screenY }),
   dragEnd: () => ipcRenderer.send("buddy:drag-end"),
 
+  // Dock icon is hidden, so a plain click on the buddy is one of the two
+  // ways back into the main window (the tray icon is the other).
+  openMain: () => ipcRenderer.send("buddy:open-main"),
+
   // Toggles click-through so the transparent margin around the sprite doesn't
   // eat clicks aimed at whatever is behind the overlay.
   setInteractive: (interactive) => ipcRenderer.send("buddy:set-interactive", !!interactive),

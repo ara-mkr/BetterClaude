@@ -58,6 +58,11 @@ def draw_b(size: int) -> Image.Image:
         # Use a square bounding box for a round bowl.
         outer_bbox = (5, 6, 13, 14)      # 9x9 square -> round bowl, r~4.5
         inner_bbox = (7, 8, 11, 12)      # 5x5 hole -> ring thickness ~2px
+        # Bridge: the ellipse only touches column 5 near its vertical middle,
+        # so near the top/bottom of the bowl there's a 1px gap between the
+        # stem (cols 3-4) and the bowl -- without this the shape reads as
+        # two disconnected glyphs ("l" + "o") instead of one "b".
+        draw.rectangle([stem_x1, outer_bbox[1], 5, outer_bbox[3]], fill=BLACK)
         draw.ellipse(outer_bbox, fill=BLACK)
         draw.ellipse(inner_bbox, fill=CLEAR)
 
@@ -72,6 +77,8 @@ def draw_b(size: int) -> Image.Image:
 
         outer_bbox = (10, 13, 27, 30)    # 18x18 round bowl
         inner_bbox = (15, 18, 22, 25)    # 8x8 hole -> ring thickness ~4px
+        # Bridge (see 16px design above for why this is needed).
+        draw.rectangle([stem_x1, outer_bbox[1], 10, outer_bbox[3]], fill=BLACK)
         draw.ellipse(outer_bbox, fill=BLACK)
         draw.ellipse(inner_bbox, fill=CLEAR)
 

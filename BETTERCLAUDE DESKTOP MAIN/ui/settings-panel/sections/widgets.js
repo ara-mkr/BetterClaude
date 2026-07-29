@@ -1,11 +1,9 @@
 /**
- * Settings panel sections: Widgets (a curated gallery over the existing
- * plugin system) and Personality & Fun. Mixed onto SettingsPanel.prototype
- * by panel.js.
+ * Settings panel section: Widgets — a curated gallery over the existing
+ * plugin system. Mixed onto SettingsPanel.prototype by panel.js.
  */
 
-const { el, field, selectField, toggleField, textField } = require("../dom-helpers");
-const { ACHIEVEMENTS } = require("../../../core/companion");
+const { el, selectField } = require("../dom-helpers");
 const ICONS = require("../../../core/icons");
 
 const WIDGET_CATALOG = [
@@ -17,8 +15,6 @@ const WIDGET_CATALOG = [
   { id: "quick-prompts", label: "Quick Prompts", icon: ICONS.BOLT, description: "Canned prompts inserted into the composer." },
   { id: "snippet-library", label: "Snippet Library", icon: ICONS.BOOK, description: "Full CRUD prompt/snippet manager with search." },
 ];
-
-const MOODS = ["energetic", "calm", "focused", "playful"];
 
 module.exports = {
   _renderWidgets() {
@@ -92,58 +88,5 @@ module.exports = {
       if (!gallery.isConnected) return;
       renderCards(new Map(plugins.map((p) => [p.id, p])));
     }).catch((err) => console.error("[BetterClaude] Failed to load widget gallery:", err));
-  },
-
-  _renderPersonality() {
-    const { settings } = this;
-    const personality = settings.personality;
-    const wrap = el("div", { class: "bc-section" });
-    wrap.appendChild(el("h2", { text: "Personality & Fun" }));
-
-    wrap.appendChild(toggleField("Show mascot companion", personality.companionEnabled, (v) => this._set("personality.companionEnabled", v)));
-    wrap.appendChild(textField("Your name", personality.userName, (v) => this._set("personality.userName", v), { placeholder: "optional" }));
-    wrap.appendChild(textField("Status message", personality.statusMessage, (v) => this._set("personality.statusMessage", v), { placeholder: "shown in the mascot's speech bubble" }));
-    wrap.appendChild(selectField("Greeting style", [
-      { value: "timeOfDay", label: "Time of day" },
-      { value: "streak", label: "Time of day + streak" },
-      { value: "name", label: "Time of day + name" },
-    ], personality.greetingStyle, (v) => this._set("personality.greetingStyle", v)));
-
-    wrap.appendChild(el("h2", { text: "Mood", class: "bc-ae-subhead" }));
-    const moodRow = el("div", { class: "bc-shape-row" });
-    MOODS.forEach((mood) => {
-      const btn = el("button", {
-        class: `bc-shape-btn${personality.mood === mood ? " bc-active" : ""}`,
-        text: mood[0].toUpperCase() + mood.slice(1),
-        onclick: () => {
-          this.host.applyMood(mood);
-          this.renderSection();
-        },
-      });
-      moodRow.appendChild(btn);
-    });
-    wrap.appendChild(field("Nudge the whole UI's tone", moodRow));
-    wrap.appendChild(el("p", {
-      class: "bc-hint",
-      text: "Applies a matched theme + shape + cursor + sound bundle for that mood — not just a color filter.",
-    }));
-
-    wrap.appendChild(el("h2", { text: "Streak & achievements", class: "bc-ae-subhead" }));
-    wrap.appendChild(el("p", {
-      class: "bc-hint bc-streak-hint",
-      html: `${ICONS.FLAME}<span>${personality.streak.count || 0} day streak</span>`,
-    }));
-    const badgeGrid = el("div", { class: "bc-achievement-grid" });
-    ACHIEVEMENTS.forEach((a) => {
-      const unlocked = (personality.achievements || []).includes(a.id);
-      const badge = el("div", { class: `bc-achievement${unlocked ? " bc-unlocked" : ""}`, title: a.description });
-      badge.appendChild(el("div", { class: "bc-achievement-label", text: a.label }));
-      badgeGrid.appendChild(badge);
-    });
-    wrap.appendChild(badgeGrid);
-
-    wrap.appendChild(el("p", { class: "bc-hint", text: "Psst — there's a secret input sequence hidden somewhere in the app…" }));
-
-    this.contentEl.appendChild(wrap);
   },
 };

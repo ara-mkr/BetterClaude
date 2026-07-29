@@ -251,6 +251,19 @@ const DEFAULT_SETTINGS = {
     conflicts: [], // { relPath, kind, filename } — both repo and local changed since last sync
     pendingUpdates: [], // { relPath, kind, filename } — only populated when autoApply is false
   },
+  // In-app updates via GitHub Releases (electron-updater). ON by default,
+  // unlike the other network features here: this one only ever contacts the
+  // project's own release feed, downloads nothing without an explicit click
+  // (autoDownload is forced false in electron/main.js), and a user who
+  // can't discover updates is a user stuck on a build with known bugs.
+  updates: {
+    autoCheck: true,
+    // Version string the user pressed "Later" on, so the in-app banner
+    // stays dismissed for THAT version but reappears for the next one.
+    // Deliberately not a plain boolean — a permanent "never show updates"
+    // flag is what `autoCheck: false` already is.
+    dismissedVersion: null,
+  },
   // Cross-Device Clipboard Bridge — off by default (it's both a network
   // feature and one that reads/writes the OS clipboard). Payloads are
   // end-to-end encrypted with a key derived from `passphrase` before ever
@@ -373,7 +386,7 @@ const DEFAULT_SETTINGS = {
   },
   personality: {
     // Keep the app's first-run surface focused on Claude itself; the mascot
-    // is opt-in from Settings -> Personality & Fun.
+    // is opt-in.
     companionEnabled: false,
     userName: "",
     statusMessage: "",

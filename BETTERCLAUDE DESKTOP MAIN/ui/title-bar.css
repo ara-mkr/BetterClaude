@@ -1,9 +1,36 @@
+/* The title bar's height, and therefore the inset every rule below applies
+   to the page so nothing renders underneath it. `__BC_TITLE_BAR_HEIGHT__`
+   is substituted at injection time from TITLE_BAR_HEIGHT in
+   electron/window-chrome.js — the single source of truth shared with the
+   main process's `trafficLightPosition` (see electron/preload.js's
+   injectStaticCSS and its CSS_SUBSTITUTIONS map).
+
+   Publishing it as a custom property on :root is what lets other injected
+   sheets (ui/settings-panel/panel.css) size off the same number without
+   needing their own placeholder. Do not write this height as a literal in
+   any stylesheet: the previous nine hardcoded `46px` copies had already
+   drifted from window-chrome.js's own constant, which said 38.
+
+   Because of that placeholder, THIS sheet may only be loaded through
+   injectStaticCSS — loading it raw leaves `__BC_TITLE_BAR_HEIGHT__px` in
+   place, which is a syntactically legal custom-property value, so it fails
+   silently at use time (every `var(--bc-tb-h)` below becomes invalid at
+   computed-value time and the inset quietly vanishes) rather than erroring.
+   That is why the browser-extension build must keep loading only the sheets
+   listed in its manifest: it copies ui/*.css verbatim with no substitution
+   step, and it has no window chrome to replace anyway. Sheets shared with
+   that build must use `var(--bc-tb-h, <fallback>)` instead of the
+   placeholder — see the note in ui/settings-panel/panel.css. */
+:root {
+  --bc-tb-h: __BC_TITLE_BAR_HEIGHT__px;
+}
+
 #betterclaude-titlebar {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
-  height: 46px;
+  height: var(--bc-tb-h);
   z-index: 2147483600;
   display: flex;
   align-items: center;
@@ -163,16 +190,21 @@
 /* Push the page content down so it isn't covered by the title bar. An
    explicit height is required for box-sizing: border-box to actually do
    anything — without it, padding-top has no height to eat into and just
-   adds 46px on top of body's natural (viewport-sized) height, silently
-   pushing that much content below the visible window (e.g. the composer's
-   bottom margin + the "Claude can make mistakes" disclaimer beneath it,
-   which sat exactly in that clipped sliver on any conversation route). */
+   adds the bar's height on top of body's natural (viewport-sized) height,
+   silently pushing that much content below the visible window (e.g. the
+   composer's bottom margin + the "Claude can make mistakes" disclaimer
+   beneath it, which sat exactly in that clipped sliver on any conversation
+   route).
+
+   This handles in-flow content only. Claude's `position: fixed` chrome
+   ignores this padding entirely and is dealt with by the containing-block
+   transform on the app root below — see that comment for the full story. */
 html {
   height: 100%;
 }
 body {
   height: 100vh !important;
-  padding-top: 46px !important;
+  padding-top: var(--bc-tb-h) !important;
   box-sizing: border-box;
 }
 /* Capping body's own box isn't sufficient on its own: claude.ai's app root
@@ -185,18 +217,53 @@ body {
    unrelated nested element sharing the id deeper in a portal/dialog tree. */
 body > #root,
 body > #__next {
-  height: calc(100vh - 46px) !important;
-  max-height: calc(100vh - 46px) !important;
-  /* Belt-and-suspenders: claude.ai nests further wrapper divs a few levels
-     down (verified live) that re-establish their own literal 100vh height
-     independent of any ancestor sizing, so capping #root's own box alone
-     still let a grandchild render past the visible window. overflow:hidden
-     makes #root a hard clip boundary regardless of how any current or
-     future descendant sizes itself — this doesn't affect claude.ai's own
-     internal scroll regions (they scroll themselves, not the page), and
-     position:fixed overlays (dropdowns/modals) aren't clipped by an
-     ancestor's overflow unless that ancestor also has a transform/filter,
-     which this rule doesn't add. */
+  height: calc(100vh - var(--bc-tb-h)) !important;
+  max-height: calc(100vh - var(--bc-tb-h)) !important;
+  /* THE fix for Claude's top-level tab bar (Home / Chat / Code) rendering
+     underneath this title bar and becoming unclickable.
+
+     `body`'s padding-top above clears in-flow content, but padding cannot
+     move a `position: fixed` element: fixed boxes resolve against the
+     VIEWPORT, whose origin is y=0 — i.e. underneath our opaque bar — no
+     matter what any ancestor's padding or height says. Claude anchors its
+     top-level app chrome that way, so when Anthropic moved the Code tab up
+     into that strip it landed under the bar. Nothing acquired a higher
+     z-index here; the bar simply owns a band of the viewport that the
+     page's own compensation never reached.
+
+     A transform (any non-`none` value) makes this root the containing block
+     for every fixed-positioned descendant. `top: 0` inside Claude's app now
+     resolves to "the top of the content area below the bar" rather than
+     "the top of the window", and the whole class of bug goes away for
+     current AND future top-anchored chrome — this fixes the coordinate
+     space rather than naming a node, so it does not care what Anthropic
+     ships up there next.
+
+     `translate(0)` rather than `translateY(var(--bc-tb-h))`: body's padding
+     already performs the visual offset, so this only has to establish the
+     containing block. The signed-out rule further down uses the same
+     mechanism (and did before this bug existed) — it additionally needs the
+     offset, because it zeroes body's padding.
+
+     Belt-and-suspenders on sizing: claude.ai nests further wrapper divs a
+     few levels down (verified live) that re-establish their own literal
+     100vh height independent of any ancestor sizing, so capping the root's
+     own box alone still let a grandchild render past the visible window.
+     overflow:hidden makes the root a hard clip boundary regardless of how
+     any current or future descendant sizes itself, and doesn't affect
+     claude.ai's own internal scroll regions (they scroll themselves, not
+     the page).
+
+     Note for future readers: this comment used to end by asserting that
+     position:fixed overlays "aren't clipped by an ancestor's overflow
+     unless that ancestor also has a transform/filter, which this rule
+     doesn't add." It adds one now, deliberately — that IS the fix — so
+     Claude's fixed dropdowns and modals are clipped to this box from here
+     on. That is correct and wanted: this box is exactly the visible content
+     area, so the only thing clipping removes is the part that was rendering
+     underneath our bar. Do not "simplify" the transform away; that
+     reinstates the covered-tab-bar bug. */
+  transform: translate(0) !important;
   overflow: hidden;
 }
 /* overflow:hidden above stops content escaping the window, but clipping is
@@ -242,19 +309,24 @@ body.bc-signed-out > #root,
 body.bc-signed-out > #__next {
   /* Claude's current signed-out shell anchors its header to the root's top
      edge. Padding/margins on that shell do not move the anchored header, so
-     the wordmark used to remain underneath our fixed 46px title bar. Move
-     the root box itself below the bar and reduce its viewport height by the
+     the wordmark used to remain underneath our fixed title bar. Move the
+     root box itself below the bar and reduce its viewport height by the
      same amount: every Claude header/feature control now starts in visible
      space without adding a second offset or overflowing the window. */
   /* A transform is intentional here: unlike `top`, it also establishes this
-     root as the containing block for Claude's fixed-positioned header. */
+     root as the containing block for Claude's fixed-positioned header. This
+     route has always had that containing block; the signed-in root above
+     did not, which is precisely why Claude's new top tab bar could render
+     underneath the bar there and not here. Both now share the mechanism —
+     this one keeps the translate because it zeroes body's padding below,
+     so the transform has to supply the offset as well. */
   position: relative !important;
   top: 0 !important;
-  transform: translateY(46px) !important;
+  transform: translateY(var(--bc-tb-h)) !important;
   margin-top: 0 !important;
   padding-top: 0 !important;
-  height: calc(100vh - 46px) !important;
-  max-height: calc(100vh - 46px) !important;
+  height: calc(100vh - var(--bc-tb-h)) !important;
+  max-height: calc(100vh - var(--bc-tb-h)) !important;
   min-height: 0 !important;
   box-sizing: border-box !important;
   /* Claude's auth brand mark can extend above its normal app content box.
