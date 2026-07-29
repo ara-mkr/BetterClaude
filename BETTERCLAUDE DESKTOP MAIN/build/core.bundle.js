@@ -7640,10 +7640,13 @@ ${content}
           return { element: tabs[0].parentElement, via: `${tabs.length}x [role="tab"]`, tier: "fallback" };
         }
         const band = Math.max((window.innerHeight || 0) * 0.25, 120);
-        const containers = scope.querySelectorAll("nav, header, [class*='tab' i]");
+        const sidebar = document.querySelector('nav[aria-label*="sidebar" i]') || document.querySelector('nav:has([data-testid="pin-sidebar-toggle"])');
+        const containers = scope.querySelectorAll("nav, header, [role='navigation'], [class*='tab' i]");
         for (const el of containers) {
+          if (sidebar && (el === sidebar || sidebar.contains(el) || el.contains(sidebar))) continue;
           const rect = el.getBoundingClientRect();
           if (rect.top > band || rect.width <= 0) continue;
+          if (rect.height > 96 || rect.width < 200 || rect.width < rect.height * 3) continue;
           const controls = Array.prototype.filter.call(
             el.querySelectorAll("a, button"),
             (c) => c.getBoundingClientRect().width > 0
@@ -7669,13 +7672,23 @@ ${content}
           key: "topTabBar",
           label: "Top-level tab bar",
           required: false,
+          // Absence is always fine. Verified live against the current build: it ships
+          // NO top-level tab bar at all — no [role="tablist"], no [role="tab"], no
+          // <header> — and every top-band control lives inside the left sidebar. So
+          // "not found" is the correct, healthy answer here, and treating it as a
+          // degradation would report `partial` on a working app in perpetuity.
+          // Whether Anthropic reverted the tab bar, gates it per account, or only
+          // shows it on other routes, this region can only ever be informational.
+          absenceIsNormal: () => true,
           find: (root) => findTopTabBar(root),
-          why: "The surface that regressed when the Code tab moved into the reserved strip."
+          why: "The surface that regressed when the Code tab moved into the reserved strip. Absent in the current build."
         },
         {
           key: "composer",
           label: "Composer",
           required: false,
+          // Absent by design on the sign-in route.
+          absenceIsNormal: ({ signedOut }) => signedOut,
           find: () => {
             const el = document.querySelector('[data-testid="chat-input"]');
             return el ? { element: el, via: '[data-testid="chat-input"]', tier: "primary" } : null;
@@ -7686,6 +7699,8 @@ ${content}
           key: "sidebar",
           label: "Conversation sidebar",
           required: false,
+          // Signed in, the sidebar always exists; its absence there is a real signal.
+          absenceIsNormal: ({ signedOut }) => signedOut,
           find: () => {
             const pinned = document.querySelector('nav:has([data-testid="pin-sidebar-toggle"])');
             if (pinned) return { element: pinned, via: 'nav:has([data-testid="pin-sidebar-toggle"])', tier: "primary" };
@@ -7709,6 +7724,7 @@ ${content}
             key: region.key,
             label: region.label,
             required: !!region.required,
+            absenceIsNormal: region.absenceIsNormal || (() => false),
             why: region.why,
             found: !!result,
             via: result ? result.via : null,
@@ -7719,14 +7735,19 @@ ${content}
         const missingRequired = regions.filter((r) => r.required && !r.found);
         const composerRegion = regions.find((r) => r.key === "composer");
         const signedOut = !(composerRegion && composerRegion.found);
-        const degraded = regions.filter(
-          (r) => !(r.key === "composer" && signedOut) && (!r.found || r.tier !== "primary")
-        );
+        const context = { signedOut };
+        regions.forEach((r) => {
+          r.absentOk = r.found ? false : r.absenceIsNormal(context);
+        });
+        const degraded = regions.filter((r) => r.found ? r.tier !== "primary" : !r.absentOk);
         let status;
         if (missingRequired.length) status = "unrecognized";
         else if (degraded.length) status = "partial";
         else status = "recognized";
-        const summary = regions.map((r) => `${r.key}=${r.found ? `${r.tier}:${r.via}` : "MISSING"}`).join(" ");
+        const summary = regions.map((r) => {
+          if (r.found) return `${r.key}=${r.tier}:${r.via}`;
+          return `${r.key}=${r.absentOk ? "absent" : "MISSING"}`;
+        }).join(" ");
         return { status, regions, root, summary };
       }
       function applyLayoutMarkers(probe) {
@@ -7739,9 +7760,21 @@ ${content}
           document.body.classList.add(STATUS_CLASSES[probe.status] || STATUS_CLASSES.unrecognized);
         }
       }
-      function mountLayoutProbe({ onChange = null, verbose = false, log = console.log, warn = console.warn } = {}) {
+      function mountLayoutProbe({
+        onChange = null,
+        verbose = false,
+        log = console.log,
+        warn = console.warn,
+        // Same cap, and the same reasoning, as top-strip-guard's: a genuinely
+        // persistent condition is one bug however many route changes rediscover it,
+        // and a warning repeated on every DOM mutation burst is indistinguishable
+        // from noise. Learned the hard way — before the tab-bar detector was
+        // shape-constrained, its false positive re-warned on every navigation.
+        maxWarnings = 5
+      } = {}) {
         let last = null;
         let scheduled = null;
+        let warnings = 0;
         function check() {
           const probe = probeLayout();
           applyLayoutMarkers(probe);
@@ -7749,11 +7782,13 @@ ${content}
           if (signature !== last) {
             const isFirstProbe = last === null;
             last = signature;
-            if (probe.status === "unrecognized") {
+            const mayWarn = warnings < maxWarnings;
+            if (probe.status !== "recognized" && mayWarn) warnings += 1;
+            if (probe.status === "unrecognized" && mayWarn) {
               warn(
                 `[BetterClaude] Claude UI structure: UNRECOGNIZED. No application root found under <body>, so page-geometry injection is suppressed (see the bc-layout-unrecognized rules in ui/title-bar.css). Regions: ${probe.summary}`
               );
-            } else if (probe.status === "partial" && !isFirstProbe) {
+            } else if (probe.status === "partial" && !isFirstProbe && mayWarn) {
               warn(
                 `[BetterClaude] Claude UI structure: PARTIALLY RECOGNIZED \u2014 at least one region resolved via a fallback rather than its primary selector. Regions: ${probe.summary}`
               );

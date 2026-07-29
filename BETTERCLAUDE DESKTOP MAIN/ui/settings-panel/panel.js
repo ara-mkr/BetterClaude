@@ -1470,8 +1470,16 @@ class SettingsPanel {
       hintEl.textContent = HINTS[key];
       // Per-region detail so a "partial" is actionable rather than just
       // ominous — it names which selector degraded.
+      //
+      // "not present" vs "NOT FOUND" is a real distinction, not wording fuss.
+      // The current claude.ai build ships no top-level tab bar at all, so that
+      // region is legitimately absent on a completely healthy app; labelling it
+      // "not found" made a working install look broken.
       regionsEl.textContent = (regions || [])
-        .map((r) => `${r.label}: ${r.found ? (r.tier === "primary" ? "found" : `fallback (${r.via})`) : "not found"}`)
+        .map((r) => {
+          if (r.found) return `${r.label}: ${r.tier === "primary" ? "found" : `fallback (${r.via})`}`;
+          return `${r.label}: ${r.absentOk ? "not present (fine)" : "NOT FOUND"}`;
+        })
         .join(" · ");
     };
 

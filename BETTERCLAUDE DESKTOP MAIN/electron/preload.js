@@ -447,8 +447,8 @@ async function bootstrap() {
       // live Element references, and the settings panel has no business
       // holding a handle to claude.ai's DOM (it would also pin those nodes in
       // memory across every soft update for as long as the panel is open).
-      layoutRegions = probe.regions.map(({ key, label, found, tier, via, required }) => ({
-        key, label, found, tier, via, required,
+      layoutRegions = probe.regions.map(({ key, label, found, tier, via, required, absentOk }) => ({
+        key, label, found, tier, via, required, absentOk,
       }));
       layoutChangedHandlers.forEach((cb) => cb(layoutStatus, layoutRegions));
     },

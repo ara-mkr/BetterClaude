@@ -131,6 +131,32 @@ const CASES = [
     rootId: "root",
   },
   {
+    // REGRESSION TEST for a false positive found by running the real app.
+    // This is the shape claude.ai actually ships today: no [role=tablist], no
+    // [role=tab], no <header> — just a tall fixed left sidebar whose Home /
+    // Search / pin cluster sits in the top ~60px of the window.
+    //
+    // The structural tab-bar tier used to match that sidebar and report a
+    // `fallback` tier for topTabBar, which pinned the status at `partial` on a
+    // completely healthy UI and re-warned on every route change. Both halves
+    // of the fix are asserted here: the sidebar must not be mistaken for a tab
+    // bar, and a build with no tab bar at all must still read `recognized`.
+    name: "Real current shape: tall left sidebar, NO tab bar - must be recognized",
+    body: `<div id="root">
+             <nav aria-label="Sidebar" style="position:fixed;left:0;top:0;width:272px;height:1200px">
+               <div style="display:flex;gap:4px">
+                 <a aria-label="Home" href="/new" style="width:68px;height:20px"></a>
+                 <button aria-label="Search" style="width:24px;height:24px"></button>
+                 <button data-testid="pin-sidebar-toggle" style="width:24px;height:24px"></button>
+               </div>
+               <a aria-label="New chat" href="/new" style="width:271px;height:32px"></a>
+             </nav>
+             <div data-testid="chat-input">composer</div>
+           </div>`,
+    status: "recognized",
+    rootId: "root",
+  },
+  {
     name: "No app at all (blank/error page) - must report unrecognized",
     body: `<!-- nothing -->`,
     status: "unrecognized",

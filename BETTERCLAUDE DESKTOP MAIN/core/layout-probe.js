@@ -199,14 +199,36 @@ function findTopTabBar(root) {
     return { element: tabs[0].parentElement, via: `${tabs.length}x [role="tab"]`, tier: "fallback" };
   }
 
-  // Structural last resort: a nav-ish container in the top band of the
-  // viewport holding several horizontally-laid-out controls. Bounded to the
-  // top 25% so an in-conversation toolbar deep in the page cannot match.
+  // Structural last resort: a container in the top band holding several
+  // horizontally-laid-out controls.
+  //
+  // The shape constraints below are not decoration — without them this tier
+  // matched claude.ai's LEFT SIDEBAR and reported it as the tab bar. Verified
+  // live: the current build ships `nav[aria-label="Sidebar"]` anchored
+  // `fixed left-0` from near the top of the window, so its Home / Search /
+  // pin-toggle cluster sits squarely inside any naive "top band" test. The
+  // consequence was not cosmetic: topTabBar resolved to a *fallback* tier on a
+  // completely healthy UI, which pinned the reported status at `partial`
+  // forever and re-warned on every route change. A detector that cries wolf
+  // permanently is worse than one that reports nothing, because it trains the
+  // reader to ignore the one signal this module exists to provide.
+  //
+  // So: a tab bar is WIDE AND SHORT, and it is not the sidebar.
   const band = Math.max((window.innerHeight || 0) * 0.25, 120);
-  const containers = scope.querySelectorAll("nav, header, [class*='tab' i]");
+  const sidebar =
+    document.querySelector('nav[aria-label*="sidebar" i]') ||
+    document.querySelector('nav:has([data-testid="pin-sidebar-toggle"])');
+  const containers = scope.querySelectorAll("nav, header, [role='navigation'], [class*='tab' i]");
   for (const el of containers) {
+    // Never the sidebar, and never anything inside it.
+    if (sidebar && (el === sidebar || sidebar.contains(el) || el.contains(sidebar))) continue;
     const rect = el.getBoundingClientRect();
     if (rect.top > band || rect.width <= 0) continue;
+    // Horizontal aspect. A tab strip is a band; a sidebar is a column. The 3x
+    // ratio plus the height ceiling reject a full-height vertical nav even if
+    // it happens to start at y=0, and the width floor rejects a small floating
+    // control cluster (the sidebar's 52px Search+pin pair used to match here).
+    if (rect.height > 96 || rect.width < 200 || rect.width < rect.height * 3) continue;
     const controls = Array.prototype.filter.call(
       el.querySelectorAll("a, button"),
       (c) => c.getBoundingClientRect().width > 0
@@ -246,13 +268,23 @@ const REGIONS = [
     key: "topTabBar",
     label: "Top-level tab bar",
     required: false,
+    // Absence is always fine. Verified live against the current build: it ships
+    // NO top-level tab bar at all — no [role="tablist"], no [role="tab"], no
+    // <header> — and every top-band control lives inside the left sidebar. So
+    // "not found" is the correct, healthy answer here, and treating it as a
+    // degradation would report `partial` on a working app in perpetuity.
+    // Whether Anthropic reverted the tab bar, gates it per account, or only
+    // shows it on other routes, this region can only ever be informational.
+    absenceIsNormal: () => true,
     find: (root) => findTopTabBar(root),
-    why: "The surface that regressed when the Code tab moved into the reserved strip.",
+    why: "The surface that regressed when the Code tab moved into the reserved strip. Absent in the current build.",
   },
   {
     key: "composer",
     label: "Composer",
     required: false,
+    // Absent by design on the sign-in route.
+    absenceIsNormal: ({ signedOut }) => signedOut,
     find: () => {
       const el = document.querySelector('[data-testid="chat-input"]');
       return el ? { element: el, via: '[data-testid="chat-input"]', tier: "primary" } : null;
@@ -263,6 +295,8 @@ const REGIONS = [
     key: "sidebar",
     label: "Conversation sidebar",
     required: false,
+    // Signed in, the sidebar always exists; its absence there is a real signal.
+    absenceIsNormal: ({ signedOut }) => signedOut,
     find: () => {
       const pinned = document.querySelector('nav:has([data-testid="pin-sidebar-toggle"])');
       if (pinned) return { element: pinned, via: 'nav:has([data-testid="pin-sidebar-toggle"])', tier: "primary" };
@@ -303,6 +337,7 @@ function probeLayout() {
       key: region.key,
       label: region.label,
       required: !!region.required,
+      absenceIsNormal: region.absenceIsNormal || (() => false),
       why: region.why,
       found: !!result,
       via: result ? result.via : null,
@@ -314,17 +349,42 @@ function probeLayout() {
   const missingRequired = regions.filter((r) => r.required && !r.found);
   const composerRegion = regions.find((r) => r.key === "composer");
   const signedOut = !(composerRegion && composerRegion.found);
-  const degraded = regions.filter(
-    (r) => !(r.key === "composer" && signedOut) && (!r.found || r.tier !== "primary")
-  );
+  const context = { signedOut };
+
+  // Two distinct things can degrade confidence, and conflating them is what
+  // produced a permanent false `partial`:
+  //
+  //   found, but via a fallback  — real signal. The primary selector stopped
+  //                                matching, so this region is one Anthropic
+  //                                change away from not resolving at all.
+  //   not found at all           — only a signal when the region is supposed
+  //                                to be there. A tab bar this build doesn't
+  //                                ship, or a composer on the sign-in page,
+  //                                are correctly absent, and reporting them as
+  //                                degraded means the field reads "partial"
+  //                                forever and stops being worth reading.
+  // Resolved to a plain boolean on each region so consumers (the settings
+  // panel, the audit scripts) can tell "correctly absent" from "should have
+  // been here" without carrying the predicate across a serialisation boundary,
+  // which would silently drop it.
+  regions.forEach((r) => { r.absentOk = r.found ? false : r.absenceIsNormal(context); });
+
+  const degraded = regions.filter((r) => (r.found ? r.tier !== "primary" : !r.absentOk));
 
   let status;
   if (missingRequired.length) status = "unrecognized";
   else if (degraded.length) status = "partial";
   else status = "recognized";
 
+  // "absent" and "MISSING" are deliberately different words: the first is a
+  // region that is correctly not here, the second is one that should have been.
+  // Reading a summary line is the main way this gets debugged, so the two must
+  // not look alike.
   const summary = regions
-    .map((r) => `${r.key}=${r.found ? `${r.tier}:${r.via}` : "MISSING"}`)
+    .map((r) => {
+      if (r.found) return `${r.key}=${r.tier}:${r.via}`;
+      return `${r.key}=${r.absentOk ? "absent" : "MISSING"}`;
+    })
     .join(" ");
 
   return { status, regions, root, summary };
@@ -378,9 +438,21 @@ function applyLayoutMarkers(probe) {
  * @param {boolean}  verbose  Log every transition (development builds).
  *                            Downgrades warn regardless of this flag.
  */
-function mountLayoutProbe({ onChange = null, verbose = false, log = console.log, warn = console.warn } = {}) {
+function mountLayoutProbe({
+  onChange = null,
+  verbose = false,
+  log = console.log,
+  warn = console.warn,
+  // Same cap, and the same reasoning, as top-strip-guard's: a genuinely
+  // persistent condition is one bug however many route changes rediscover it,
+  // and a warning repeated on every DOM mutation burst is indistinguishable
+  // from noise. Learned the hard way — before the tab-bar detector was
+  // shape-constrained, its false positive re-warned on every navigation.
+  maxWarnings = 5,
+} = {}) {
   let last = null;
   let scheduled = null;
+  let warnings = 0;
 
   function check() {
     const probe = probeLayout();
@@ -393,13 +465,15 @@ function mountLayoutProbe({ onChange = null, verbose = false, log = console.log,
     if (signature !== last) {
       const isFirstProbe = last === null;
       last = signature;
-      if (probe.status === "unrecognized") {
+      const mayWarn = warnings < maxWarnings;
+      if (probe.status !== "recognized" && mayWarn) warnings += 1;
+      if (probe.status === "unrecognized" && mayWarn) {
         warn(
           "[BetterClaude] Claude UI structure: UNRECOGNIZED. No application root found under <body>, " +
             "so page-geometry injection is suppressed (see the bc-layout-unrecognized rules in " +
             `ui/title-bar.css). Regions: ${probe.summary}`
         );
-      } else if (probe.status === "partial" && !isFirstProbe) {
+      } else if (probe.status === "partial" && !isFirstProbe && mayWarn) {
         // Not warned on the very first probe: "partial" is the normal state on
         // the signed-out route and during the first frames of a cold load, so
         // warning there would cry wolf. A *transition* into partial
