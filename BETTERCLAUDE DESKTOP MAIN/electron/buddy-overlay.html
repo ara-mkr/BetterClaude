@@ -1,0 +1,204 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- This window only ever shows bundled local art. Locking it down to that
+     silences Electron's insecure-CSP warning and means a malformed asset path
+     can never turn into a remote fetch. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src file:; media-src file:; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+<title>BetterClaude Buddy</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+    /* The window is transparent and always-on-top; nothing here should ever
+       show a caret, a selection highlight or a native drag ghost. */
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+  }
+  #stage { position: relative; width: 100vw; height: 100vh; }
+  #stage img, #stage video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    /* Source art is pixel art; smooth scaling turns it to mush. */
+    image-rendering: pixelated;
+    -webkit-user-drag: none;
+    pointer-events: none;
+  }
+  .hidden { display: none !important; }
+  #stage.dragging { cursor: grabbing; }
+  #stage.hot { cursor: grab; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <img id="idle" alt="">
+</div>
+<script>
+(() => {
+  const stage = document.getElementById("stage");
+  const idleEl = document.getElementById("idle");
+
+  let cfg = null;            // { buddy, assets, animations, hitBox }
+  let videos = {};           // state -> <video>
+  let working = false;
+  let cycleIndex = 0;
+  let current = null;        // currently visible video state, or null for idle
+
+  // --- rendering -----------------------------------------------------------
+
+  function showIdle() {
+    current = null;
+    Object.values(videos).forEach((v) => {
+      // Pause AND rewind: the next cycle must start the clip from the top,
+      // and a paused-but-loaded video still holds a decoded frame otherwise.
+      v.pause();
+      try { v.currentTime = 0; } catch (_e) { /* not seekable yet */ }
+      v.classList.add("hidden");
+    });
+    idleEl.classList.remove("hidden");
+  }
+
+  function playState(state) {
+    const v = videos[state];
+    if (!v) return showIdle();
+    current = state;
+    Object.entries(videos).forEach(([k, el]) => el.classList.toggle("hidden", k !== state));
+    idleEl.classList.add("hidden");
+    try { v.currentTime = 0; } catch (_e) { /* ignore */ }
+    // Autoplay is allowed here (muted, no audio track at all), but play()
+    // still returns a rejecting promise if the window is torn down mid-call.
+    const p = v.play();
+    if (p && p.catch) p.catch(() => {});
+  }
+
+  function animationsOn() {
+    return !!(cfg && cfg.animations);
+  }
+
+  function refresh() {
+    if (working && animationsOn()) {
+      // Only (re)start if we're not already mid-cycle, so a redundant
+      // working=true doesn't restart the clip that's already running.
+      if (current === null) {
+        cycleIndex = 0;
+        playState(cfg.buddy.cycle[0]);
+      }
+    } else {
+      showIdle();
+    }
+  }
+
+  function advance() {
+    // Driven by `ended`, so the cycle stays correct even if the clips aren't
+    // exactly the same length. Stop immediately if work finished meanwhile.
+    if (!working || !animationsOn()) return showIdle();
+    cycleIndex = (cycleIndex + 1) % cfg.buddy.cycle.length;
+    playState(cfg.buddy.cycle[cycleIndex]);
+  }
+
+  // --- setup ---------------------------------------------------------------
+
+  function build(state) {
+    cfg = state;
+    if (!cfg || !cfg.buddy) return;
+
+    idleEl.src = cfg.assets.idle;
+
+    // Rebuild the video elements only when the buddy actually changes;
+    // otherwise a settings tick would reload every clip mid-animation.
+    const wanted = cfg.buddy.cycle.join(",");
+    if (stage.dataset.cycle !== wanted || stage.dataset.buddy !== cfg.buddy.id) {
+      Object.values(videos).forEach((v) => v.remove());
+      videos = {};
+      cfg.buddy.cycle.forEach((s) => {
+        const v = document.createElement("video");
+        v.src = cfg.assets[s];
+        v.muted = true;               // belt-and-braces; the files carry no audio stream
+        v.playsInline = true;
+        v.preload = "auto";           // decode ahead so the swap doesn't stutter
+        v.classList.add("hidden");
+        v.addEventListener("ended", advance);
+        v.addEventListener("error", () => {
+          console.error("[BetterClaude] buddy clip failed to load:", s, cfg.assets[s]);
+          showIdle();
+        });
+        stage.appendChild(v);
+        videos[s] = v;
+      });
+      stage.dataset.cycle = wanted;
+      stage.dataset.buddy = cfg.buddy.id;
+    }
+    refresh();
+  }
+
+  // --- pointer: hit-testing, drag ------------------------------------------
+
+  // The sprite occupies only the middle of a 16:9 canvas. Without this the
+  // transparent margin would still be a live window and would swallow clicks
+  // meant for the desktop behind it.
+  function overSprite(x, y) {
+    const hb = (cfg && cfg.hitBox) || { left: 0, top: 0, right: 1, bottom: 1 };
+    const w = window.innerWidth, h = window.innerHeight;
+    return x >= hb.left * w && x <= hb.right * w && y >= hb.top * h && y <= hb.bottom * h;
+  }
+
+  let interactive = false;
+  let dragging = false;
+
+  function setInteractive(next) {
+    if (next === interactive) return;
+    interactive = next;
+    stage.classList.toggle("hot", next);
+    window.buddyAPI.setInteractive(next);
+  }
+
+  window.addEventListener("mousemove", (e) => {
+    if (dragging) {
+      window.buddyAPI.dragMove(e.screenX, e.screenY);
+      return;
+    }
+    setInteractive(overSprite(e.clientX, e.clientY));
+  });
+
+  window.addEventListener("mousedown", (e) => {
+    if (e.button !== 0 || !overSprite(e.clientX, e.clientY)) return;
+    dragging = true;
+    stage.classList.add("dragging");
+    window.buddyAPI.dragStart(e.screenX, e.screenY);
+    e.preventDefault();
+  });
+
+  const endDrag = () => {
+    if (!dragging) return;
+    dragging = false;
+    stage.classList.remove("dragging");
+    window.buddyAPI.dragEnd();
+  };
+  window.addEventListener("mouseup", endDrag);
+  // The pointer can outrun the window during a fast drag and leave it; without
+  // this the window would keep following the cursor after the button is up.
+  window.addEventListener("mouseleave", () => { if (!dragging) setInteractive(false); });
+  window.addEventListener("blur", endDrag);
+
+  // --- wire up -------------------------------------------------------------
+
+  window.buddyAPI.onState(build);
+  window.buddyAPI.onWorking((w) => {
+    if (w === working) return;
+    working = w;
+    refresh();
+  });
+  window.buddyAPI.getState().then(build).catch((err) =>
+    console.error("[BetterClaude] buddy overlay failed to initialise:", err));
+})();
+</script>
+</body>
+</html>

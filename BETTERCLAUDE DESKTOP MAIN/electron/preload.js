@@ -938,6 +938,10 @@ async function bootstrap() {
       const delay = (settings.playful && settings.playful.snakeDelayMs) || 0;
       waitingShowAt = Date.now() + delay;
     }
+    // Same edge that drives the waiting game also drives the desktop buddy.
+    // Reusing this signal rather than inventing a second one keeps the two
+    // features from ever disagreeing about whether Claude is generating.
+    if (working !== wasWorking) ipcRenderer.send("buddy:report-working", working);
     wasWorking = working;
 
     if (!working) {

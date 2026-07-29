@@ -16,6 +16,7 @@ const { mergeDefaults, DEFAULT_SETTINGS } = require("../core/settings-schema");
 const { buildThemeCSSFromVars } = require("../core/theme-engine");
 const { extractThemeVars } = require("../core/tokens");
 const { attachWindowState, getInitialBounds } = require("./window-state");
+const { BUDDY_CANVAS, BUDDY_HIT_BOX, getBuddy, resolveActiveBuddy } = require("../core/buddies");
 const { TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y } = require("./window-chrome");
 const { autoUpdater } = require("electron-updater");
 const { pickLoadingTip } = require("../core/motion-fx");
@@ -84,6 +85,9 @@ let tray = null;
 let isQuitting = false;
 let splashWindow = null;
 let analyticsDbReady = null;
+let buddyWindow = null;
+let buddyDrag = null;        // { offsetX, offsetY } while a drag is in flight
+let buddyWorking = false;    // last reported "Claude is generating" state
 
 // --- Loading-screen tips (§15) ---
 // claude.ai's own first paint takes a moment; today the window just shows
@@ -438,6 +442,197 @@ function startTeamSync() {
   }, intervalMs);
 }
 
+// --- Buddy overlay window ---------------------------------------------------
+// A desktop-level pet: its own frameless transparent always-on-top window that
+// floats over every application, not just over BetterClaude.
+
+const BUDDIES_DIR = path.join(__dirname, "..", "resources", "buddies");
+// Half the processed canvas (640x360). Big enough for the character to read at
+// a glance, small enough not to dominate a corner of the screen.
+const BUDDY_W = Math.round(BUDDY_CANVAS.width / 2);
+const BUDDY_H = Math.round(BUDDY_CANVAS.height / 2);
+
+function buddyAssetUrls(buddy) {
+  const dir = path.join(BUDDIES_DIR, buddy.id);
+  const urls = {};
+  for (const [state, file] of Object.entries(buddy.assets)) {
+    // pathToFileURL, not a hand-built "file://" + path: the app can sit under
+    // a directory with spaces (it does — "BETTERCLAUDE DESKTOP MAIN"), and an
+    // unescaped space makes the <video> src silently fail to load.
+    urls[state] = require("url").pathToFileURL(path.join(dir, file)).href;
+  }
+  return urls;
+}
+
+/**
+ * Keep a saved position on a display that actually exists.
+ *
+ * Without this, unplugging the monitor the buddy was parked on would leave it
+ * at coordinates no display covers — permanently invisible and undraggable,
+ * with no UI to recover it.
+ */
+function clampToDisplays(x, y, w, h) {
+  const displays = screen.getAllDisplays();
+  const fits = displays.some((d) => {
+    const a = d.workArea;
+    return x >= a.x && y >= a.y && x + w <= a.x + a.width && y + h <= a.y + a.height;
+  });
+  if (fits) return { x, y };
+
+  // Snap to whichever display's work area is nearest the saved point, then
+  // clamp inside it, so the buddy lands somewhere sensible rather than at 0,0.
+  const target = screen.getDisplayNearestPoint({ x: Math.round(x), y: Math.round(y) }) || screen.getPrimaryDisplay();
+  const a = target.workArea;
+  return {
+    x: Math.round(Math.min(Math.max(x, a.x), a.x + a.width - w)),
+    y: Math.round(Math.min(Math.max(y, a.y), a.y + a.height - h)),
+  };
+}
+
+function defaultBuddyPosition() {
+  const a = screen.getPrimaryDisplay().workArea;
+  return { x: a.x + a.width - BUDDY_W - 24, y: a.y + a.height - BUDDY_H - 24 };
+}
+
+function resolveBuddyPosition() {
+  const saved = store.get("buddies.position") || {};
+  if (typeof saved.x !== "number" || typeof saved.y !== "number") return defaultBuddyPosition();
+  return clampToDisplays(saved.x, saved.y, BUDDY_W, BUDDY_H);
+}
+
+function buddyState() {
+  const settings = mergeDefaults(store.store);
+  const buddy = resolveActiveBuddy(settings);
+  if (!buddy) return null;
+  return {
+    buddy: { id: buddy.id, label: buddy.label, cycle: buddy.cycle },
+    assets: buddyAssetUrls(buddy),
+    animations: settings.buddies.animations !== false,
+    hitBox: BUDDY_HIT_BOX,
+  };
+}
+
+function createBuddyWindow() {
+  const pos = resolveBuddyPosition();
+  buddyWindow = new BrowserWindow({
+    width: BUDDY_W,
+    height: BUDDY_H,
+    x: pos.x,
+    y: pos.y,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    hasShadow: false,
+    resizable: false,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    focusable: false,        // never steal focus from whatever the user is doing
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "buddy-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  // "floating" alone still sits below fullscreen apps and other desktops;
+  // this pair is what makes it a true desktop-level overlay on macOS.
+  buddyWindow.setAlwaysOnTop(true, "floating");
+  buddyWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+  // Start click-through; the renderer turns it off only while the pointer is
+  // actually over the sprite. `forward: true` is what keeps mousemove flowing
+  // to the page while ignoring is on, which that hit-testing depends on.
+  buddyWindow.setIgnoreMouseEvents(true, { forward: true });
+
+  buddyWindow.loadFile(path.join(__dirname, "buddy-overlay.html"));
+  buddyWindow.once("ready-to-show", () => {
+    if (!buddyWindow || buddyWindow.isDestroyed()) return;
+    buddyWindow.showInactive();
+    buddyWindow.webContents.send("buddy:working", buddyWorking);
+  });
+  buddyWindow.on("closed", () => { buddyWindow = null; });
+  return buddyWindow;
+}
+
+function destroyBuddyWindow() {
+  if (buddyWindow && !buddyWindow.isDestroyed()) buddyWindow.destroy();
+  buddyWindow = null;
+  buddyDrag = null;
+}
+
+/**
+ * Bring the overlay in line with current settings. Safe to call on any
+ * settings change — it is what makes the toggles live-apply without a restart.
+ */
+function syncBuddyWindow() {
+  const state = buddyState();
+  if (!state) {
+    // Destroyed rather than hidden: an idle hidden window still holds a
+    // renderer process and three decoded video elements.
+    destroyBuddyWindow();
+    return;
+  }
+  if (!buddyWindow || buddyWindow.isDestroyed()) {
+    createBuddyWindow();
+    return;
+  }
+  buddyWindow.webContents.send("buddy:state", state);
+}
+
+ipcMain.handle("buddy:get-state", () => buddyState());
+
+ipcMain.on("buddy:drag-start", (_e, { screenX, screenY }) => {
+  if (!buddyWindow || buddyWindow.isDestroyed()) return;
+  const [wx, wy] = buddyWindow.getPosition();
+  // Remember where inside the window the grab happened, so the sprite doesn't
+  // jump to have its corner under the cursor on the first move.
+  buddyDrag = { offsetX: screenX - wx, offsetY: screenY - wy };
+});
+
+ipcMain.on("buddy:drag-move", (_e, { screenX, screenY }) => {
+  if (!buddyDrag || !buddyWindow || buddyWindow.isDestroyed()) return;
+  buddyWindow.setPosition(Math.round(screenX - buddyDrag.offsetX), Math.round(screenY - buddyDrag.offsetY));
+});
+
+ipcMain.on("buddy:drag-end", () => {
+  if (!buddyDrag || !buddyWindow || buddyWindow.isDestroyed()) return buddyDrag = null;
+  const [x, y] = buddyWindow.getPosition();
+  buddyDrag = null;
+  // Persist on drop rather than on every move — setPosition fires at pointer
+  // rate and would otherwise write to disk dozens of times per drag.
+  store.set("buddies.position", { x, y });
+});
+
+ipcMain.on("buddy:set-interactive", (_e, interactive) => {
+  if (!buddyWindow || buddyWindow.isDestroyed()) return;
+  buddyWindow.setIgnoreMouseEvents(!interactive, { forward: true });
+});
+
+// Reported by the claude.ai preload, which is the only place that can see the
+// page's generating state. Broadcast rather than polled so the overlay reacts
+// on the state edge.
+ipcMain.on("buddy:report-working", (_e, working) => {
+  const next = !!working;
+  if (next === buddyWorking) return;
+  buddyWorking = next;
+  if (buddyWindow && !buddyWindow.isDestroyed()) buddyWindow.webContents.send("buddy:working", buddyWorking);
+});
+
+ipcMain.handle("buddies:get-thumbnail", (_e, id) => {
+  const buddy = getBuddy(id);
+  if (!buddy) return null;
+  const file = path.join(BUDDIES_DIR, buddy.id, buddy.assets.idle);
+  const img = nativeImage.createFromPath(file);
+  if (img.isEmpty()) return null;
+  // Downscaled to a thumbnail before base64: the full idle PNG would be ~108KB
+  // of data URI on a settings panel that re-renders on every keystroke.
+  return img.resize({ height: 96, quality: "good" }).toDataURL();
+});
+
 function createWindow() {
   const bounds = getInitialBounds(store);
 
@@ -488,6 +683,15 @@ function createWindow() {
       e.preventDefault();
       mainWindow.hide();
     }
+  });
+
+  // The overlay is a real BrowserWindow, so on Windows/Linux it would keep the
+  // app alive after the main window closed — `window-all-closed` never fires
+  // while any window is left. Tear it down here so quitting still quits.
+  // (On macOS the close above is prevented and the app lives in the tray, so
+  // the buddy should stay exactly where it is.)
+  mainWindow.on("closed", () => {
+    if (process.platform !== "darwin") destroyBuddyWindow();
   });
 
   // Keep normal claude.ai link-clicking behavior (open externally for
@@ -606,6 +810,10 @@ ipcMain.handle("settings:set", (_e, keyPath, value) => {
   if (keyPath === "promptLibrary.prompts") registerAllShortcuts();
   if (keyPath.startsWith("clipboardBridge.")) startClipboardBridge();
   if (keyPath.startsWith("teamSync.")) startTeamSync();
+  // Live-apply the buddy toggles. Skipped for `buddies.position`, which this
+  // handler never sets (the drag path writes it directly) — syncing on it
+  // would be a no-op anyway, but the guard keeps intent obvious.
+  if (keyPath.startsWith("buddies.") && keyPath !== "buddies.position") syncBuddyWindow();
   const updated = mergeDefaults(store.store);
   BrowserWindow.getAllWindows().forEach((w) => w.webContents.send("betterclaude:settings-changed", updated));
   return updated;
@@ -1435,6 +1643,18 @@ app.whenReady().then(() => {
     if (w && w.path && fs.existsSync(w.path)) startFileWatcher(w.path);
   });
   startClipboardBridge();
+  syncBuddyWindow();
+  // A display change can strand a parked buddy on a monitor that no longer
+  // exists, so re-resolve its position against the displays that remain.
+  const reseatBuddy = () => {
+    if (!buddyWindow || buddyWindow.isDestroyed()) return;
+    const { x, y } = resolveBuddyPosition();
+    buddyWindow.setPosition(x, y);
+    store.set("buddies.position", { x, y });
+  };
+  screen.on("display-removed", reseatBuddy);
+  screen.on("display-added", reseatBuddy);
+  screen.on("display-metrics-changed", reseatBuddy);
   analyticsDbReady = analyticsDb.initAnalyticsDb(app.getPath("userData")).catch((err) => {
     console.error("[BetterClaude] analytics DB init failed", err);
     return null;
@@ -1462,6 +1682,7 @@ app.on("before-quit", () => {
 });
 
 app.on("will-quit", () => {
+  destroyBuddyWindow();
   globalShortcut.unregisterAll();
   fileWatchers.forEach((w) => w.close());
   fileWatchers.clear();
