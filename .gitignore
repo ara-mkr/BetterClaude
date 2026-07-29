@@ -3,3 +3,4 @@ dist/
 build/*.bundle.js
 *.map
 .DS_Store
+__pycache__/
