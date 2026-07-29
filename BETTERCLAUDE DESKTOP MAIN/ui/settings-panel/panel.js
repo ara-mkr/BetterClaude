@@ -33,6 +33,7 @@ const cursorSoundSection = require("./sections/cursor-sound");
 const motionNotificationsSection = require("./sections/motion-notifications");
 const focusInputSection = require("./sections/focus-input");
 const widgetsPersonalitySection = require("./sections/widgets-personality");
+const buddiesSection = require("./sections/buddies");
 const powerUserSection = require("./sections/power-user");
 const playfulSection = require("./sections/playful");
 const skillMarketplaceSection = require("./sections/skill-marketplace");
@@ -84,6 +85,7 @@ const SECTIONS = [
   "Animation & Motion",
   "Widgets",
   "Personality & Fun",
+  "Buddies",
   "Notifications",
   "Focus & Reading",
   "Command Palette",
@@ -206,6 +208,7 @@ class SettingsPanel {
       "Animation & Motion": () => this._renderMotion(),
       "Widgets": () => this._renderWidgets(),
       "Personality & Fun": () => this._renderPersonality(),
+      "Buddies": () => this._renderBuddies(),
       "Notifications": () => this._renderNotifications(),
       "Focus & Reading": () => this._renderFocusReading(),
       "Command Palette": () => this._renderCommandPalette(),
@@ -1463,6 +1466,7 @@ Object.assign(
   motionNotificationsSection,
   focusInputSection,
   widgetsPersonalitySection,
+  buddiesSection,
   powerUserSection,
   playfulSection,
   skillMarketplaceSection,

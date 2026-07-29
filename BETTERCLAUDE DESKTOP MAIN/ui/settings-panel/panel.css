@@ -556,15 +556,46 @@
 }
 .bc-achievement-label { font-weight: 600; }
 
-/* --- Avatar preview (Personality tab) --- */
-.bc-avatar-preview {
-  width: 56px;
-  height: 56px;
-  margin-bottom: 12px;
+/* --- Buddies tab --- */
+.bc-buddy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+/* Dimmed, not hidden: the cards still say what turning the master switch on
+   would give you, rather than the tab looking empty. */
+.bc-buddy-grid.bc-buddy-disabled { opacity: 0.45; }
+.bc-buddy-card {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+}
+.bc-buddy-thumb {
+  width: 100%;
+  height: 96px;
   display: flex;
   align-items: center;
   justify-content: center;
+  /* The sprite is light-coloured pixel art on transparency, so it needs a
+     backdrop of its own to stay legible against a light panel theme. */
+  background: rgba(20, 16, 31, 0.35);
+  border-radius: 8px;
+  overflow: hidden;
 }
+.bc-buddy-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  image-rendering: pixelated;
+}
+.bc-buddy-title { font-weight: 600; }
+.bc-buddy-desc { font-size: 11px; opacity: 0.7; line-height: 1.4; }
+.bc-buddy-actions { margin-top: 2px; }
 
 /* --- A/B compare table (Profiles tab) --- */
 .bc-compare-grid { margin-top: 10px; }

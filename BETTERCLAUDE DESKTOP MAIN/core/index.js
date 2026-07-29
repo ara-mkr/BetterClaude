@@ -22,6 +22,7 @@ const { InteractionFX } = require("./interaction-fx");
 const { SoundEngine } = require("./sound-engine");
 const motionFx = require("./motion-fx");
 const companion = require("./companion");
+const buddies = require("./buddies");
 const { CommandPalette, mountKonamiListener, KONAMI_SEQUENCE, fuzzyScore } = require("./command-palette");
 const vibeBundles = require("./vibe-bundles");
 const weather = require("./weather");
@@ -55,6 +56,7 @@ module.exports = {
   SoundEngine,
   motionFx,
   companion,
+  buddies,
   CommandPalette,
   mountKonamiListener,
   KONAMI_SEQUENCE,

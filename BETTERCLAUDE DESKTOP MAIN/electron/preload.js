@@ -1029,6 +1029,9 @@ async function bootstrap() {
       Object.keys(themes).forEach((k) => delete themes[k]);
       Object.assign(themes, updated);
     },
+    // Bundled buddy art can't be referenced as file:// from the claude.ai
+    // document, so the main process hands it over pre-encoded.
+    getBuddyThumbnail: (id) => ipcRenderer.invoke("buddies:get-thumbnail", id),
     listPlugins: async () => {
       const sources = await ipcRenderer.invoke("plugins:list-sources");
       return sources.map(({ id }) => {

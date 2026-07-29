@@ -399,8 +399,25 @@ const DEFAULT_SETTINGS = {
   automations: {
     // Curated, reliable toggles rather than a free-form rule builder.
     zenMutesSound: false,
-    achievementBurstsConfetti: true,
-    focusPausesAmbient: true,
+    achievementBurstsConfetti: false,
+    focusPausesAmbient: false,
+  },
+  buddies: {
+    // Master switch. Off by default so a fresh install doesn't drop a
+    // character onto the user's desktop uninvited; when off, the overlay
+    // window is destroyed rather than merely hidden (see electron/main.js).
+    enabled: false,
+    // When off, the buddy stays on its static idle frame no matter what
+    // Claude is doing — see core/buddies.js for the registry.
+    animations: true,
+    // id -> enabled. Per-buddy so each can be toggled independently once
+    // there is more than one; only the registered ids are ever consulted.
+    perBuddy: { astronaut: true },
+    // Screen coordinates of the overlay. null = "not placed yet", which the
+    // main process resolves to the primary display's bottom-right corner.
+    // Re-clamped against the live displays on every show, so unplugging a
+    // monitor can't strand the buddy off-screen.
+    position: { x: null, y: null },
   },
   window: {
     width: 1280,
