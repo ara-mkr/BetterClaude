@@ -1245,6 +1245,27 @@ code, pre, kbd, samp {
 [data-cds="Icon"] {
   font-family: var(--font-anthropicons, Anthropicons-Variable) !important;
 }
+/* Same failure mode as the icon-font fix above, different property: claude.ai
+   opts specific compact icon+label controls out of normal line-height via
+   Tailwind's leading-none utility (line-height: 1), so a label's line box
+   is exactly as tall as its text and sits flush with a fixed-size sibling
+   icon \u2014 e.g. the model picker's "Sonnet 5 Low" trigger, whose label div is
+   text-[14px] h-[14px] leading-none items-baseline next to its chevron.
+   The blanket rule above still beats that (measured: computed line-height on
+   that div was 22.5px, not the ~14px leading-none gives it), inflating the
+   label inside a box that never grows to match \u2014 the text sinking below its
+   icon rather than staying centered on it. Restore it explicitly.
+   The actual text usually lives in a nested div (e.g. the ellipsis-clipping
+   label inside the model picker's leading-none wrapper) that relies on
+   inheriting line-height: 1 from its leading-none parent instead of
+   declaring the utility itself. The blanket body rule above still wins over
+   that inheritance (an explicit 0-specificity rule beats an inherited value
+   regardless of specificity), re-inflating that inner div's line box past
+   its fixed-height container and sinking the text again. Reach descendants
+   too. */
+.leading-none, .leading-none * {
+  line-height: 1 !important;
+}
 /* No "message" testid/class exists on the live site to scope this to, so it
    targets real headings anywhere in the app content instead. :where() keeps
    specificity at zero (matching the body rule above) and, crucially, keeps
@@ -1950,7 +1971,7 @@ ${text}` : text;
         plugins: {
           // pluginId -> boolean enabled
           enabled: {
-            "markdown-plus": true,
+            "markdown-plus": false,
             // Off by default: this floats over the bottom-left corner unprompted,
             // which overlaps the sidebar. Users can flip it on from Settings ->
             // Plugins if they want the canned-prompt shortcuts.
@@ -1977,7 +1998,7 @@ ${text}` : text;
           // electron/preload.js mountWaitingGame). Dismissing it with the X only
           // dismisses THAT wait — it comes back on the next one, which is the
           // point of it.
-          snakeWhileWaiting: true,
+          snakeWhileWaiting: false,
           // How long Claude has to stay busy before the popup appears. Short
           // answers finish well inside this, so the game never flashes up and
           // vanishes on a one-line reply.
@@ -1994,7 +2015,7 @@ ${text}` : text;
         // since it was last inserted and auto-reattach couldn't (or wasn't asked
         // to) find-and-replace it in an unsent composer.
         fileWatcher: {
-          enabled: true,
+          enabled: false,
           // { id, path, label, autoReattach, lastDiskContent, stale, lastSyncedAt }
           // The composer marker is derived from `label` (see core/file-sync-
           // indicator.js's marker()), not stored separately.
@@ -2063,7 +2084,7 @@ ${text}` : text;
           installed: {}
         },
         promptLibrary: {
-          enabled: true,
+          enabled: false,
           // { id, title, body, tags: [], folder, shortcut, createdAt, updatedAt }
           prompts: [],
           folders: []
@@ -2074,12 +2095,12 @@ ${text}` : text;
           trail: "off",
           // "off" | "sparkles" | "particles" | "comet"
           trailDensity: 0.5,
-          ripple: true,
+          ripple: false,
           magnetic: false,
           magneticStrength: 0.4,
           // Right-click quick-action menu (replaces claude.ai's own context menu
           // with a small radial of BetterClaude actions).
-          radialMenu: true,
+          radialMenu: false,
           // User-chosen order for the plugin dock icons; empty = load order.
           dockOrder: []
         },
@@ -2089,10 +2110,10 @@ ${text}` : text;
           muted: false,
           volume: 0.6,
           perType: {
-            click: true,
+            click: false,
             hover: false,
-            notification: true,
-            achievement: true
+            notification: false,
+            achievement: false
           },
           ambient: {
             track: "off",
@@ -2113,7 +2134,7 @@ ${text}` : text;
           // play full motion regardless. There's no separate "respect" flag —
           // respecting the system setting is just the absence of this override.
           overrideReducedMotion: false,
-          confetti: true,
+          confetti: false,
           parallax: false,
           seasonalDecorations: false
         },
@@ -2128,10 +2149,10 @@ ${text}` : text;
           // Per-category on/off + custom color/icon. achievement/update are the
           // only two that may bypass DND (see core/notifications.js PRIORITY).
           types: {
-            theme: { enabled: true, color: "#8b5cf6", icon: "" },
-            plugin: { enabled: true, color: "#8b5cf6", icon: "" },
-            achievement: { enabled: true, color: "#f5c518", icon: "" },
-            update: { enabled: true, color: "#22c55e", icon: "" }
+            theme: { enabled: false, color: "#8b5cf6", icon: "" },
+            plugin: { enabled: false, color: "#8b5cf6", icon: "" },
+            achievement: { enabled: false, color: "#f5c518", icon: "" },
+            update: { enabled: false, color: "#22c55e", icon: "" }
           },
           // Smart Notification Digest — off by default. When on, background
           // task-completion notifications (Team Sync applied files, clipboard
@@ -2172,7 +2193,6 @@ ${text}` : text;
           streak: { count: 0, lastActiveDate: "" },
           achievements: [],
           // unlocked achievement ids, see core/companion.js CATALOG
-          avatar: { shape: "circle", color: "#8b5cf6", accessory: "none" },
           // User-added entries merged into core/motion-fx.js's built-in
           // LOADING_TIPS pool (real + joke), shown while claude.ai's page loads.
           customLoadingTips: { real: [], joke: [] },
@@ -2193,8 +2213,25 @@ ${text}` : text;
         automations: {
           // Curated, reliable toggles rather than a free-form rule builder.
           zenMutesSound: false,
-          achievementBurstsConfetti: true,
-          focusPausesAmbient: true
+          achievementBurstsConfetti: false,
+          focusPausesAmbient: false
+        },
+        buddies: {
+          // Master switch. Off by default so a fresh install doesn't drop a
+          // character onto the user's desktop uninvited; when off, the overlay
+          // window is destroyed rather than merely hidden (see electron/main.js).
+          enabled: false,
+          // When off, the buddy stays on its static idle frame no matter what
+          // Claude is doing — see core/buddies.js for the registry.
+          animations: true,
+          // id -> enabled. Per-buddy so each can be toggled independently once
+          // there is more than one; only the registered ids are ever consulted.
+          perBuddy: { astronaut: true },
+          // Screen coordinates of the overlay. null = "not placed yet", which the
+          // main process resolves to the primary display's bottom-right corner.
+          // Re-clamped against the live displays on every show, so unplugging a
+          // monitor can't strand the buddy off-screen.
+          position: { x: null, y: null }
         },
         window: {
           width: 1280,
@@ -3339,17 +3376,8 @@ body.bc-zen-mode #betterclaude-plugin-dock {
         const streakPart = style === "streak" && streakCount > 1 ? ` \u2014 ${streakCount} day streak!` : "";
         return `${timeGreeting}${namePart}${streakPart}`;
       }
-      function buildAvatarSvg({ shape = "circle", color = "#8b5cf6", accessory = "none" } = {}) {
-        const body = shape === "square" ? `<rect x="4" y="4" width="40" height="40" rx="10" fill="${color}"/>` : shape === "blob" ? `<path d="M24 4c10 0 20 6 20 18s-8 22-20 22S4 34 4 22 14 4 24 4Z" fill="${color}"/>` : `<circle cx="24" cy="24" r="20" fill="${color}"/>`;
-        const eyes = `<circle cx="17" cy="22" r="2.6" fill="#14101f"/><circle cx="31" cy="22" r="2.6" fill="#14101f"/>`;
-        const mouth = `<path d="M17 30q7 6 14 0" stroke="#14101f" stroke-width="2" fill="none" stroke-linecap="round"/>`;
-        const accessories = {
-          none: "",
-          bow: `<path d="M16 10l6 4-6 4v-8Zm16 0v8l-6-4 6-4Z" fill="#ef4444"/>`,
-          glasses: `<circle cx="17" cy="22" r="5" fill="none" stroke="#14101f" stroke-width="1.6"/><circle cx="31" cy="22" r="5" fill="none" stroke="#14101f" stroke-width="1.6"/><line x1="22" y1="22" x2="26" y2="22" stroke="#14101f" stroke-width="1.6"/>`,
-          hat: `<path d="M24 2l10 8H14l10-8Z" fill="#111827"/><rect x="12" y="9" width="24" height="3" fill="#111827"/>`
-        };
-        return `<svg viewBox="0 0 48 48" width="48" height="48" aria-hidden="true">${body}${eyes}${mouth}${accessories[accessory] || ""}</svg>`;
+      function buildCompanionSvg() {
+        return `<svg viewBox="0 0 48 48" width="48" height="48" aria-hidden="true"><circle cx="24" cy="24" r="20" fill="#8b5cf6"/><circle cx="17" cy="22" r="2.6" fill="#14101f"/><circle cx="31" cy="22" r="2.6" fill="#14101f"/><path d="M17 30q7 6 14 0" stroke="#14101f" stroke-width="2" fill="none" stroke-linecap="round"/></svg>`;
       }
       var Companion = class {
         constructor() {
@@ -3363,7 +3391,7 @@ body.bc-zen-mode #betterclaude-plugin-dock {
           root.id = "bc-companion";
           root.innerHTML = `
       <div class="bc-companion-bubble" data-bc-bubble hidden></div>
-      <div class="bc-companion-avatar" data-bc-avatar></div>
+      <div class="bc-companion-face" data-bc-face></div>
       <div class="bc-companion-streak" data-bc-streak hidden></div>
     `;
           document.body.appendChild(root);
@@ -3375,7 +3403,7 @@ body.bc-zen-mode #betterclaude-plugin-dock {
           if (!this.el) return;
           const personality = settings.personality || {};
           this.el.style.display = personality.companionEnabled === false ? "none" : "flex";
-          this.el.querySelector("[data-bc-avatar]").innerHTML = buildAvatarSvg(personality.avatar);
+          this.el.querySelector("[data-bc-face]").innerHTML = buildCompanionSvg();
           const streakEl = this.el.querySelector("[data-bc-streak]");
           const count = personality.streak && personality.streak.count || 0;
           if (count > 1) {
@@ -3397,10 +3425,10 @@ body.bc-zen-mode #betterclaude-plugin-dock {
         }
         react(kind = "happy", { durationMs = 1500 } = {}) {
           if (!this.el) return;
-          const avatar = this.el.querySelector("[data-bc-avatar]");
-          avatar.classList.add(`bc-companion-${kind}`);
+          const face = this.el.querySelector("[data-bc-face]");
+          face.classList.add(`bc-companion-${kind}`);
           clearTimeout(this._reactTimeout);
-          this._reactTimeout = setTimeout(() => avatar.classList.remove(`bc-companion-${kind}`), durationMs);
+          this._reactTimeout = setTimeout(() => face.classList.remove(`bc-companion-${kind}`), durationMs);
         }
         unmount() {
           if (this.el) {
@@ -3416,8 +3444,53 @@ body.bc-zen-mode #betterclaude-plugin-dock {
         checkAchievements,
         incrementStreak,
         buildGreeting,
-        buildAvatarSvg,
+        buildCompanionSvg,
         Companion
+      };
+    }
+  });
+
+  // core/buddies.js
+  var require_buddies = __commonJS({
+    "core/buddies.js"(exports, module) {
+      var BUDDY_CANVAS = { width: 640, height: 360 };
+      var BUDDY_HIT_BOX = { left: 0.3, top: 0.05, right: 0.7, bottom: 0.95 };
+      var BUDDIES = [
+        {
+          id: "astronaut",
+          label: "Astronaut",
+          description: "Taps away at a keyboard, ponders, then blasts off \u2014 on repeat while Claude works.",
+          // Paths are relative to resources/buddies/<id>/.
+          assets: {
+            idle: "astronaut-idle.png",
+            typing: "astronaut-typing.webm",
+            thinking: "astronaut-thinking.webm",
+            blastoff: "astronaut-blastoff.webm"
+          },
+          // Order of the working-state loop. Advanced by each clip's `ended` event,
+          // never by a timer, so it stays correct if clip durations drift.
+          cycle: ["typing", "thinking", "blastoff"]
+        }
+      ];
+      function listBuddies() {
+        return BUDDIES.slice();
+      }
+      function getBuddy(id) {
+        return BUDDIES.find((b) => b.id === id) || null;
+      }
+      function resolveActiveBuddy(settings) {
+        const cfg = settings && settings.buddies || {};
+        if (!cfg.enabled) return null;
+        const perBuddy = cfg.perBuddy || {};
+        return BUDDIES.find((b) => perBuddy[b.id] === true) || null;
+      }
+      module.exports = {
+        BUDDIES,
+        BUDDY_CANVAS,
+        BUDDY_HIT_BOX,
+        listBuddies,
+        getBuddy,
+        resolveActiveBuddy
       };
     }
   });
@@ -7263,6 +7336,7 @@ ${content}
       var { SoundEngine } = require_sound_engine();
       var motionFx = require_motion_fx();
       var companion = require_companion();
+      var buddies = require_buddies();
       var { CommandPalette, mountKonamiListener, KONAMI_SEQUENCE, fuzzyScore } = require_command_palette();
       var vibeBundles = require_vibe_bundles();
       var weather = require_weather();
@@ -7295,6 +7369,7 @@ ${content}
         SoundEngine,
         motionFx,
         companion,
+        buddies,
         CommandPalette,
         mountKonamiListener,
         KONAMI_SEQUENCE,

@@ -174,7 +174,7 @@ const DEFAULT_SETTINGS = {
   plugins: {
     // pluginId -> boolean enabled
     enabled: {
-      "markdown-plus": true,
+      "markdown-plus": false,
       // Off by default: this floats over the bottom-left corner unprompted,
       // which overlaps the sidebar. Users can flip it on from Settings ->
       // Plugins if they want the canned-prompt shortcuts.
@@ -201,7 +201,7 @@ const DEFAULT_SETTINGS = {
     // electron/preload.js mountWaitingGame). Dismissing it with the X only
     // dismisses THAT wait — it comes back on the next one, which is the
     // point of it.
-    snakeWhileWaiting: true,
+    snakeWhileWaiting: false,
     // How long Claude has to stay busy before the popup appears. Short
     // answers finish well inside this, so the game never flashes up and
     // vanishes on a one-line reply.
@@ -218,7 +218,7 @@ const DEFAULT_SETTINGS = {
   // since it was last inserted and auto-reattach couldn't (or wasn't asked
   // to) find-and-replace it in an unsent composer.
   fileWatcher: {
-    enabled: true,
+    enabled: false,
     // { id, path, label, autoReattach, lastDiskContent, stale, lastSyncedAt }
     // The composer marker is derived from `label` (see core/file-sync-
     // indicator.js's marker()), not stored separately.
@@ -284,7 +284,7 @@ const DEFAULT_SETTINGS = {
     installed: {},
   },
   promptLibrary: {
-    enabled: true,
+    enabled: false,
     // { id, title, body, tags: [], folder, shortcut, createdAt, updatedAt }
     prompts: [],
     folders: [],
@@ -293,12 +293,12 @@ const DEFAULT_SETTINGS = {
     style: "default", // "default" | "dot" | "crosshair"
     trail: "off", // "off" | "sparkles" | "particles" | "comet"
     trailDensity: 0.5,
-    ripple: true,
+    ripple: false,
     magnetic: false,
     magneticStrength: 0.4,
     // Right-click quick-action menu (replaces claude.ai's own context menu
     // with a small radial of BetterClaude actions).
-    radialMenu: true,
+    radialMenu: false,
     // User-chosen order for the plugin dock icons; empty = load order.
     dockOrder: [],
   },
@@ -307,10 +307,10 @@ const DEFAULT_SETTINGS = {
     muted: false,
     volume: 0.6,
     perType: {
-      click: true,
+      click: false,
       hover: false,
-      notification: true,
-      achievement: true,
+      notification: false,
+      achievement: false,
     },
     ambient: {
       track: "off", // "off" | "rain" | "cafe" | "lofi" — procedurally generated noise
@@ -327,7 +327,7 @@ const DEFAULT_SETTINGS = {
     // play full motion regardless. There's no separate "respect" flag —
     // respecting the system setting is just the absence of this override.
     overrideReducedMotion: false,
-    confetti: true,
+    confetti: false,
     parallax: false,
     seasonalDecorations: false,
   },
@@ -341,10 +341,10 @@ const DEFAULT_SETTINGS = {
     // Per-category on/off + custom color/icon. achievement/update are the
     // only two that may bypass DND (see core/notifications.js PRIORITY).
     types: {
-      theme: { enabled: true, color: "#8b5cf6", icon: "" },
-      plugin: { enabled: true, color: "#8b5cf6", icon: "" },
-      achievement: { enabled: true, color: "#f5c518", icon: "" },
-      update: { enabled: true, color: "#22c55e", icon: "" },
+      theme: { enabled: false, color: "#8b5cf6", icon: "" },
+      plugin: { enabled: false, color: "#8b5cf6", icon: "" },
+      achievement: { enabled: false, color: "#f5c518", icon: "" },
+      update: { enabled: false, color: "#22c55e", icon: "" },
     },
     // Smart Notification Digest — off by default. When on, background
     // task-completion notifications (Team Sync applied files, clipboard

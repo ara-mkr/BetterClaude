@@ -347,8 +347,16 @@ code, pre, kbd, samp {
    The blanket rule above still beats that (measured: computed line-height on
    that div was 22.5px, not the ~14px leading-none gives it), inflating the
    label inside a box that never grows to match — the text sinking below its
-   icon rather than staying centered on it. Restore it explicitly. */
-.leading-none {
+   icon rather than staying centered on it. Restore it explicitly.
+   The actual text usually lives in a nested div (e.g. the ellipsis-clipping
+   label inside the model picker's leading-none wrapper) that relies on
+   inheriting line-height: 1 from its leading-none parent instead of
+   declaring the utility itself. The blanket body rule above still wins over
+   that inheritance (an explicit 0-specificity rule beats an inherited value
+   regardless of specificity), re-inflating that inner div's line box past
+   its fixed-height container and sinking the text again. Reach descendants
+   too. */
+.leading-none, .leading-none * {
   line-height: 1 !important;
 }
 /* No "message" testid/class exists on the live site to scope this to, so it
