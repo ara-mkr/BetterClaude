@@ -42,9 +42,24 @@ function isAllowedAuthPopup(url) {
   }
 }
 
+// NOTE: `migrations` has always been truthy (it was `{}`), so conf's _migrate
+// already ran on every launch and stamped __internal__.migrations.version with
+// package.json's version. Existing installs therefore sit at "0.1.0" — a
+// migration keyed "0.1.0" would be skipped (_shouldPerformMigration requires
+// candidate > previouslyMigrated), and one keyed above package.json's version
+// would be skipped too (it must also be <= projectVersion). So deleting a key
+// for existing users requires BOTH a new migration key and a package.json
+// version bump to at least that key. Keep those two in lockstep.
 const store = new Store({
   defaults: DEFAULT_SETTINGS,
-  migrations: {},
+  migrations: {
+    // Settings -> Personality's avatar shape/color/accessory picker was
+    // replaced by Settings -> Buddies. Drop the orphaned key rather than
+    // leaving it to sit in every user's config.json forever.
+    "0.2.0": (s) => {
+      s.delete("personality.avatar");
+    },
+  },
 });
 
 // Platform-specific window chrome. `frame: false` and `titleBarStyle` are

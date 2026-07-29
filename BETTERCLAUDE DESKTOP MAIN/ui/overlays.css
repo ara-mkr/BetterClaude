@@ -225,7 +225,7 @@
   pointer-events: none;
   transform: translateY(var(--bc-parallax-y, 0px));
 }
-#bc-companion .bc-companion-avatar {
+#bc-companion .bc-companion-face {
   pointer-events: auto;
   width: 48px;
   height: 48px;
@@ -236,8 +236,8 @@
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-4px); }
 }
-.bc-companion-avatar.bc-companion-happy { animation: bc-companion-bounce 1.5s ease; }
-.bc-companion-avatar.bc-companion-streak-bump { animation: bc-companion-bounce 0.9s ease; }
+.bc-companion-face.bc-companion-happy { animation: bc-companion-bounce 1.5s ease; }
+.bc-companion-face.bc-companion-streak-bump { animation: bc-companion-bounce 0.9s ease; }
 @keyframes bc-companion-bounce {
   0%, 100% { transform: translateY(0) scale(1); }
   30% { transform: translateY(-14px) scale(1.08); }
@@ -270,9 +270,9 @@
 }
 .bc-companion-streak svg { width: 11px; height: 11px; flex: none; }
 @media (prefers-reduced-motion: reduce) {
-  #bc-companion .bc-companion-avatar,
-  .bc-companion-avatar.bc-companion-happy,
-  .bc-companion-avatar.bc-companion-streak-bump {
+  #bc-companion .bc-companion-face,
+  .bc-companion-face.bc-companion-happy,
+  .bc-companion-face.bc-companion-streak-bump {
     animation: none !important;
   }
 }

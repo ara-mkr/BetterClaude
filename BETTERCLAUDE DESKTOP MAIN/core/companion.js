@@ -3,9 +3,11 @@
  * intentionally side-effect-free so it's unit-testable in isolation
  * (incrementStreak/checkAchievements/buildGreeting never touch the DOM).
  *
- * Companion is a small mascot avatar (built from layered SVG shapes — no
+ * Companion is a small in-window mascot (built from layered SVG shapes — no
  * image assets) that shows a greeting/status speech bubble and reacts to
- * streak bumps and achievement unlocks.
+ * streak bumps and achievement unlocks. It is distinct from Buddies
+ * (core/buddies.js), which are image/video characters in their own
+ * desktop-level overlay window.
  */
 
 const { FLAME } = require("./icons");
@@ -65,21 +67,15 @@ function buildGreeting({ name, streakCount = 0, hour, style = "timeOfDay" } = {}
   return `${timeGreeting}${namePart}${streakPart}`;
 }
 
-function buildAvatarSvg({ shape = "circle", color = "#8b5cf6", accessory = "none" } = {}) {
-  const body = shape === "square"
-    ? `<rect x="4" y="4" width="40" height="40" rx="10" fill="${color}"/>`
-    : shape === "blob"
-      ? `<path d="M24 4c10 0 20 6 20 18s-8 22-20 22S4 34 4 22 14 4 24 4Z" fill="${color}"/>`
-      : `<circle cx="24" cy="24" r="20" fill="${color}"/>`;
-  const eyes = `<circle cx="17" cy="22" r="2.6" fill="#14101f"/><circle cx="31" cy="22" r="2.6" fill="#14101f"/>`;
-  const mouth = `<path d="M17 30q7 6 14 0" stroke="#14101f" stroke-width="2" fill="none" stroke-linecap="round"/>`;
-  const accessories = {
-    none: "",
-    bow: `<path d="M16 10l6 4-6 4v-8Zm16 0v8l-6-4 6-4Z" fill="#ef4444"/>`,
-    glasses: `<circle cx="17" cy="22" r="5" fill="none" stroke="#14101f" stroke-width="1.6"/><circle cx="31" cy="22" r="5" fill="none" stroke="#14101f" stroke-width="1.6"/><line x1="22" y1="22" x2="26" y2="22" stroke="#14101f" stroke-width="1.6"/>`,
-    hat: `<path d="M24 2l10 8H14l10-8Z" fill="#111827"/><rect x="12" y="9" width="24" height="3" fill="#111827"/>`,
-  };
-  return `<svg viewBox="0 0 48 48" width="48" height="48" aria-hidden="true">${body}${eyes}${mouth}${accessories[accessory] || ""}</svg>`;
+// One fixed look, deliberately not user-configurable. The old
+// shape/color/accessory picker (settings.personality.avatar) was removed in
+// favour of Settings -> Buddies, which owns character customization now.
+function buildCompanionSvg() {
+  return `<svg viewBox="0 0 48 48" width="48" height="48" aria-hidden="true">`
+    + `<circle cx="24" cy="24" r="20" fill="#8b5cf6"/>`
+    + `<circle cx="17" cy="22" r="2.6" fill="#14101f"/><circle cx="31" cy="22" r="2.6" fill="#14101f"/>`
+    + `<path d="M17 30q7 6 14 0" stroke="#14101f" stroke-width="2" fill="none" stroke-linecap="round"/>`
+    + `</svg>`;
 }
 
 class Companion {
@@ -95,7 +91,7 @@ class Companion {
     root.id = "bc-companion";
     root.innerHTML = `
       <div class="bc-companion-bubble" data-bc-bubble hidden></div>
-      <div class="bc-companion-avatar" data-bc-avatar></div>
+      <div class="bc-companion-face" data-bc-face></div>
       <div class="bc-companion-streak" data-bc-streak hidden></div>
     `;
     document.body.appendChild(root);
@@ -108,7 +104,7 @@ class Companion {
     if (!this.el) return;
     const personality = settings.personality || {};
     this.el.style.display = personality.companionEnabled === false ? "none" : "flex";
-    this.el.querySelector("[data-bc-avatar]").innerHTML = buildAvatarSvg(personality.avatar);
+    this.el.querySelector("[data-bc-face]").innerHTML = buildCompanionSvg();
     const streakEl = this.el.querySelector("[data-bc-streak]");
     const count = (personality.streak && personality.streak.count) || 0;
     if (count > 1) {
@@ -130,10 +126,10 @@ class Companion {
 
   react(kind = "happy", { durationMs = 1500 } = {}) {
     if (!this.el) return;
-    const avatar = this.el.querySelector("[data-bc-avatar]");
-    avatar.classList.add(`bc-companion-${kind}`);
+    const face = this.el.querySelector("[data-bc-face]");
+    face.classList.add(`bc-companion-${kind}`);
     clearTimeout(this._reactTimeout);
-    this._reactTimeout = setTimeout(() => avatar.classList.remove(`bc-companion-${kind}`), durationMs);
+    this._reactTimeout = setTimeout(() => face.classList.remove(`bc-companion-${kind}`), durationMs);
   }
 
   unmount() {
@@ -151,6 +147,6 @@ module.exports = {
   checkAchievements,
   incrementStreak,
   buildGreeting,
-  buildAvatarSvg,
+  buildCompanionSvg,
   Companion,
 };

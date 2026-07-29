@@ -5,8 +5,7 @@
  */
 
 const { el, field, selectField, toggleField, textField } = require("../dom-helpers");
-const { openColorPopover } = require("../color-popover");
-const { ACHIEVEMENTS, buildAvatarSvg } = require("../../../core/companion");
+const { ACHIEVEMENTS } = require("../../../core/companion");
 const ICONS = require("../../../core/icons");
 
 const WIDGET_CATALOG = [
@@ -142,46 +141,6 @@ module.exports = {
       badgeGrid.appendChild(badge);
     });
     wrap.appendChild(badgeGrid);
-
-    wrap.appendChild(el("h2", { text: "Avatar", class: "bc-ae-subhead" }));
-    const preview = el("div", { class: "bc-avatar-preview" });
-    const renderPreview = () => { preview.innerHTML = buildAvatarSvg(personality.avatar); };
-    renderPreview();
-    wrap.appendChild(preview);
-
-    wrap.appendChild(selectField("Shape", [
-      { value: "circle", label: "Circle" },
-      { value: "square", label: "Square" },
-      { value: "blob", label: "Blob" },
-    ], personality.avatar.shape, (v) => {
-      this._set("personality.avatar.shape", v);
-      personality.avatar.shape = v;
-      renderPreview();
-    }));
-
-    const colorSwatch = el("button", { class: "bc-color-swatch" });
-    colorSwatch.style.background = personality.avatar.color;
-    let liveColor = personality.avatar.color;
-    colorSwatch.addEventListener("click", () => {
-      openColorPopover(colorSwatch, liveColor, (hex) => {
-        liveColor = hex;
-        colorSwatch.style.background = hex;
-        personality.avatar.color = hex;
-        renderPreview();
-      }, () => this._set("personality.avatar.color", liveColor));
-    });
-    wrap.appendChild(field("Color", colorSwatch));
-
-    wrap.appendChild(selectField("Accessory", [
-      { value: "none", label: "None" },
-      { value: "bow", label: "Bow" },
-      { value: "glasses", label: "Glasses" },
-      { value: "hat", label: "Hat" },
-    ], personality.avatar.accessory, (v) => {
-      this._set("personality.avatar.accessory", v);
-      personality.avatar.accessory = v;
-      renderPreview();
-    }));
 
     wrap.appendChild(el("p", { class: "bc-hint", text: "Psst — there's a secret input sequence hidden somewhere in the app…" }));
 

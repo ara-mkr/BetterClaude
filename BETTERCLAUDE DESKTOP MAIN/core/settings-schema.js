@@ -381,7 +381,6 @@ const DEFAULT_SETTINGS = {
     mood: null, // "energetic" | "calm" | "focused" | "playful" | null
     streak: { count: 0, lastActiveDate: "" },
     achievements: [], // unlocked achievement ids, see core/companion.js CATALOG
-    avatar: { shape: "circle", color: "#8b5cf6", accessory: "none" },
     // User-added entries merged into core/motion-fx.js's built-in
     // LOADING_TIPS pool (real + joke), shown while claude.ai's page loads.
     customLoadingTips: { real: [], joke: [] },
