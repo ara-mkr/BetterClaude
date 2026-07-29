@@ -839,6 +839,40 @@ function buildAppMenu() {
       submenu: [
         { role: "reload" },
         { role: "forceReload" },
+        {
+          // The recovery path for a user stuck on a stale claude.ai layout.
+          //
+          // Why forceReload above is not already enough: it bypasses the HTTP
+          // cache, but claude.ai is a PWA and registers a service worker. A
+          // service worker sits in front of the network and can keep serving a
+          // cached app shell across any number of reloads, cache-busting
+          // headers included — so "I reloaded and it's still the old UI" is a
+          // real state that forceReload cannot get you out of.
+          // clearStorageData with these quotas removes the worker and its
+          // Cache Storage entries as well as the HTTP cache.
+          //
+          // Deliberately NOT cleared: cookies, localstorage, indexdb. Those
+          // hold the claude.ai session, and silently signing the user out
+          // would be a worse outcome than the stale layout it fixes — this
+          // needs to stay a safe thing to click when confused.
+          label: "Clear Cache and Reload",
+          click: async () => {
+            if (!mainWindow) return;
+            const windowSession = mainWindow.webContents.session;
+            try {
+              await windowSession.clearCache();
+              await windowSession.clearStorageData({
+                storages: ["serviceworkers", "cachestorage", "shadercache"],
+              });
+            } catch (err) {
+              // Still reload on failure: a partial clear plus a
+              // cache-ignoring reload is strictly better than doing nothing,
+              // and this is a manual recovery action the user is watching.
+              console.error("[BetterClaude] clear-cache failed; reloading anyway", err);
+            }
+            mainWindow.webContents.reloadIgnoringCache();
+          },
+        },
         { role: "toggleDevTools" },
       ],
     },

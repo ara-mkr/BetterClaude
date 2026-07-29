@@ -1424,7 +1424,92 @@ class SettingsPanel {
     });
     wrap.appendChild(field("Density", densityRow));
 
+    this._appendLayoutDiagnostics(wrap);
+
     this.contentEl.appendChild(wrap);
+  }
+
+  // Read-only status for core/layout-probe.js. Lives at the bottom of Layout
+  // because that is the page whose settings stop working first when Anthropic
+  // changes their DOM — the sidebar width/position/pin controls above all
+  // target claude.ai's own elements.
+  //
+  // The reason this is in the UI at all, rather than only a console warning:
+  // the failure it reports is invisible by construction. A selector that stops
+  // matching doesn't throw, so "BetterClaude's chrome is in the wrong place
+  // after an update" arrives as a bug report with no diagnostic attached. This
+  // turns that into one line a user can read back over a support thread.
+  _appendLayoutDiagnostics(wrap) {
+    // Guard, don't assume: the browser-extension build shares this file and
+    // supplies its own host object, which has no layout-probe bridge. An
+    // unguarded call would throw mid-render and blank the whole Layout page.
+    if (typeof this.host.getLayoutStatus !== "function") return;
+
+    const LABELS = {
+      recognized: "Recognized",
+      partial: "Partially recognized",
+      unrecognized: "Unrecognized",
+      unknown: "Not yet probed",
+    };
+    const HINTS = {
+      recognized: "Every part of claude.ai's layout that BetterClaude styles was found where expected.",
+      partial: "BetterClaude found everything it needs, but at least one element only matched a fallback selector. Things should still look right — this is an early warning that a future claude.ai update may break this page's settings.",
+      unrecognized: "BetterClaude could not find claude.ai's app layout, so it has stopped applying page geometry and made the title bar click-through rather than risk covering the page. Reload; if this persists, claude.ai's structure has changed and BetterClaude needs an update.",
+      unknown: "The layout probe has not reported yet.",
+    };
+
+    wrap.appendChild(el("h3", { text: "Claude UI structure" }));
+
+    const valueEl = el("strong", {});
+    const hintEl = el("p", { class: "bc-hint" });
+    const regionsEl = el("p", { class: "bc-hint" });
+
+    const paint = ({ status, regions }) => {
+      const key = LABELS[status] ? status : "unknown";
+      valueEl.textContent = LABELS[key];
+      hintEl.textContent = HINTS[key];
+      // Per-region detail so a "partial" is actionable rather than just
+      // ominous — it names which selector degraded.
+      regionsEl.textContent = (regions || [])
+        .map((r) => `${r.label}: ${r.found ? (r.tier === "primary" ? "found" : `fallback (${r.via})`) : "not found"}`)
+        .join(" · ");
+    };
+
+    paint(this.host.getLayoutStatus());
+    wrap.appendChild(field("Detection status", valueEl));
+    wrap.appendChild(hintEl);
+    wrap.appendChild(regionsEl);
+    wrap.appendChild(el("button", {
+      class: "bc-btn bc-btn-secondary",
+      text: "Re-check now",
+      onclick: () => paint(this.host.recheckLayout()),
+    }));
+
+    // Live updates while the page is open: a soft update to claude.ai's shell
+    // is exactly the moment this field becomes interesting, and re-rendering
+    // the whole section (the usual pattern in this file) would fight the user
+    // if they were mid-drag on the sidebar width slider above.
+    //
+    // Subscribed ONCE for the lifetime of the panel, not once per render.
+    // renderSection() runs on every settings change and on every nav click, so
+    // subscribing here would push a new callback onto the host's handler array
+    // each time and never remove one — the array has no unsubscribe, so those
+    // would accumulate for the whole session. Instead the single subscription
+    // repaints through whatever the current render assigned, and stale
+    // closures die with the nodes they captured.
+    this._paintLayoutDiagnostics = paint;
+    if (!this._layoutDiagnosticsSubscribed && typeof this.host.onLayoutStatusChanged === "function") {
+      this._layoutDiagnosticsSubscribed = true;
+      this.host.onLayoutStatusChanged((status, regions) => {
+        // isConnected, not a truthiness check: the node exists but is detached
+        // once the user navigates to another section, and painting into a
+        // detached node is wasted work rather than an error.
+        if (this._layoutDiagnosticsAnchor && this._layoutDiagnosticsAnchor.isConnected) {
+          this._paintLayoutDiagnostics({ status, regions });
+        }
+      });
+    }
+    this._layoutDiagnosticsAnchor = valueEl;
   }
 
   _renderPlugins() {

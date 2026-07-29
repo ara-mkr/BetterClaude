@@ -9,6 +9,7 @@
     "postinstall": "node scripts/fix-dev-app-name.js",
     "build:core": "node esbuild.config.js",
     "audit": "node scripts/audit.js",
+    "audit:layout": "npm run build:core && electron scripts/audit-layout-probe.js",
     "clipboard-relay": "node scripts/clipboard-relay-server.js",
     "regen-themes": "node scripts/regen-themes.js",
     "start": "npm run build:core && electron .",

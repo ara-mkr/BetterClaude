@@ -38,6 +38,13 @@ const { renderLineChart, renderBarChart } = require("./analytics-charts");
 const { AnalyticsDashboard, presetRange } = require("./analytics-dashboard");
 const { UpdateBanner, BANNER_ID } = require("./update-banner");
 const { mountTopStripGuard, probeReservedStrip } = require("./top-strip-guard");
+const {
+  mountLayoutProbe,
+  probeLayout,
+  applyLayoutMarkers,
+  findClaudeRoot,
+  findTopTabBar,
+} = require("./layout-probe");
 
 module.exports = {
   ThemeEngine,
@@ -93,4 +100,14 @@ module.exports = {
   // custom title bar. Inert in the extension build, which reserves no strip.
   mountTopStripGuard,
   probeReservedStrip,
+  // Version-aware injection gate: decides whether claude.ai's current DOM is
+  // recognizable enough to apply page geometry to, and tags the app root the
+  // geometry rules target. Unlike the guard above, this is load-bearing in
+  // packaged builds — it is what makes an unknown layout degrade instead of
+  // getting injected over blind.
+  mountLayoutProbe,
+  probeLayout,
+  applyLayoutMarkers,
+  findClaudeRoot,
+  findTopTabBar,
 };

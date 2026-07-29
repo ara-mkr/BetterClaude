@@ -32,6 +32,7 @@ const { shouldSuppress, notificationStyleClass } = require("../core/notification
 const { UpdateBanner } = require("../core/update-banner");
 const { insertIntoComposer } = require("../core/compose-insert");
 const { mountTopStripGuard } = require("../core/top-strip-guard");
+const { mountLayoutProbe } = require("../core/layout-probe");
 
 const { mountTitleBar } = require("../ui/title-bar");
 const { TITLE_BAR_HEIGHT } = require("./window-chrome");
@@ -52,8 +53,17 @@ const CSS_SUBSTITUTIONS = {
   __BC_TITLE_BAR_HEIGHT__: String(TITLE_BAR_HEIGHT),
 };
 
+// Idempotent by id, matching core/theme-engine.js's ensureStyleTag(). A full
+// reload cannot double-inject — Electron gives preload a brand-new realm and a
+// brand-new document per navigation, so the previous tags are gone with the
+// previous document — but "cannot happen today" is a weak guarantee to hang a
+// stacking bug on: nothing structurally prevents a second bootstrap() in one
+// document, and the failure mode is silent. Duplicate <style> tags don't error,
+// they just quietly re-apply every rule at a later cascade position, so the
+// last-injected copy wins and any later override loses. Reusing the node keeps
+// exactly one copy of each sheet whatever the caller does.
 function injectStaticCSS(id, filePath) {
-  const tag = document.createElement("style");
+  const tag = document.getElementById(id) || document.createElement("style");
   tag.id = id;
   let css = fs.readFileSync(filePath, "utf8");
   // split/join rather than String.replace with a /g regex: these values are
@@ -63,7 +73,11 @@ function injectStaticCSS(id, filePath) {
     css = css.split(token).join(value);
   }
   tag.textContent = css;
-  document.head.appendChild(tag);
+  // Only attach when it isn't already in the tree. appendChild() on a
+  // connected node is a move, not a copy, so re-appending wouldn't duplicate
+  // anything — but it would relocate the sheet to the end of <head> and
+  // silently reorder the cascade relative to the sheets injected after it.
+  if (!tag.isConnected) document.head.appendChild(tag);
 }
 
 // Plugins are loaded via Node's require() on their on-disk path rather than
@@ -403,6 +417,44 @@ async function bootstrap() {
     enabled: !isPackaged,
   });
 
+  // Version-aware injection gate. Unlike the guard above, this one runs in
+  // packaged builds too: it doesn't just report, it decides whether the page
+  // geometry in ui/title-bar.css is safe to apply at all, and tags the app
+  // root that those rules target. `verbose` is what's gated on dev, so users
+  // get the graceful-degradation behaviour without the running commentary.
+  //
+  // Mounted before the first check() so the root marker and body status class
+  // exist for the first paint; re-checked from syncContextualChrome() below,
+  // which is already called on every route change and every DOM mutation the
+  // chromeObserver sees. That covers the case a cold-start-only probe would
+  // miss entirely: claude.ai soft-updating its own shell mid-session, which is
+  // exactly when a new Anthropic build first shows up with no navigation
+  // event to trigger re-detection.
+  let layoutStatus = "unknown";
+  let layoutRegions = [];
+  // The live app root, kept current here so consumers don't have to re-probe
+  // to get it (a probe walks every body child counting descendants, and
+  // re-entering it from a change handler is how you get a double probe on
+  // every mutation burst).
+  let claudeRootEl = null;
+  const layoutChangedHandlers = [];
+  const layoutProbe = mountLayoutProbe({
+    verbose: !isPackaged,
+    onChange: (probe) => {
+      layoutStatus = probe.status;
+      claudeRootEl = probe.root;
+      // Copied to plain data rather than passed through: probe.regions holds
+      // live Element references, and the settings panel has no business
+      // holding a handle to claude.ai's DOM (it would also pin those nodes in
+      // memory across every soft update for as long as the panel is open).
+      layoutRegions = probe.regions.map(({ key, label, found, tier, via, required }) => ({
+        key, label, found, tier, via, required,
+      }));
+      layoutChangedHandlers.forEach((cb) => cb(layoutStatus, layoutRegions));
+    },
+  });
+  layoutProbe.check();
+
   // Never show auxiliary chrome on Claude's public sign-in/marketing route.
   // Presence of the composer is the signal — no conversation content is read.
   function syncContextualChrome() {
@@ -410,7 +462,14 @@ async function bootstrap() {
     document.body.classList.toggle("bc-signed-out", !hasComposer);
     // Route changes are exactly when Claude re-lays-out its top chrome, and
     // this already runs on every one of them (mount + the chromeObserver
-    // below), so the guard needs no observer of its own. Debounced inside.
+    // below), so neither of these needs an observer of its own. Both debounce
+    // internally, so the chromeObserver firing in bursts costs one probe.
+    //
+    // Re-probing here rather than only at bootstrap is what makes the
+    // detection survive a soft update: preload re-runs on navigation, but
+    // claude.ai replacing its own shell in place produces no navigation at
+    // all, and that is precisely when a new Anthropic build first lands.
+    layoutProbe.checkSoon();
     topStripGuard.checkSoon();
     companion.update({
       ...settings,
@@ -553,8 +612,42 @@ async function bootstrap() {
   // syncContextualChrome() mutates some of them — observing body would
   // re-trigger this handler in an unbounded self-feeding loop.
   const chromeObserver = new MutationObserver(() => syncContextualChrome());
-  const claudeRoot = document.getElementById("root") || document.getElementById("__next") || document.body;
-  chromeObserver.observe(claudeRoot, { childList: true, subtree: true });
+
+  // Resolved through core/layout-probe.js rather than by naming ids here. The
+  // chain this replaced was `getElementById("root") || getElementById("__next")
+  // || document.body` — and that last fallback did precisely what the comment
+  // directly above warns is unbounded: an id rename on Anthropic's side would
+  // have silently promoted the self-feeding whole-body observation from
+  // "never happens" to "always happens", with the only symptom being the app
+  // getting progressively slower.
+  //
+  // When no root can be found at all, observe body for direct child additions
+  // only — no subtree. That is enough to notice the app root appearing (the
+  // one event worth waiting for) and cannot self-feed, because
+  // syncContextualChrome()'s own mutations land inside our surfaces rather
+  // than as new children of body. The handler re-attaches to the real root as
+  // soon as one exists.
+  // Reads claudeRootEl rather than probing: called from the probe's own change
+  // handler, so re-probing here would both double the work per mutation burst
+  // and re-enter check() from inside its own callback.
+  let observedRoot = null;
+  function attachChromeObserver() {
+    const root = claudeRootEl;
+    if (root === observedRoot) return;
+    chromeObserver.disconnect();
+    observedRoot = root;
+    if (root) {
+      chromeObserver.observe(root, { childList: true, subtree: true });
+    } else if (document.body) {
+      chromeObserver.observe(document.body, { childList: true, subtree: false });
+    }
+  }
+  attachChromeObserver();
+  // A soft update can swap claude.ai's entire root element, which would leave
+  // the observer bound to a detached node and stop every contextual sync
+  // silently. Re-evaluating on the same signal the probe already reports on
+  // keeps the binding pointed at the live root.
+  layoutChangedHandlers.push(() => attachChromeObserver());
 
   // Zen Mode directly drives the existing Focus Mode plugin's own
   // setActive() (reusing its real DOM-detachment logic instead of
@@ -1255,6 +1348,17 @@ async function bootstrap() {
     // (it only toggles the while-you-wait popup). Cmd+K -> "Play Snake"
     // still calls the local openMiniGame() directly.
     applyWeatherTheme: () => applyScheduledWeatherTheme(),
+
+    // --- Claude UI structure bridge (core/layout-probe.js) ---
+    // Surfaced in Settings -> Layout. The point is that when Anthropic changes
+    // their DOM, the resulting breakage is legible from inside the app instead
+    // of only from a devtools console the average user will never open.
+    getLayoutStatus: () => ({ status: layoutStatus, regions: layoutRegions }),
+    onLayoutStatusChanged: (cb) => layoutChangedHandlers.push(cb),
+    recheckLayout: () => {
+      const probe = layoutProbe.check();
+      return { status: probe.status, regions: layoutRegions };
+    },
   };
 
   const settingsPanel = new SettingsPanel(panelHost);

@@ -214,9 +214,22 @@ body {
    area by that same 46px regardless of what body does. #root/#__next are
    the two ids claude.ai has shipped its app-root under; scoped as a direct
    child of body (not `body #root *`) so this can't accidentally hit some
-   unrelated nested element sharing the id deeper in a portal/dialog tree. */
+   unrelated nested element sharing the id deeper in a portal/dialog tree.
+
+   `.bc-claude-root` is the third selector and the durable one: core/layout-
+   probe.js finds the real app root at runtime (by id when it can, otherwise
+   by asking which body child actually contains the application) and tags it
+   with that class. The two id selectors are kept because they cost nothing
+   and win on the current build without waiting for a probe, but they are no
+   longer the only thing standing between this rule and matching nothing —
+   which is the precise failure core/theme-engine.js already documents for
+   `:where(#__next, #root) *`, where an id rename made the whole theme text
+   pipeline silently inert. If none of the three match, the probe reports
+   `unrecognized` and the bc-layout-unrecognized block at the end of this
+   file stops the title bar from covering the page at all. */
 body > #root,
-body > #__next {
+body > #__next,
+body > .bc-claude-root {
   height: calc(100vh - var(--bc-tb-h)) !important;
   max-height: calc(100vh - var(--bc-tb-h)) !important;
   /* THE fix for Claude's top-level tab bar (Home / Chat / Code) rendering
@@ -295,7 +308,10 @@ body > #root > div > div,
 body > #root > div > div > div,
 body > #__next > div,
 body > #__next > div > div,
-body > #__next > div > div > div {
+body > #__next > div > div > div,
+body > .bc-claude-root > div,
+body > .bc-claude-root > div > div,
+body > .bc-claude-root > div > div > div {
   height: 100% !important;
   max-height: 100% !important;
 }
@@ -306,7 +322,8 @@ body > #__next > div > div > div {
    the title bar and appear clipped. Give only the signed-out root a modest
    breathing-space inset; chat routes keep their existing geometry. */
 body.bc-signed-out > #root,
-body.bc-signed-out > #__next {
+body.bc-signed-out > #__next,
+body.bc-signed-out > .bc-claude-root {
   /* Claude's current signed-out shell anchors its header to the root's top
      edge. Padding/margins on that shell do not move the anchored header, so
      the wordmark used to remain underneath our fixed title bar. Move the
@@ -385,5 +402,64 @@ body.bc-signed-out nav button[class*="_primary_"] * {
    whose persisted settings previously left the plugin enabled. */
 [aria-label*="Focus Mode" i],
 [title*="Focus Mode" i] {
+  display: none !important;
+}
+
+/* --- Graceful fallback: unrecognized Claude layout ---------------------- */
+/* Set by core/layout-probe.js when it cannot find an application root under
+   <body> at all — not "Anthropic renamed #root" (the probe's structural
+   fallback handles that and reports `partial`), but "there is no app here":
+   a blank load, an error page, a Cloudflare interstitial, a shell whose
+   markup we genuinely do not understand.
+
+   The reasoning behind what this block does. Every geometry rule above is
+   already inert in this state, because all three of their selectors failed
+   to match — that is what being unrecognized means. What is NOT inert is
+   #betterclaude-titlebar itself: it is our own fixed element, so it paints
+   its opaque band across the top of the viewport regardless of what the page
+   underneath turned out to be. That is the exact shape of the original bug
+   (an opaque strip over chrome nothing compensated for), so leaving it as-is
+   would mean the fallback path reproduces the failure it exists to prevent.
+
+   Hence: stop covering, keep working. The band loses its fill and its
+   border, so nothing is visually hidden. It also has to stop *intercepting*,
+   which takes two separate properties, and missing either one leaves a
+   transparent-but-dead 46px strip across the top of the window:
+
+     pointer-events: none      — otherwise the bar still swallows clicks even
+                                 though you can see straight through it. This
+                                 is the "a lower z-index alone doesn't help
+                                 if the boxes still overlap" trap, arrived at
+                                 from the opposite direction.
+     -webkit-app-region: no-drag — an Electron drag region is handled by the
+                                 window before hit-testing ever reaches the
+                                 DOM, so it keeps eating clicks no matter
+                                 what pointer-events says. Dragging the
+                                 window by the top edge is worth losing to
+                                 guarantee the page beneath stays reachable.
+
+   Our own controls opt back in, so Settings — the only entry point to the
+   panel, and therefore to the master off switch — stays clickable. That
+   matters most in exactly this state: an unrecognized layout is when a user
+   is most likely to want to turn BetterClaude off.
+
+   body's padding-top is deliberately KEPT. It is in-flow-only and cannot
+   move or cover anything, and on macOS hiddenInset windows it is what stops
+   the unknown page from rendering underneath the real system traffic lights,
+   which the OS draws over the web contents whatever we do. */
+body.bc-layout-unrecognized #betterclaude-titlebar {
+  background: transparent !important;
+  border-bottom: none !important;
+  pointer-events: none !important;
+  -webkit-app-region: no-drag !important;
+}
+body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-controls,
+body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-traffic,
+body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-btn {
+  pointer-events: auto !important;
+}
+/* The centred wordmark is decoration with no click target, and in this state
+   it would be the one thing still painted over unknown page content. */
+body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-center {
   display: none !important;
 }

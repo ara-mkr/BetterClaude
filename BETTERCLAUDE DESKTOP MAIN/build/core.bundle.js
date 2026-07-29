@@ -7568,6 +7568,229 @@ ${content}
     }
   });
 
+  // core/layout-probe.js
+  var require_layout_probe = __commonJS({
+    "core/layout-probe.js"(exports, module) {
+      var { OWN_ID_PREFIXES } = require_top_strip_guard();
+      var ROOT_MARKER_CLASS = "bc-claude-root";
+      var STATUS_CLASSES = {
+        recognized: "bc-layout-recognized",
+        partial: "bc-layout-partial",
+        unrecognized: "bc-layout-unrecognized"
+      };
+      var NON_RENDERING_TAGS = /* @__PURE__ */ new Set([
+        "SCRIPT",
+        "STYLE",
+        "LINK",
+        "META",
+        "TITLE",
+        "BASE",
+        "TEMPLATE",
+        "NOSCRIPT"
+      ]);
+      function isOwnNode(el) {
+        if (!el || el.nodeType !== 1) return false;
+        const id = el.id || "";
+        if (OWN_ID_PREFIXES.some((prefix) => id.startsWith(prefix))) return true;
+        const classes = el.classList;
+        if (!classes) return false;
+        return Array.prototype.some.call(
+          classes,
+          (c) => c.startsWith("bc-") && c !== ROOT_MARKER_CLASS
+        );
+      }
+      function rootCandidates() {
+        if (!document.body) return [];
+        return Array.prototype.filter.call(
+          document.body.children,
+          (el) => !NON_RENDERING_TAGS.has(el.tagName) && !isOwnNode(el)
+        );
+      }
+      function findClaudeRoot() {
+        const candidates = rootCandidates();
+        if (!candidates.length) return null;
+        for (const id of ["root", "__next"]) {
+          const match = candidates.find((el) => el.id === id);
+          if (match) return { element: match, via: `body > #${id}`, tier: "primary" };
+        }
+        const composer = document.querySelector('[data-testid="chat-input"]');
+        if (composer) {
+          const owner = candidates.find((el) => el.contains(composer));
+          if (owner) return { element: owner, via: "contains composer", tier: "heuristic" };
+        }
+        let best = null;
+        let bestCount = -1;
+        for (const el of candidates) {
+          const count = el.getElementsByTagName("*").length;
+          if (count > bestCount) {
+            best = el;
+            bestCount = count;
+          }
+        }
+        if (!best || bestCount < 1) return null;
+        return { element: best, via: `busiest body child (${bestCount} nodes)`, tier: "heuristic" };
+      }
+      function findTopTabBar(root) {
+        const scope = root || document.body;
+        if (!scope) return null;
+        const tablist = scope.querySelector('[role="tablist"]');
+        if (tablist) return { element: tablist, via: '[role="tablist"]', tier: "primary" };
+        const tabs = scope.querySelectorAll('[role="tab"]');
+        if (tabs.length >= 2 && tabs[0].parentElement) {
+          return { element: tabs[0].parentElement, via: `${tabs.length}x [role="tab"]`, tier: "fallback" };
+        }
+        const band = Math.max((window.innerHeight || 0) * 0.25, 120);
+        const containers = scope.querySelectorAll("nav, header, [class*='tab' i]");
+        for (const el of containers) {
+          const rect = el.getBoundingClientRect();
+          if (rect.top > band || rect.width <= 0) continue;
+          const controls = Array.prototype.filter.call(
+            el.querySelectorAll("a, button"),
+            (c) => c.getBoundingClientRect().width > 0
+          );
+          if (controls.length < 2) continue;
+          const tops = controls.map((c) => Math.round(c.getBoundingClientRect().top));
+          const rowSize = Math.max(...tops.map((t) => tops.filter((o) => Math.abs(o - t) <= 4).length));
+          if (rowSize >= 2) {
+            return { element: el, via: `top-band row of ${rowSize} controls`, tier: "fallback" };
+          }
+        }
+        return null;
+      }
+      var REGIONS = [
+        {
+          key: "appRoot",
+          label: "Application root",
+          required: true,
+          find: () => findClaudeRoot(),
+          why: "Carries the containing-block transform that keeps Claude's fixed top chrome out of the title bar's band."
+        },
+        {
+          key: "topTabBar",
+          label: "Top-level tab bar",
+          required: false,
+          find: (root) => findTopTabBar(root),
+          why: "The surface that regressed when the Code tab moved into the reserved strip."
+        },
+        {
+          key: "composer",
+          label: "Composer",
+          required: false,
+          find: () => {
+            const el = document.querySelector('[data-testid="chat-input"]');
+            return el ? { element: el, via: '[data-testid="chat-input"]', tier: "primary" } : null;
+          },
+          why: "Signed-in/signed-out discriminator and the insertion target for prompt/file features."
+        },
+        {
+          key: "sidebar",
+          label: "Conversation sidebar",
+          required: false,
+          find: () => {
+            const pinned = document.querySelector('nav:has([data-testid="pin-sidebar-toggle"])');
+            if (pinned) return { element: pinned, via: 'nav:has([data-testid="pin-sidebar-toggle"])', tier: "primary" };
+            const nav = document.querySelector("nav");
+            return nav ? { element: nav, via: "first <nav>", tier: "fallback" } : null;
+          },
+          why: "Target of the sidebar width/position/pin layout settings."
+        }
+      ];
+      function probeLayout() {
+        const rootResult = findClaudeRoot();
+        const root = rootResult ? rootResult.element : null;
+        const regions = REGIONS.map((region) => {
+          let result = null;
+          try {
+            result = region.key === "appRoot" ? rootResult : region.find(root);
+          } catch (err) {
+            result = null;
+          }
+          return {
+            key: region.key,
+            label: region.label,
+            required: !!region.required,
+            why: region.why,
+            found: !!result,
+            via: result ? result.via : null,
+            tier: result ? result.tier : null,
+            element: result ? result.element : null
+          };
+        });
+        const missingRequired = regions.filter((r) => r.required && !r.found);
+        const composerRegion = regions.find((r) => r.key === "composer");
+        const signedOut = !(composerRegion && composerRegion.found);
+        const degraded = regions.filter(
+          (r) => !(r.key === "composer" && signedOut) && (!r.found || r.tier !== "primary")
+        );
+        let status;
+        if (missingRequired.length) status = "unrecognized";
+        else if (degraded.length) status = "partial";
+        else status = "recognized";
+        const summary = regions.map((r) => `${r.key}=${r.found ? `${r.tier}:${r.via}` : "MISSING"}`).join(" ");
+        return { status, regions, root, summary };
+      }
+      function applyLayoutMarkers(probe) {
+        document.querySelectorAll(`.${ROOT_MARKER_CLASS}`).forEach((el) => {
+          el.classList.remove(ROOT_MARKER_CLASS);
+        });
+        if (probe.root) probe.root.classList.add(ROOT_MARKER_CLASS);
+        if (document.body) {
+          Object.values(STATUS_CLASSES).forEach((cls) => document.body.classList.remove(cls));
+          document.body.classList.add(STATUS_CLASSES[probe.status] || STATUS_CLASSES.unrecognized);
+        }
+      }
+      function mountLayoutProbe({ onChange = null, verbose = false, log = console.log, warn = console.warn } = {}) {
+        let last = null;
+        let scheduled = null;
+        function check() {
+          const probe = probeLayout();
+          applyLayoutMarkers(probe);
+          const signature = `${probe.status}|${probe.summary}`;
+          if (signature !== last) {
+            const isFirstProbe = last === null;
+            last = signature;
+            if (probe.status === "unrecognized") {
+              warn(
+                `[BetterClaude] Claude UI structure: UNRECOGNIZED. No application root found under <body>, so page-geometry injection is suppressed (see the bc-layout-unrecognized rules in ui/title-bar.css). Regions: ${probe.summary}`
+              );
+            } else if (probe.status === "partial" && !isFirstProbe) {
+              warn(
+                `[BetterClaude] Claude UI structure: PARTIALLY RECOGNIZED \u2014 at least one region resolved via a fallback rather than its primary selector. Regions: ${probe.summary}`
+              );
+            } else if (verbose) {
+              log(`[BetterClaude] Claude UI structure: ${probe.status.toUpperCase()}. Regions: ${probe.summary}`);
+            }
+            if (onChange) onChange(probe);
+          }
+          return probe;
+        }
+        function checkSoon() {
+          if (scheduled) return;
+          scheduled = setTimeout(() => {
+            scheduled = null;
+            check();
+          }, 250);
+        }
+        function unmount() {
+          if (scheduled) clearTimeout(scheduled);
+          scheduled = null;
+        }
+        return { check, checkSoon, getStatus: () => last, unmount };
+      }
+      module.exports = {
+        mountLayoutProbe,
+        probeLayout,
+        applyLayoutMarkers,
+        findClaudeRoot,
+        findTopTabBar,
+        rootCandidates,
+        REGIONS,
+        ROOT_MARKER_CLASS,
+        STATUS_CLASSES
+      };
+    }
+  });
+
   // core/index.js
   var require_index = __commonJS({
     "core/index.js"(exports, module) {
@@ -7604,6 +7827,13 @@ ${content}
       var { AnalyticsDashboard, presetRange } = require_analytics_dashboard();
       var { UpdateBanner, BANNER_ID } = require_update_banner();
       var { mountTopStripGuard, probeReservedStrip } = require_top_strip_guard();
+      var {
+        mountLayoutProbe,
+        probeLayout,
+        applyLayoutMarkers,
+        findClaudeRoot,
+        findTopTabBar
+      } = require_layout_probe();
       module.exports = {
         ThemeEngine,
         SELECTORS,
@@ -7657,7 +7887,17 @@ ${content}
         // Diagnostic: warns when claude.ai's own chrome ends up underneath the
         // custom title bar. Inert in the extension build, which reserves no strip.
         mountTopStripGuard,
-        probeReservedStrip
+        probeReservedStrip,
+        // Version-aware injection gate: decides whether claude.ai's current DOM is
+        // recognizable enough to apply page geometry to, and tags the app root the
+        // geometry rules target. Unlike the guard above, this is load-bearing in
+        // packaged builds — it is what makes an unknown layout degrade instead of
+        // getting injected over blind.
+        mountLayoutProbe,
+        probeLayout,
+        applyLayoutMarkers,
+        findClaudeRoot,
+        findTopTabBar
       };
     }
   });
