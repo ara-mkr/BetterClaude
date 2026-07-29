@@ -338,6 +338,19 @@ code, pre, kbd, samp {
 [data-cds="Icon"] {
   font-family: var(--font-anthropicons, Anthropicons-Variable) !important;
 }
+/* Same failure mode as the icon-font fix above, different property: claude.ai
+   opts specific compact icon+label controls out of normal line-height via
+   Tailwind's leading-none utility (line-height: 1), so a label's line box
+   is exactly as tall as its text and sits flush with a fixed-size sibling
+   icon — e.g. the model picker's "Sonnet 5 Low" trigger, whose label div is
+   text-[14px] h-[14px] leading-none items-baseline next to its chevron.
+   The blanket rule above still beats that (measured: computed line-height on
+   that div was 22.5px, not the ~14px leading-none gives it), inflating the
+   label inside a box that never grows to match — the text sinking below its
+   icon rather than staying centered on it. Restore it explicitly. */
+.leading-none {
+  line-height: 1 !important;
+}
 /* No "message" testid/class exists on the live site to scope this to, so it
    targets real headings anywhere in the app content instead. :where() keeps
    specificity at zero (matching the body rule above) and, crucially, keeps
