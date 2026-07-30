@@ -237,13 +237,71 @@ function seedBuiltinPlugins() {
     const stale = path.join(userDir, file);
     if (fs.existsSync(stale)) fs.rmSync(stale);
   }
+  // Builtin plugins are COPIED into userData/plugins so they sit alongside
+  // (and can be edited like) user-installed ones. That copy used to be
+  // strictly once-only — `if (!fs.existsSync(dest))` — which quietly made
+  // every bundled plugin un-fixable after first launch: the repo's copy could
+  // be corrected release after release and the stale copy on disk, the only
+  // one actually loaded, never changed. That is exactly the silent-failure
+  // shape refreshCustomThemeScaffold() above exists to prevent, and it had
+  // already bitten: markdown-plus on disk still called `api.onMessage`, an API
+  // removed from core/plugin-loader.js, so it threw on every single launch
+  // while the bundled version had been rewritten to use a MutationObserver.
+  //
+  // Re-seeding has to respect edits, though: userData/plugins is a directory
+  // users are invited to edit. So we remember the hash of what we last wrote
+  // (plugins.seededVersions) and only overwrite a file that still matches it —
+  // i.e. our own untouched copy. A file the user has changed is left alone.
+  const seeded = store.get("plugins.seededVersions", {}) || {};
+  const nextSeeded = { ...seeded };
   const builtins = fs.readdirSync(BUILTIN_PLUGINS_DIR).filter((f) => f.endsWith(".claudeplugin.js"));
+
   for (const file of builtins) {
+    const src = path.join(BUILTIN_PLUGINS_DIR, file);
     const dest = path.join(userDir, file);
-    if (!fs.existsSync(dest)) {
-      fs.copyFileSync(path.join(BUILTIN_PLUGINS_DIR, file), dest);
+    try {
+      const bundled = fs.readFileSync(src, "utf8");
+      const bundledHash = teamSync.sha256(bundled);
+
+      if (!fs.existsSync(dest)) {
+        fs.writeFileSync(dest, bundled);
+        nextSeeded[file] = bundledHash;
+        continue;
+      }
+
+      const currentHash = teamSync.sha256(fs.readFileSync(dest, "utf8"));
+      if (currentHash === bundledHash) {
+        // Already current. Record the hash so a pre-existing install starts
+        // being tracked without needing a rewrite it doesn't need.
+        nextSeeded[file] = bundledHash;
+        continue;
+      }
+
+      const lastSeeded = seeded[file];
+      if (lastSeeded && currentHash !== lastSeeded) {
+        // Diverged from what we wrote: the user edited it. Their file wins.
+        continue;
+      }
+
+      if (!lastSeeded) {
+        // Installed before seededVersions existed, so there is no record to
+        // tell an old seed apart from a deliberate edit. The stale-copy case
+        // is the one actively breaking things, so it wins — but never at the
+        // cost of destroying work, hence the backup.
+        fs.copyFileSync(dest, `${dest}.user-backup`);
+        console.log(`[BetterClaude] updating bundled plugin "${file}"; previous copy saved as ${file}.user-backup`);
+      }
+
+      fs.writeFileSync(dest, bundled);
+      nextSeeded[file] = bundledHash;
+    } catch (err) {
+      // One unreadable/unwritable plugin file must not stop the other eight
+      // from being seeded, and must not block startup.
+      console.error(`[BetterClaude] could not seed bundled plugin "${file}":`, err.message);
     }
   }
+
+  store.set("plugins.seededVersions", nextSeeded);
 }
 
 function getUserSkillsDir() {

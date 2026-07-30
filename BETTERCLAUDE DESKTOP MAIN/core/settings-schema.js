@@ -193,6 +193,13 @@ const DEFAULT_SETTINGS = {
       "goal-tracker": false,
     },
     data: {},
+    // filename -> sha256 of the bundled content we last copied into
+    // userData/plugins. This is what lets electron/main.js's
+    // seedBuiltinPlugins() tell "this is our own untouched copy, safe to
+    // update" apart from "the user edited this, leave it alone" — without it,
+    // a builtin plugin was seeded once and then never updated again, so a fix
+    // shipped in a new release never reached anyone who already had the file.
+    seededVersions: {},
   },
   playful: {
     // Snake is no longer something you sit and play inside the settings
