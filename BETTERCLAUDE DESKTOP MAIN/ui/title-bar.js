@@ -21,6 +21,18 @@ const { TRAFFIC_LIGHT_RESERVED_WIDTH } = require("../electron/window-chrome");
 const TITLE_BAR_ID = "betterclaude-titlebar";
 const IS_MAC = process.platform === "darwin";
 
+// The bar is assembled with innerHTML, so the one caller-supplied string in it
+// (host.title) has to be escaped. Today's two callers pass literals, but a
+// title is exactly the kind of field that later gets fed a folder or session
+// name, and "it's a literal at the moment" is not a property the template can
+// enforce on its own.
+function escapeText(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 function mountTitleBar(host) {
   if (document.getElementById(TITLE_BAR_ID)) return;
 
@@ -47,7 +59,7 @@ function mountTitleBar(host) {
   bar.innerHTML = `
     ${leftHtml}
     <div class="bc-tb-drag bc-tb-center" data-bc-tb-drag>
-      <span class="bc-tb-title">BetterClaude</span>
+      <span class="bc-tb-title">${escapeText(host.title || "BetterClaude")}</span>
     </div>
     <div class="bc-tb-controls">
       <button class="bc-tb-btn bc-tb-logo-btn" data-bc-tb-settings title="BetterClaude Settings (Cmd/Ctrl+,)">

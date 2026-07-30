@@ -1,0 +1,181 @@
+/* Embedded Claude Code window (electron/code-window.html).
+ *
+ * Every colour here is a --bc-* variable from the active theme, so switching a
+ * theme in Settings restyles this window through the normal theme pipeline
+ * rather than through anything bespoke. Fallbacks match the default theme's
+ * palette so the window is never unstyled if a sheet lands late.
+ *
+ * The body inset below the title bar is NOT re-declared here: ui/title-bar.css
+ * already sets `body { padding-top: var(--bc-tb-h) }`, and repeating the number
+ * (or the variable) in a second sheet is the drift electron/window-chrome.js
+ * exists to prevent. */
+
+html {
+  background: var(--bc-bg, #14101f);
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--bc-bg, #14101f);
+  color: var(--bc-text, #ece7fb);
+  font-family: var(--bc-ui-font, Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+}
+
+#bc-code-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Session strip: which folder this CLI is running in, and whether it's alive.
+   Reading the cwd off the window chrome is the difference between trusting the
+   session and guessing at it. */
+#bc-code-status {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  font-size: 11px;
+  color: var(--bc-text-muted, #a99bd1);
+  background: var(--bc-bg-sidebar, #100c1c);
+  border-bottom: 1px solid var(--bc-border, #2c2347);
+  user-select: none;
+}
+
+#bc-code-status .bc-code-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--bc-text-muted, #a99bd1);
+  flex: 0 0 auto;
+}
+
+#bc-code-shell[data-state="running"] .bc-code-dot {
+  background: var(--bc-accent, #6059e6);
+}
+
+#bc-code-shell[data-state="exited"] .bc-code-dot,
+#bc-code-shell[data-state="failed"] .bc-code-dot {
+  background: var(--bc-danger, #ef4444);
+}
+
+#bc-code-cwd {
+  font-family: var(--bc-code-font, SFMono-Regular, Menlo, Consolas, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl; /* keeps the leaf folder visible when the path is truncated */
+  text-align: left;
+  flex: 1 1 auto;
+}
+
+#bc-code-folder-btn {
+  flex: 0 0 auto;
+  font: inherit;
+  color: var(--bc-text-muted, #a99bd1);
+  background: transparent;
+  border: 1px solid var(--bc-border, #2c2347);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+#bc-code-folder-btn:hover {
+  color: var(--bc-text, #ece7fb);
+  border-color: var(--bc-accent, #6059e6);
+}
+
+#bc-code-folder-btn:focus-visible {
+  outline: 2px solid var(--bc-focus-ring, var(--bc-accent, #6059e6));
+  outline-offset: 1px;
+}
+
+/* Terminal host. min-height:0 matters: without it the flex item refuses to
+   shrink below its content height and the pty's own scrollback pushes the
+   viewport past the bottom of the window instead of scrolling inside it. */
+#bc-code-term {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px 10px 4px;
+  background: var(--bc-bg, #14101f);
+}
+
+/* xterm measures the element it's opened into, so it must fill the host
+   exactly — any implicit inline-block sizing here shows up as clipped rows. */
+#bc-code-term .xterm,
+#bc-code-term .xterm-viewport,
+#bc-code-term .xterm-screen {
+  width: 100%;
+  height: 100%;
+}
+
+#bc-code-term .xterm-viewport::-webkit-scrollbar {
+  width: 10px;
+}
+
+#bc-code-term .xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--bc-border, #2c2347);
+  border-radius: 5px;
+}
+
+/* Startup failures and "the CLI exited" both land here rather than being
+   written INTO the terminal: the terminal shows the child's own bytes and
+   nothing else, so BetterClaude's messages stay visibly BetterClaude's. */
+#bc-code-overlay {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 32px;
+  text-align: center;
+  background: color-mix(in srgb, var(--bc-bg, #14101f) 88%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+#bc-code-overlay[data-visible="true"] {
+  display: flex;
+}
+
+#bc-code-overlay .bc-code-overlay-msg {
+  max-width: 60ch;
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: var(--bc-code-font, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--bc-text, #ece7fb);
+}
+
+#bc-code-overlay .bc-code-overlay-actions {
+  display: flex;
+  gap: 10px;
+}
+
+#bc-code-overlay button {
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid var(--bc-border, #2c2347);
+  background: var(--bc-bg-elevated, #1c1630);
+  color: var(--bc-text, #ece7fb);
+}
+
+#bc-code-overlay button.bc-code-primary {
+  background: var(--bc-accent, #6059e6);
+  color: var(--btn-primary-fg, #fff);
+  border-color: transparent;
+}
+
+#bc-code-overlay button:focus-visible {
+  outline: 2px solid var(--bc-focus-ring, var(--bc-accent, #6059e6));
+  outline-offset: 2px;
+}

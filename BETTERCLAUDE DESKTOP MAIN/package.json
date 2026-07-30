@@ -6,7 +6,7 @@
   "main": "electron/main.js",
   "private": true,
   "scripts": {
-    "postinstall": "node scripts/fix-dev-app-name.js",
+    "postinstall": "node scripts/fix-dev-app-name.js && node scripts/fix-pty-spawn-helper.js",
     "build:core": "node esbuild.config.js",
     "audit": "node scripts/audit.js",
     "audit:layout": "npm run build:core && electron scripts/audit-layout-probe.js",
@@ -35,12 +35,15 @@
   "dependencies": {
     "@codemirror/lang-css": "^6.3.0",
     "@codemirror/theme-one-dark": "^6.1.2",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
     "adm-zip": "^0.5.18",
     "chokidar": "^3.6.0",
     "codemirror": "^6.0.1",
     "diff": "^7.0.0",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.8.9",
+    "node-pty": "^1.1.0",
     "sql.js": "^1.14.1"
   },
   "build": {
@@ -69,6 +72,9 @@
       "package.json",
       "!**/*.map",
       "!esbuild.config.js"
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**"
     ],
     "mac": {
       "target": [
@@ -99,8 +105,17 @@
         "height": 330
       },
       "contents": [
-        { "x": 165, "y": 150, "type": "file" },
-        { "x": 495, "y": 150, "type": "link", "path": "/Applications" }
+        {
+          "x": 165,
+          "y": 150,
+          "type": "file"
+        },
+        {
+          "x": 495,
+          "y": 150,
+          "type": "link",
+          "path": "/Applications"
+        }
       ]
     },
     "win": {

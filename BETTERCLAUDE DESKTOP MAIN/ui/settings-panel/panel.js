@@ -112,9 +112,25 @@ const SHAPE_OPTIONS = [
 ];
 
 class SettingsPanel {
-  constructor(host) {
+  /**
+   * @param host  The Electron/extension bridge documented at the top of this file.
+   * @param {object} [options]
+   * @param {string[]} [options.sections]  Which of SECTIONS to show, in order.
+   *   Defaults to all of them. The embedded Claude Code window
+   *   (electron/code-preload.js) passes the appearance-only subset: that window
+   *   has no claude.ai document, so the sections that drive one (Layout,
+   *   Focus & Reading, Plugins, Skill Marketplace, …) would render controls
+   *   that silently do nothing there. Anything listed here still gets the real
+   *   section renderer — this filters which are offered, it does not stub any.
+   */
+  constructor(host, { sections } = {}) {
     this.host = host;
-    this.activeSection = "Appearance";
+    // Filtered against SECTIONS rather than trusted verbatim, so a typo in a
+    // caller's list can't produce a nav item whose renderer doesn't exist.
+    this.sections = Array.isArray(sections) && sections.length
+      ? SECTIONS.filter((s) => sections.includes(s))
+      : SECTIONS;
+    this.activeSection = this.sections[0] || "Appearance";
     this.root = null;
     this.cssEditorHandle = null;
     host.onSettingsChanged((settings) => {
@@ -143,7 +159,7 @@ class SettingsPanel {
   // the Command Palette's "Settings: <page>" entries so picking one is a
   // single action rather than open-then-click-the-tab.
   openSection(name) {
-    if (!SECTIONS.includes(name)) return;
+    if (!this.sections.includes(name)) return;
     this.activeSection = name;
     this.open();
   }
@@ -159,7 +175,7 @@ class SettingsPanel {
     sidebar.appendChild(title);
 
     const nav = el("nav", { class: "bc-sp-nav" });
-    SECTIONS.forEach((section) => {
+    this.sections.forEach((section) => {
       const item = el("button", {
         class: "bc-sp-nav-item",
         text: section,

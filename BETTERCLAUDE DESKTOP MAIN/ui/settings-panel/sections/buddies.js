@@ -49,10 +49,15 @@ module.exports = {
       const card = el("div", { class: "bc-buddy-card" });
       const thumb = el("div", { class: "bc-buddy-thumb" });
       card.appendChild(thumb);
-      card.appendChild(el("div", { class: "bc-buddy-title", text: buddy.label }));
+      const title = el("div", { class: "bc-buddy-title", text: buddy.label, id: `bc-buddy-title-${buddy.id}` });
+      card.appendChild(title);
       card.appendChild(el("div", { class: "bc-buddy-desc", text: buddy.description }));
 
-      const toggle = el("input", { type: "checkbox" });
+      const toggle = el("input", {
+        type: "checkbox",
+        id: `bc-buddy-toggle-${buddy.id}`,
+        "aria-labelledby": title.id,
+      });
       toggle.checked = perBuddy[buddy.id] === true;
       toggle.disabled = !cfg.enabled;
       toggle.addEventListener("change", () => {

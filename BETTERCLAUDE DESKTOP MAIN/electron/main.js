@@ -17,7 +17,8 @@ const { buildThemeCSSFromVars } = require("../core/theme-engine");
 const { extractThemeVars } = require("../core/tokens");
 const { attachWindowState, getInitialBounds } = require("./window-state");
 const { BUDDY_CANVAS, BUDDY_HIT_BOX, getBuddy, resolveActiveBuddy } = require("../core/buddies");
-const { TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y } = require("./window-chrome");
+const { titleBarOptions } = require("./window-chrome");
+const { ClaudeNotFoundError, ClaudeSession, PtySpawnError, locateClaude } = require("./claude-cli");
 const { autoUpdater } = require("electron-updater");
 const { pickLoadingTip } = require("../core/motion-fx");
 const { deriveChannelId, encryptText, decryptText } = require("../core/clipboard-bridge");
@@ -71,23 +72,6 @@ const store = new Store({
     },
   },
 });
-
-// Platform-specific window chrome. `frame: false` and `titleBarStyle` are
-// mutually exclusive in Electron — setting frame:false suppresses the
-// native traffic lights entirely, even with titleBarStyle also set — so
-// this can't be a small addition on top of a shared `frame: false`; the two
-// platforms need genuinely different option sets:
-//   - macOS: no `frame` override (stays true) + `titleBarStyle: "hiddenInset"`,
-//     which hides the title bar/toolbar but keeps the real system traffic
-//     lights, repositioned via `trafficLightPosition` to sit inside the
-//     custom bar at the coordinates ui/title-bar.js reserves space for
-//     (see electron/window-chrome.js — same constants, so they can't drift).
-//   - Windows/Linux: `frame: false` as before; ui/title-bar.js keeps
-//     rendering the hand-drawn dots there since there's no native chrome.
-const titleBarOptions =
-  process.platform === "darwin"
-    ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: TRAFFIC_LIGHT_X, y: TRAFFIC_LIGHT_Y } }
-    : { frame: false };
 
 let mainWindow = null;
 let tray = null;
@@ -698,6 +682,290 @@ ipcMain.handle("buddies:get-thumbnail", (_e, id) => {
   return img.resize({ height: 96, quality: "good" }).toDataURL();
 });
 
+// --- Embedded Claude Code window ---
+//
+// A BetterClaude-owned BrowserWindow wearing the same custom title bar as the
+// main window, whose body is the user's REAL `claude` CLI running in a real
+// pseudo-terminal (electron/claude-cli.js) and rendered with xterm.js. Same
+// relationship lazygit has with git: we spawn the binary the user already
+// installed and logged into, and draw its output. Nothing about Claude Code
+// itself is reimplemented, faked, or modified.
+//
+// Compliance boundaries this window must keep (see also claude-cli.js):
+//   - No auth/token/session file is read, written, or looked for anywhere in
+//     this path. The CLI handles its own credentials in its own process,
+//     exactly as it would in Terminal.app.
+//   - The only thing ever written to the child's stdin is the user's own
+//     keystrokes, forwarded verbatim from xterm's onData.
+//   - Terminal output is never parsed or matched to trigger behaviour. It is
+//     copied to the renderer and drawn. Themes/presets change colour and
+//     chrome only, never what the CLI does.
+//
+// Single-window by design, matching how buddyWindow above is handled and what
+// the tray/menu affordance implies: re-launching focuses the existing session
+// instead of silently starting a second `claude` the user can't see. Concurrent
+// sessions would need a tabbed or split UI to be usable at all, which is a
+// bigger feature than this window (flagged for review rather than assumed).
+let codeWindow = null;
+let codeSession = null;
+
+// Terminal geometry before the renderer has measured itself. The real cols/rows
+// arrive over `code:ready` a moment later, and every later resize comes from
+// xterm's fit addon — these only have to be sane enough that a CLI which draws
+// immediately doesn't wrap against a 0-column terminal.
+const CODE_DEFAULT_COLS = 100;
+const CODE_DEFAULT_ROWS = 30;
+
+/**
+ * Working directory for a new session, in the order the user would expect:
+ * an explicitly requested folder, then the last folder they opened one in,
+ * then $HOME. Never process.cwd() — for a packaged .app launched from the Dock
+ * that's `/`, which is a hostile place to drop someone's coding session.
+ */
+function resolveCodeCwd(requested) {
+  const candidates = [requested, store.get("codeWindow.lastCwd"), os.homedir()];
+  for (const dir of candidates) {
+    if (!dir) continue;
+    try {
+      if (fs.statSync(dir).isDirectory()) return dir;
+    } catch {
+      // Stale stored path (folder renamed or deleted since) — fall through to
+      // the next candidate rather than failing the launch.
+    }
+  }
+  return os.homedir();
+}
+
+/** Kills the child and drops our handle. Safe to call more than once. */
+function disposeCodeSession() {
+  if (!codeSession) return;
+  codeSession.dispose();
+  codeSession = null;
+}
+
+/**
+ * Starts `claude` for an already-open Code window and pipes it to that window.
+ * Errors are sent to the renderer to be drawn in the terminal area rather than
+ * thrown here: a missing CLI is a normal, recoverable, user-facing situation
+ * ("install Claude Code first"), not a main-process fault.
+ */
+function startCodeSession({ cwd, cols, rows }) {
+  disposeCodeSession();
+  const target = codeWindow;
+  if (!target || target.isDestroyed()) return;
+
+  let binaryPath;
+  try {
+    binaryPath = locateClaude(store.get("codeWindow.claudePath") || undefined);
+  } catch (err) {
+    if (err instanceof ClaudeNotFoundError) {
+      target.webContents.send("code:fatal", { message: err.message });
+      return;
+    }
+    throw err;
+  }
+
+  try {
+    codeSession = new ClaudeSession({
+      binaryPath,
+      cwd,
+      cols: cols || CODE_DEFAULT_COLS,
+      rows: rows || CODE_DEFAULT_ROWS,
+    });
+  } catch (err) {
+    if (err instanceof PtySpawnError) {
+      target.webContents.send("code:fatal", { message: `${err.message}\n\n${err.detail}` });
+      return;
+    }
+    throw err;
+  }
+
+  store.set("codeWindow.lastCwd", cwd);
+
+  const session = codeSession;
+  session.on("data", (chunk) => {
+    // Guarded on every chunk, not just at startup: a pty can emit between the
+    // window closing and the child dying, and send() on destroyed webContents
+    // throws.
+    if (target.isDestroyed()) return;
+    target.webContents.send("code:data", chunk);
+  });
+  session.on("exit", ({ exitCode, signal }) => {
+    if (session === codeSession) codeSession = null;
+    if (target.isDestroyed()) return;
+    target.webContents.send("code:exit", { exitCode, signal });
+  });
+
+  if (!target.isDestroyed()) {
+    target.webContents.send("code:started", { cwd, binaryPath, pid: session.pid });
+  }
+}
+
+function createCodeWindow(requestedCwd) {
+  const cwd = resolveCodeCwd(requestedCwd);
+
+  codeWindow = new BrowserWindow({
+    width: 980,
+    height: 660,
+    minWidth: 520,
+    minHeight: 320,
+    ...titleBarOptions,
+    title: "BetterClaude · Code",
+    icon: APP_ICON_PATH,
+    // Matches the default theme's --bc-bg so the window doesn't flash white
+    // before the theme stylesheet lands. Live theming then paints over it.
+    backgroundColor: "#14101f",
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "code-preload.js"),
+      contextIsolation: true,
+      // Never true. The page drives xterm.js only; every pty byte crosses the
+      // boundary through code-preload.js's contextBridge surface.
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  codeWindow.loadFile(path.join(__dirname, "code-window.html"));
+
+  // The pending cwd is read back by the `code:ready` handler once the renderer
+  // has measured its real terminal size, so the very first pty is created at
+  // the right dimensions instead of being spawned at a guess and immediately
+  // resized (which makes a CLI that paints on startup redraw over itself).
+  codeWindow.__bcPendingCwd = cwd;
+
+  codeWindow.once("ready-to-show", () => {
+    if (codeWindow && !codeWindow.isDestroyed()) codeWindow.show();
+  });
+
+  // Same opt-in renderer logging createWindow() has: without it a failure in
+  // the terminal page (a missing bundle, a preload throw) shows up only as an
+  // empty window with no explanation.
+  if (process.env.BC_DEBUG_CONSOLE) {
+    codeWindow.webContents.on("console-message", (_e, level, message, line, sourceId) => {
+      console.log(`[code-renderer:${level}] ${message} (${sourceId}:${line})`);
+    });
+    codeWindow.webContents.on("preload-error", (_e, preloadPath, error) => {
+      console.error(`[code-preload-error] ${preloadPath}`, error);
+    });
+  }
+
+  // Acceptance criterion: closing the window must leave no orphaned `claude`.
+  // "closed" is too late to be the only hook on Windows/Linux, where the app
+  // may quit immediately after, so the child is killed as the window starts
+  // closing and again once it's gone.
+  codeWindow.on("close", disposeCodeSession);
+  codeWindow.on("closed", () => {
+    disposeCodeSession();
+    codeWindow = null;
+  });
+
+  // A CLI session can print links (docs URLs, MCP consent pages). Open those
+  // in the real browser; never navigate this window away from its own page.
+  codeWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//.test(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+
+  return codeWindow;
+}
+
+/**
+ * The single entry point every launch affordance (tray, menu, accelerator)
+ * goes through. Focuses an existing session rather than starting a second one.
+ */
+function openCodeWindow(requestedCwd) {
+  if (codeWindow && !codeWindow.isDestroyed()) {
+    if (codeWindow.isMinimized()) codeWindow.restore();
+    codeWindow.show();
+    codeWindow.focus();
+    return codeWindow;
+  }
+  return createCodeWindow(requestedCwd);
+}
+
+/**
+ * Asks for a folder, then opens the Code window there. Separate from
+ * openCodeWindow so the plain "Open Claude Code" path never blocks on a
+ * dialog. Reads a directory path only — nothing inside it is opened or
+ * inspected; it's handed to the pty as its cwd.
+ */
+async function openCodeWindowInFolder() {
+  const result = await dialog.showOpenDialog({
+    title: "Open Claude Code in Folder",
+    defaultPath: resolveCodeCwd(),
+    buttonLabel: "Open",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+  const picked = result.filePaths[0];
+
+  // An already-open window is pinned to the cwd its child was spawned in;
+  // a pty's working directory can't be changed after the fact. Restarting the
+  // session in the new folder is the honest way to honour the request, and it
+  // only ever discards a session the user explicitly redirected.
+  if (codeWindow && !codeWindow.isDestroyed()) {
+    codeWindow.show();
+    codeWindow.focus();
+    codeWindow.webContents.send("code:restarting", { cwd: picked });
+    startCodeSession({ cwd: picked, cols: CODE_DEFAULT_COLS, rows: CODE_DEFAULT_ROWS });
+    return codeWindow;
+  }
+  return createCodeWindow(picked);
+}
+
+// Renderer reports the terminal's measured size once xterm has laid out, which
+// is when the first pty can be created at the correct dimensions.
+ipcMain.on("code:ready", (e, { cols, rows }) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (!win || win !== codeWindow) return;
+  const cwd = resolveCodeCwd(codeWindow.__bcPendingCwd);
+  codeWindow.__bcPendingCwd = null;
+  startCodeSession({ cwd, cols, rows });
+});
+
+// The user's own keystrokes, forwarded verbatim. This is the ONLY path into the
+// child's stdin, and it never synthesises, replays, or rewrites input.
+ipcMain.on("code:input", (e, data) => {
+  if (!codeSession) return;
+  if (BrowserWindow.fromWebContents(e.sender) !== codeWindow) return;
+  if (typeof data !== "string") return;
+  codeSession.write(data);
+});
+
+ipcMain.on("code:resize", (e, { cols, rows }) => {
+  if (!codeSession) return;
+  if (BrowserWindow.fromWebContents(e.sender) !== codeWindow) return;
+  codeSession.resize(cols, rows);
+});
+
+// Restart after the child exits, so a finished or crashed session doesn't
+// leave a dead window the user has to close and reopen.
+ipcMain.on("code:restart", (e, { cols, rows }) => {
+  if (BrowserWindow.fromWebContents(e.sender) !== codeWindow) return;
+  startCodeSession({ cwd: resolveCodeCwd(), cols, rows });
+});
+
+ipcMain.handle("code:pick-folder", () => openCodeWindowInFolder());
+
+// Window controls for THIS window. The existing `window:*` handlers are hard-
+// wired to mainWindow, so the shared title bar needs sender-scoped equivalents
+// rather than a second window's close button hiding the claude.ai window.
+ipcMain.handle("code:window-minimize", (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (win && !win.isDestroyed()) win.minimize();
+});
+ipcMain.handle("code:window-maximize-toggle", (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (!win || win.isDestroyed()) return;
+  if (win.isMaximized()) win.unmaximize();
+  else win.maximize();
+});
+ipcMain.handle("code:window-close", (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (win && !win.isDestroyed()) win.close();
+});
+
 function createWindow() {
   const bounds = getInitialBounds(store);
 
@@ -802,6 +1070,11 @@ function buildTray() {
         },
         { type: "separator" },
         {
+          label: "Open Claude Code",
+          click: () => openCodeWindow(),
+        },
+        { type: "separator" },
+        {
           label: "Quit",
           click: () => {
             isQuitting = true;
@@ -827,7 +1100,22 @@ function buildAppMenu() {
         {
           label: "Open Settings",
           accelerator: store.get("keyboardShortcuts.toggleSettings"),
-          click: () => mainWindow && mainWindow.webContents.send("betterclaude:toggle-settings"),
+          // Whichever BetterClaude window has focus — both the claude.ai
+          // preload and the Code window's preload listen for this.
+          click: (_item, focusedWindow) => {
+            const target = focusedWindow || mainWindow;
+            if (target && !target.isDestroyed()) target.webContents.send("betterclaude:toggle-settings");
+          },
+        },
+        { type: "separator" },
+        {
+          label: "Open Claude Code",
+          accelerator: store.get("keyboardShortcuts.openCodeWindow"),
+          click: () => openCodeWindow(),
+        },
+        {
+          label: "Open Claude Code in Folder…",
+          click: () => openCodeWindowInFolder(),
         },
         { type: "separator" },
         process.platform === "darwin" ? { role: "close" } : { role: "quit" },
@@ -1761,6 +2049,9 @@ app.whenReady().then(() => {
   // comment for why a frozen customThemeCSS is a silent-failure trap).
   refreshCustomThemeScaffold();
   createWindow();
+  // `--code` opens straight into a coding session alongside the main window,
+  // for anyone whose usual entry point is the CLI rather than the chat UI.
+  if (process.argv.includes("--code")) openCodeWindow();
   if (isDev) startDevAutoReload();
   buildTray();
   buildAppMenu();

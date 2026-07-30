@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Local page with a locally-bundled emulator: no remote origins, no
+         inline script, no eval. `script-src 'self'` is what keeps this window
+         from being able to load anything that didn't ship with the app, even
+         if a future change pastes a URL into the markup by accident. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'"
+    />
+    <title>BetterClaude · Code</title>
+
+    <!-- xterm's own stylesheet, emitted alongside the bundle by esbuild.
+         The BetterClaude chrome sheets (title bar, settings panel, this
+         window's own layout) are injected by electron/code-preload.js instead,
+         because they carry `__BC_*__` placeholders that have to be substituted
+         from electron/window-chrome.js at injection time. -->
+    <link rel="stylesheet" href="../build/xterm.bundle.css" />
+  </head>
+  <body>
+    <!-- The custom title bar (ui/title-bar.js, mounted by the preload) is
+         prepended to <body> above this shell, and ui/title-bar.css insets the
+         body below it. -->
+    <div id="bc-code-shell" data-state="starting">
+      <div id="bc-code-status">
+        <span class="bc-code-dot" aria-hidden="true"></span>
+        <span id="bc-code-cwd" title="Working folder"></span>
+        <button id="bc-code-folder-btn" type="button" title="Run Claude Code in a different folder">
+          Change folder…
+        </button>
+      </div>
+
+      <div id="bc-code-term">
+        <div id="bc-code-overlay" data-visible="false" role="status">
+          <p class="bc-code-overlay-msg"></p>
+          <div class="bc-code-overlay-actions"></div>
+        </div>
+      </div>
+    </div>
+
+    <script src="../build/xterm.bundle.js"></script>
+    <script src="../ui/code-window/terminal.js"></script>
+  </body>
+</html>

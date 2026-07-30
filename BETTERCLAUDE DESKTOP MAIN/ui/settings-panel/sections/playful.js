@@ -19,7 +19,7 @@ module.exports = {
     const playful = settings.playful || {};
     wrap.appendChild(toggleField(
       "Play Snake while Claude is working",
-      playful.snakeWhileWaiting !== false,
+      playful.snakeWhileWaiting === true,
       (v) => this._set("playful.snakeWhileWaiting", v),
     ));
     wrap.appendChild(el("p", {

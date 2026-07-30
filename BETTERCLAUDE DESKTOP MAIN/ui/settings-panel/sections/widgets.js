@@ -55,13 +55,29 @@ module.exports = {
         const state = byId.get(widget.id);
         const card = el("div", { class: "bc-widget-card" });
         card.appendChild(el("div", { class: "bc-widget-icon", html: widget.icon }));
-        card.appendChild(el("div", { class: "bc-widget-title", text: widget.label }));
+        const title = el("div", { class: "bc-widget-title", text: widget.label, id: `bc-widget-label-${widget.id}` });
+        card.appendChild(title);
         card.appendChild(el("div", { class: "bc-widget-desc", text: widget.description }));
 
         const row = el("div", { class: "bc-widget-actions" });
-        const toggle = el("input", { type: "checkbox" });
+        const toggle = el("input", {
+          type: "checkbox",
+          id: `bc-widget-toggle-${widget.id}`,
+          "aria-labelledby": title.id,
+        });
         toggle.checked = !!(state && state.enabled);
-        toggle.addEventListener("change", () => this.host.togglePlugin(widget.id, toggle.checked));
+        toggle.addEventListener("change", () => {
+          const desiredState = toggle.checked;
+          const previousState = !desiredState;
+          this.host.togglePlugin(widget.id, desiredState).catch((err) => {
+            toggle.checked = previousState;
+            if (this.host.notify) {
+              this.host.notify(`Could not ${desiredState ? "enable" : "disable"} ${widget.label}: ${err.message || err}`);
+            } else {
+              console.error("[BetterClaude] widget toggle failed:", err);
+            }
+          });
+        });
         row.appendChild(toggle);
 
         const pinBtn = el("button", {

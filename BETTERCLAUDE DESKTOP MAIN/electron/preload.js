@@ -42,43 +42,10 @@ const { mountSnakeGame } = require("../ui/mini-game/snake");
 const fs = require("fs");
 const path = require("path");
 
-// Geometry the main process and the injected stylesheets must agree on
-// byte-for-byte. Rather than typing the number in both places (exactly how
-// ui/title-bar.css ended up hardcoding `46px` in eight places, and
-// panel.css a ninth, while electron/window-chrome.js still said 38), the
-// sheets carry a `__BC_*__` placeholder substituted from the shared
-// constant as the sheet is injected. Add an entry here to expose another
-// constant to CSS; never re-type one in a stylesheet.
-const CSS_SUBSTITUTIONS = {
-  __BC_TITLE_BAR_HEIGHT__: String(TITLE_BAR_HEIGHT),
-};
-
-// Idempotent by id, matching core/theme-engine.js's ensureStyleTag(). A full
-// reload cannot double-inject — Electron gives preload a brand-new realm and a
-// brand-new document per navigation, so the previous tags are gone with the
-// previous document — but "cannot happen today" is a weak guarantee to hang a
-// stacking bug on: nothing structurally prevents a second bootstrap() in one
-// document, and the failure mode is silent. Duplicate <style> tags don't error,
-// they just quietly re-apply every rule at a later cascade position, so the
-// last-injected copy wins and any later override loses. Reusing the node keeps
-// exactly one copy of each sheet whatever the caller does.
-function injectStaticCSS(id, filePath) {
-  const tag = document.getElementById(id) || document.createElement("style");
-  tag.id = id;
-  let css = fs.readFileSync(filePath, "utf8");
-  // split/join rather than String.replace with a /g regex: these values are
-  // plain integers today, but a substituted value containing `$&` or `$1`
-  // would be silently reinterpreted as a replacement pattern by replace().
-  for (const [token, value] of Object.entries(CSS_SUBSTITUTIONS)) {
-    css = css.split(token).join(value);
-  }
-  tag.textContent = css;
-  // Only attach when it isn't already in the tree. appendChild() on a
-  // connected node is a move, not a copy, so re-appending wouldn't duplicate
-  // anything — but it would relocate the sheet to the end of <head> and
-  // silently reorder the cascade relative to the sheets injected after it.
-  if (!tag.isConnected) document.head.appendChild(tag);
-}
+// Shared with electron/code-preload.js (the embedded Claude Code window's
+// preload) so both documents mount this chrome against the same geometry
+// constants — see electron/static-css.js for the substitution contract.
+const { injectStaticCSS } = require("./static-css");
 
 // Plugins are loaded via Node's require() on their on-disk path rather than
 // eval/new Function: claude.ai's Content-Security-Policy disallows
@@ -411,7 +378,13 @@ async function bootstrap() {
   // just print console noise nobody reads. Height comes from the same
   // TITLE_BAR_HEIGHT the CSS is generated from, so the probed band is always
   // exactly the band the bar covers.
-  const { isPackaged } = await ipcRenderer.invoke("app:get-info");
+  let isPackaged = false;
+  try {
+    const info = await ipcRenderer.invoke("app:get-info");
+    isPackaged = !!(info && info.isPackaged);
+  } catch (err) {
+    console.warn("[BetterClaude] app:get-info failed; falling back to top-strip guard enabled:", err);
+  }
   const topStripGuard = mountTopStripGuard({
     getHeight: () => TITLE_BAR_HEIGHT,
     enabled: !isPackaged,

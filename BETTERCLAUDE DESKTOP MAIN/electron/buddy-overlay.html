@@ -134,9 +134,7 @@
 
   function build(state) {
     cfg = state;
-    if (!cfg || !cfg.buddy) return;
-
-    idleEl.src = cfg.assets.idle;
+    if (!cfg || !cfg.buddy || !cfg.assets) return;
 
     // The drag clip lives outside `cycle`, so it is wired up here rather than
     // in the loop below. A buddy without one simply never swaps on pickup.
@@ -144,6 +142,9 @@
       dragEl.dataset.buddy = cfg.buddy.id;
       if (cfg.assets.drag) dragEl.src = cfg.assets.drag;
       else dragEl.removeAttribute("src");
+
+      if (cfg.assets.idle) idleEl.src = cfg.assets.idle;
+      else idleEl.removeAttribute("src");
     }
 
     // Rebuild the video elements only when the buddy actually changes;

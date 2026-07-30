@@ -636,7 +636,7 @@
    are element-scoped so they can't eat composer typing) — without a visible
    ring there's no way to tell whether arrow keys will do anything. */
 .bc-snake-wrap:focus { outline: none; }
-.bc-snake-wrap:focus .bc-snake-canvas { border-color: var(--bc-accent, #8b5cf6); }
+.bc-snake-wrap:focus .bc-snake-canvas { border-width: 2px; border-style: solid; border-color: var(--bc-accent, #8b5cf6); }
 
 /* --- Snake while Claude is working (electron/preload.js) --- */
 /* Deliberately NOT a modal like #bc-minigame-modal: the response streaming in

@@ -211,6 +211,10 @@ const DEFAULT_SETTINGS = {
     toggleSettings: "CommandOrControl+,",
     toggleAlwaysOnTop: "CommandOrControl+Shift+T",
     openPromptPicker: "CommandOrControl+Shift+P",
+    // Opens (or focuses) the embedded Claude Code window. A menu accelerator,
+    // not a globalShortcut — it should only fire while BetterClaude has focus,
+    // unlike the prompt picker.
+    openCodeWindow: "CommandOrControl+Shift+K",
   },
   // Native File Watcher Sync — "attach" inserts the file's content as a
   // labeled fenced code block (core/file-sync-indicator.js), not a fake of
@@ -438,6 +442,28 @@ const DEFAULT_SETTINGS = {
     x: undefined,
     y: undefined,
     alwaysOnTop: false,
+  },
+  // Embedded Claude Code window (electron/main.js's createCodeWindow +
+  // electron/claude-cli.js). Nothing here is auth-related and nothing here is
+  // read from Claude Code's own config — these are BetterClaude's own three
+  // preferences for the window it draws around the CLI.
+  codeWindow: {
+    // Directory the last session was started in, so reopening lands back in
+    // the project the user was working on rather than at $HOME every time.
+    // Re-validated with statSync before use (a stored folder can be renamed or
+    // deleted between sessions), falling back to $HOME.
+    lastCwd: null,
+    // Escape hatch for a version-managed or non-standard install that isn't on
+    // the PATH a GUI app inherits. null = resolve `claude` the way a shell
+    // would. This is a path to an EXECUTABLE, never to a config or credential
+    // file.
+    claudePath: null,
+    // Terminal font size in px. Separate from fonts.baseSizePx (which sizes
+    // claude.ai's prose): a comfortable reading size for chat is usually too
+    // large for a terminal that has to fit 100+ columns. The font FAMILY is
+    // shared — it reuses fonts.codeFont, so picking a coding font in Settings
+    // applies here too.
+    fontSizePx: 13,
   },
 };
 

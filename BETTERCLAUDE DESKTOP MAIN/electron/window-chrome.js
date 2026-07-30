@@ -62,10 +62,34 @@ const TRAFFIC_LIGHT_CLUSTER_WIDTH = 52;
 // (logo button, title) renders underneath the real lights.
 const TRAFFIC_LIGHT_RESERVED_WIDTH = TRAFFIC_LIGHT_X + TRAFFIC_LIGHT_CLUSTER_WIDTH;
 
+// Platform-specific window chrome, shared by every BrowserWindow that wears
+// the custom title bar (the main claude.ai window and the embedded Claude Code
+// window). `frame: false` and `titleBarStyle` are mutually exclusive in
+// Electron — setting frame:false suppresses the native traffic lights
+// entirely, even with titleBarStyle also set — so this can't be a small
+// addition on top of a shared `frame: false`; the two platforms need
+// genuinely different option sets:
+//   - macOS: no `frame` override (stays true) + `titleBarStyle: "hiddenInset"`,
+//     which hides the title bar/toolbar but keeps the real system traffic
+//     lights, repositioned via `trafficLightPosition` to sit inside the
+//     custom bar at the coordinates ui/title-bar.js reserves space for
+//     (same constants above, so they can't drift).
+//   - Windows/Linux: `frame: false`; ui/title-bar.js renders the hand-drawn
+//     dots there since there's no native chrome.
+//
+// This lives here rather than in main.js so a second window can't be given
+// subtly different chrome than the first — exactly the drift this file exists
+// to prevent for the geometry constants.
+const titleBarOptions =
+  process.platform === "darwin"
+    ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: TRAFFIC_LIGHT_X, y: TRAFFIC_LIGHT_Y } }
+    : { frame: false };
+
 module.exports = {
   TITLE_BAR_HEIGHT,
   TRAFFIC_LIGHT_X,
   TRAFFIC_LIGHT_Y,
   TRAFFIC_LIGHT_CLUSTER_WIDTH,
   TRAFFIC_LIGHT_RESERVED_WIDTH,
+  titleBarOptions,
 };
