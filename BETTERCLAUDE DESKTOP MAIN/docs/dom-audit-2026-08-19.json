@@ -1,0 +1,4155 @@
+{
+  "generatedAt": "2026-08-19T20:24:49.662Z",
+  "electron": "33.4.11",
+  "routes": [
+    {
+      "url": "https://claude.ai/new",
+      "ready": {
+        "ready": true,
+        "signedIn": true
+      },
+      "tag": "https://claude.ai/new",
+      "ok": true,
+      "survey": {
+        "url": "https://claude.ai/new",
+        "ts": "2026-08-19T20:24:58.135Z",
+        "viewport": {
+          "w": 1440,
+          "h": 872
+        },
+        "supports": {
+          "hasSelector": true
+        },
+        "bodyChildren": [
+          {
+            "tag": "script",
+            "id": "static-composer-translations",
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:1242>",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "script",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:447>",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "script",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:6109>",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "link",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-entry-stylesheet="
+            ],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "link",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-entry-stylesheet="
+            ],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "link",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-entry-stylesheet="
+            ],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "script",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-entry-stylesheet-guard="
+            ],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:31>",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "div",
+            "id": "root",
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 1440,
+              "h": 872
+            },
+            "text": "<redacted:184>",
+            "descendants": 226,
+            "computedDisplay": "block",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "div",
+            "id": "portal-root",
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 872,
+              "w": 1440,
+              "h": 0
+            },
+            "text": "",
+            "descendants": 0,
+            "computedDisplay": "block",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "link",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-link-header=<redacted:7>"
+            ],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "script",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:2176>",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "script",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:991>",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "iframe",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 1,
+              "h": 1
+            },
+            "text": "",
+            "descendants": 0,
+            "computedDisplay": "block",
+            "computedPosition": "absolute"
+          },
+          {
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-density=<redacted:11>",
+              "data-mode=dark",
+              "data-platform=<redacted:7>",
+              "data-font=<redacted:9>",
+              "data-page-bg=<redacted:9>"
+            ],
+            "classes": {
+              "count": 2,
+              "sample": [
+                "cds-root",
+                "text-primary"
+              ]
+            },
+            "rect": {
+              "x": 0,
+              "y": 872,
+              "w": 1440,
+              "h": 0
+            },
+            "text": "",
+            "descendants": 0,
+            "computedDisplay": "block",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 872,
+              "w": 1440,
+              "h": 0
+            },
+            "text": "",
+            "descendants": 0,
+            "computedDisplay": "block",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "div",
+            "id": "_r_1k_",
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-base-ui-portal="
+            ],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 872,
+              "w": 1440,
+              "h": 0
+            },
+            "text": "",
+            "descendants": 3,
+            "computedDisplay": "block",
+            "computedPosition": "static"
+          }
+        ],
+        "landmarks": {
+          "navs": [],
+          "headers": [
+            {
+              "tag": "header",
+              "id": null,
+              "testid": null,
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [],
+              "classes": {
+                "count": 6,
+                "sample": [
+                  "dframe-header",
+                  "h-12",
+                  "shrink-0",
+                  "relative",
+                  "isolate",
+                  "z-10"
+                ]
+              },
+              "rect": {
+                "x": 296,
+                "y": 0,
+                "w": 1136,
+                "h": 48
+              },
+              "text": "",
+              "path": "div > div > div > main > div > div > header"
+            }
+          ],
+          "asides": [
+            {
+              "tag": "aside",
+              "id": null,
+              "testid": null,
+              "role": null,
+              "ariaLabel": "Sidebar",
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-variant=<redacted:3>",
+                "data-density=<redacted:11>"
+              ],
+              "classes": {
+                "count": 1,
+                "sample": [
+                  "dframe-sidebar"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 288,
+                "h": 872
+              },
+              "text": "<redacted:147>",
+              "path": "div > div > div > div > div > div > aside"
+            }
+          ],
+          "mains": [
+            {
+              "tag": "main",
+              "id": null,
+              "testid": null,
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-perf-region=<redacted:4>"
+              ],
+              "classes": {
+                "count": 1,
+                "sample": [
+                  "dframe-content"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 1440,
+                "h": 872
+              },
+              "text": "<redacted:37>",
+              "path": "div#root > div > div > div > div > div > main"
+            }
+          ],
+          "tablists": [],
+          "tabs": [],
+          "dialogs": []
+        },
+        "tabCandidates": [
+          {
+            "label": "Home",
+            "tag": "a",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": "Home",
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": "/new",
+            "dataAttrs": [],
+            "classes": {
+              "count": 2,
+              "sample": [
+                "flex",
+                "items-center"
+              ]
+            },
+            "rect": {
+              "x": 16,
+              "y": 12,
+              "w": 68,
+              "h": 20
+            },
+            "text": "",
+            "path": "div > div > div > aside > div > div > a",
+            "parent": {
+              "tag": "div",
+              "id": null,
+              "testid": null,
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [],
+              "classes": {
+                "count": 6,
+                "sample": [
+                  "draggable-none",
+                  "ml-2",
+                  "flex",
+                  "min-w-0",
+                  "items-center",
+                  "gap-1.5"
+                ]
+              },
+              "rect": {
+                "x": 16,
+                "y": 12,
+                "w": 68,
+                "h": 20
+              },
+              "text": ""
+            },
+            "parentPath": "div > div > div > div > aside > div > div",
+            "grandparent": {
+              "tag": "div",
+              "id": null,
+              "testid": null,
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [],
+              "classes": {
+                "count": 7,
+                "sample": [
+                  "df-titlebar",
+                  "draggable",
+                  "h-11",
+                  "shrink-0",
+                  "flex",
+                  "items-center",
+                  "px-2"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 288,
+                "h": 44
+              },
+              "text": ""
+            }
+          },
+          {
+            "label": "Home",
+            "tag": "button",
+            "id": "_r_b_",
+            "testid": null,
+            "role": null,
+            "ariaLabel": "Home",
+            "ariaSelected": null,
+            "ariaCurrent": "page",
+            "href": null,
+            "dataAttrs": [
+              "data-mode=cowork",
+              "data-active=<redacted:4>",
+              "data-trigger-disabled="
+            ],
+            "classes": {
+              "count": 2,
+              "sample": [
+                "df-pill",
+                "hide-focus-ring"
+              ]
+            },
+            "rect": {
+              "x": 9,
+              "y": 45,
+              "w": 136,
+              "h": 30
+            },
+            "text": "Home",
+            "path": "div > div > div > aside > div#frame-peek-popover[data-testid=\"sidebar\"] > div[role=\"group\"] > button#_r_b_",
+            "parent": {
+              "tag": "div",
+              "id": null,
+              "testid": null,
+              "role": "group",
+              "ariaLabel": "<redacted:4>",
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-chorus-callout=<redacted:5>",
+                "data-segmented=<redacted:4>",
+                "data-pills=2"
+              ],
+              "classes": {
+                "count": 2,
+                "sample": [
+                  "df-pills",
+                  "static-composer-boot-fade"
+                ]
+              },
+              "rect": {
+                "x": 8,
+                "y": 44,
+                "w": 272,
+                "h": 32
+              },
+              "text": "<redacted:8>"
+            },
+            "parentPath": "div > div > div > div > aside > div#frame-peek-popover[data-testid=\"sidebar\"] > div[role=\"group\"]",
+            "grandparent": {
+              "tag": "div",
+              "id": "frame-peek-popover",
+              "testid": "sidebar",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-perf-region=sidebar"
+              ],
+              "classes": {
+                "count": 10,
+                "sample": [
+                  "dframe-sidebar-body",
+                  "flex",
+                  "flex-col",
+                  "flex-1",
+                  "min-h-0",
+                  "gap-2",
+                  "px-2",
+                  "pt-3"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 44,
+                "w": 288,
+                "h": 828
+              },
+              "text": "<redacted:147>"
+            }
+          },
+          {
+            "label": "Code",
+            "tag": "button",
+            "id": "_r_e_",
+            "testid": null,
+            "role": null,
+            "ariaLabel": "Code",
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-mode=code",
+              "data-base-ui-tooltip-trigger="
+            ],
+            "classes": {
+              "count": 2,
+              "sample": [
+                "df-pill",
+                "hide-focus-ring"
+              ]
+            },
+            "rect": {
+              "x": 145,
+              "y": 45,
+              "w": 133,
+              "h": 30
+            },
+            "text": "Code",
+            "path": "div > div > div > aside > div#frame-peek-popover[data-testid=\"sidebar\"] > div[role=\"group\"] > button#_r_e_",
+            "parent": {
+              "tag": "div",
+              "id": null,
+              "testid": null,
+              "role": "group",
+              "ariaLabel": "<redacted:4>",
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-chorus-callout=<redacted:5>",
+                "data-segmented=<redacted:4>",
+                "data-pills=2"
+              ],
+              "classes": {
+                "count": 2,
+                "sample": [
+                  "df-pills",
+                  "static-composer-boot-fade"
+                ]
+              },
+              "rect": {
+                "x": 8,
+                "y": 44,
+                "w": 272,
+                "h": 32
+              },
+              "text": "<redacted:8>"
+            },
+            "parentPath": "div > div > div > div > aside > div#frame-peek-popover[data-testid=\"sidebar\"] > div[role=\"group\"]",
+            "grandparent": {
+              "tag": "div",
+              "id": "frame-peek-popover",
+              "testid": "sidebar",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-perf-region=sidebar"
+              ],
+              "classes": {
+                "count": 10,
+                "sample": [
+                  "dframe-sidebar-body",
+                  "flex",
+                  "flex-col",
+                  "flex-1",
+                  "min-h-0",
+                  "gap-2",
+                  "px-2",
+                  "pt-3"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 44,
+                "w": 288,
+                "h": 828
+              },
+              "text": "<redacted:147>"
+            }
+          }
+        ],
+        "tabBarContainer": {
+          "tag": "aside",
+          "id": null,
+          "testid": null,
+          "role": null,
+          "ariaLabel": "Sidebar",
+          "ariaSelected": null,
+          "ariaCurrent": null,
+          "href": null,
+          "dataAttrs": [
+            "data-variant=<redacted:3>",
+            "data-density=<redacted:11>"
+          ],
+          "classes": {
+            "count": 1,
+            "sample": [
+              "dframe-sidebar"
+            ]
+          },
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "w": 288,
+            "h": 872
+          },
+          "text": "<redacted:147>",
+          "path": "div > div > div > div > div > div > aside",
+          "childCount": 3,
+          "children": [
+            {
+              "tag": "div",
+              "id": "_r_2_",
+              "testid": null,
+              "role": "separator",
+              "ariaLabel": "<redacted:14>",
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-base-ui-tooltip-trigger=",
+                "data-cds=<redacted:12>"
+              ],
+              "classes": {
+                "count": 10,
+                "sample": [
+                  "cds-reset",
+                  "group/resize",
+                  "outline-none",
+                  "focus-visible:outline-hidden",
+                  "w-3",
+                  "cursor-col-resize",
+                  "absolute",
+                  "inset-y-0"
+                ]
+              },
+              "rect": {
+                "x": 282,
+                "y": 0,
+                "w": 12,
+                "h": 872
+              },
+              "text": ""
+            },
+            {
+              "tag": "div",
+              "id": null,
+              "testid": null,
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [],
+              "classes": {
+                "count": 7,
+                "sample": [
+                  "df-titlebar",
+                  "draggable",
+                  "h-11",
+                  "shrink-0",
+                  "flex",
+                  "items-center",
+                  "px-2"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 288,
+                "h": 44
+              },
+              "text": ""
+            },
+            {
+              "tag": "div",
+              "id": "frame-peek-popover",
+              "testid": "sidebar",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-perf-region=sidebar"
+              ],
+              "classes": {
+                "count": 10,
+                "sample": [
+                  "dframe-sidebar-body",
+                  "flex",
+                  "flex-col",
+                  "flex-1",
+                  "min-h-0",
+                  "gap-2",
+                  "px-2",
+                  "pt-3"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 44,
+                "w": 288,
+                "h": 828
+              },
+              "text": "<redacted:147>"
+            }
+          ],
+          "parent": {
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-density=<redacted:11>",
+              "data-platform=<redacted:3>",
+              "data-font=<redacted:9>",
+              "data-page-bg=<redacted:9>",
+              "data-mode=dark"
+            ],
+            "classes": {
+              "count": 3,
+              "sample": [
+                "cds-root",
+                "text-primary",
+                "contents"
+              ]
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:147>"
+          },
+          "parentPath": "div#root > div > div > div > div > div > div",
+          "computed": {
+            "position": "absolute",
+            "display": "flex",
+            "flexDirection": "column",
+            "zIndex": "20"
+          }
+        },
+        "rightPanelContainer": null,
+        "modeSwitch": {
+          "tag": "div",
+          "id": null,
+          "testid": null,
+          "role": "group",
+          "ariaLabel": "<redacted:4>",
+          "ariaSelected": null,
+          "ariaCurrent": null,
+          "href": null,
+          "dataAttrs": [
+            "data-chorus-callout=<redacted:5>",
+            "data-segmented=<redacted:4>",
+            "data-pills=2"
+          ],
+          "classes": {
+            "count": 2,
+            "sample": [
+              "df-pills",
+              "static-composer-boot-fade"
+            ]
+          },
+          "rect": {
+            "x": 8,
+            "y": 44,
+            "w": 272,
+            "h": 32
+          },
+          "text": "<redacted:8>",
+          "path": "div > div > div > div > aside > div#frame-peek-popover[data-testid=\"sidebar\"] > div[role=\"group\"]",
+          "pills": [
+            {
+              "tag": "div",
+              "id": null,
+              "testid": null,
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-at=<redacted:5>",
+                "data-snap="
+              ],
+              "classes": {
+                "count": 1,
+                "sample": [
+                  "df-pill-indicator"
+                ]
+              },
+              "rect": {
+                "x": 9,
+                "y": 45,
+                "w": 136,
+                "h": 30
+              },
+              "text": "",
+              "mode": null,
+              "active": false
+            },
+            {
+              "tag": "button",
+              "id": "_r_b_",
+              "testid": null,
+              "role": null,
+              "ariaLabel": "Home",
+              "ariaSelected": null,
+              "ariaCurrent": "page",
+              "href": null,
+              "dataAttrs": [
+                "data-mode=cowork",
+                "data-active=<redacted:4>",
+                "data-trigger-disabled="
+              ],
+              "classes": {
+                "count": 2,
+                "sample": [
+                  "df-pill",
+                  "hide-focus-ring"
+                ]
+              },
+              "rect": {
+                "x": 9,
+                "y": 45,
+                "w": 136,
+                "h": 30
+              },
+              "text": "Home",
+              "mode": "cowork",
+              "active": true
+            },
+            {
+              "tag": "button",
+              "id": "_r_e_",
+              "testid": null,
+              "role": null,
+              "ariaLabel": "Code",
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-mode=code",
+                "data-base-ui-tooltip-trigger="
+              ],
+              "classes": {
+                "count": 2,
+                "sample": [
+                  "df-pill",
+                  "hide-focus-ring"
+                ]
+              },
+              "rect": {
+                "x": 145,
+                "y": 45,
+                "w": 133,
+                "h": 30
+              },
+              "text": "Code",
+              "mode": "code",
+              "active": false
+            }
+          ]
+        },
+        "composer": {
+          "tag": "div",
+          "id": null,
+          "testid": "chat-input",
+          "role": "textbox",
+          "ariaLabel": "<redacted:27>",
+          "ariaSelected": null,
+          "ariaCurrent": null,
+          "href": null,
+          "dataAttrs": [
+            "data-cds=<redacted:6>",
+            "data-composer-editor=<redacted:7>"
+          ],
+          "classes": {
+            "count": 2,
+            "sample": [
+              "tiptap",
+              "ProseMirror"
+            ]
+          },
+          "rect": {
+            "x": 549,
+            "y": 383,
+            "w": 636,
+            "h": 20
+          },
+          "text": "",
+          "path": "fieldset > div > div > div > div > div > div[data-testid=\"chat-input\"][role=\"textbox\"]"
+        },
+        "sidebarProbes": {
+          "byAriaLabel": null,
+          "byPinToggle": null,
+          "firstNav": null
+        },
+        "testids": [
+          {
+            "testid": "chat-input",
+            "count": 1,
+            "sample": {
+              "tag": "div",
+              "id": null,
+              "testid": "chat-input",
+              "role": "textbox",
+              "ariaLabel": "<redacted:27>",
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-cds=<redacted:6>",
+                "data-composer-editor=<redacted:7>"
+              ],
+              "classes": {
+                "count": 2,
+                "sample": [
+                  "tiptap",
+                  "ProseMirror"
+                ]
+              },
+              "rect": {
+                "x": 549,
+                "y": 383,
+                "w": 636,
+                "h": 20
+              },
+              "text": ""
+            },
+            "path": "fieldset > div > div > div > div > div > div[data-testid=\"chat-input\"][role=\"textbox\"]"
+          },
+          {
+            "testid": "chat-input-attach",
+            "count": 1,
+            "sample": {
+              "tag": "button",
+              "id": "base-ui-_r_v_",
+              "testid": "chat-input-attach",
+              "role": null,
+              "ariaLabel": "Add files, connectors, and more",
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-cds=<redacted:6>",
+                "data-chorus-callout=attach",
+                "data-base-ui-tooltip-trigger="
+              ],
+              "classes": {
+                "count": 33,
+                "sample": [
+                  "cds-reset",
+                  "group/btn",
+                  "relative",
+                  "isolate",
+                  "inline-flex",
+                  "shrink-0",
+                  "items-center",
+                  "justify-center"
+                ]
+              },
+              "rect": {
+                "x": 545,
+                "y": 435,
+                "w": 32,
+                "h": 32
+              },
+              "text": ""
+            },
+            "path": "div > div > div > div > div > div > button#base-ui-_r_v_[data-testid=\"chat-input-attach\"]"
+          },
+          {
+            "testid": "chat-input-send",
+            "count": 1,
+            "sample": {
+              "tag": "button",
+              "id": "_r_1d_",
+              "testid": "chat-input-send",
+              "role": null,
+              "ariaLabel": "<redacted:12>",
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-cds=<redacted:6>",
+                "data-trigger-disabled="
+              ],
+              "classes": {
+                "count": 31,
+                "sample": [
+                  "cds-reset",
+                  "group/btn",
+                  "relative",
+                  "isolate",
+                  "inline-flex",
+                  "shrink-0",
+                  "items-center",
+                  "justify-center"
+                ]
+              },
+              "rect": {
+                "x": 1153,
+                "y": 435,
+                "w": 32,
+                "h": 32
+              },
+              "text": ""
+            },
+            "path": "div > div > div > div > div > div#_r_1a_ > button#_r_1d_[data-testid=\"chat-input-send\"]"
+          },
+          {
+            "testid": "file-upload",
+            "count": 1,
+            "sample": {
+              "tag": "input",
+              "id": "chat-input-file-upload-onpage",
+              "testid": "file-upload",
+              "role": null,
+              "ariaLabel": "<redacted:12>",
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [],
+              "classes": {
+                "count": 7,
+                "sample": [
+                  "absolute",
+                  "-z-10",
+                  "h-0",
+                  "w-0",
+                  "overflow-hidden",
+                  "opacity-0",
+                  "select-none"
+                ]
+              },
+              "rect": {
+                "x": 528,
+                "y": 362,
+                "w": 0,
+                "h": 0
+              },
+              "text": ""
+            },
+            "path": "div > div > div > div > div > fieldset > input#chat-input-file-upload-onpage[data-testid=\"file-upload\"]"
+          },
+          {
+            "testid": "sidebar",
+            "count": 1,
+            "sample": {
+              "tag": "div",
+              "id": "frame-peek-popover",
+              "testid": "sidebar",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-perf-region=sidebar"
+              ],
+              "classes": {
+                "count": 10,
+                "sample": [
+                  "dframe-sidebar-body",
+                  "flex",
+                  "flex-col",
+                  "flex-1",
+                  "min-h-0",
+                  "gap-2",
+                  "px-2",
+                  "pt-3"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 44,
+                "w": 288,
+                "h": 828
+              },
+              "text": "<redacted:147>"
+            },
+            "path": "div > div > div > div > div > aside > div#frame-peek-popover[data-testid=\"sidebar\"]"
+          },
+          {
+            "testid": "sidebar-recents",
+            "count": 2,
+            "sample": {
+              "tag": "div",
+              "id": null,
+              "testid": "sidebar-recents",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-perf-region=sidebar_recents",
+                "data-chorus-callout=recents",
+                "data-first-paint=<redacted:4>",
+                "data-held-sections=<redacted:33>"
+              ],
+              "classes": {
+                "count": 4,
+                "sample": [
+                  "df-recents-anchor",
+                  "grow",
+                  "shrink-0",
+                  "min-h-[120px]"
+                ]
+              },
+              "rect": {
+                "x": 8,
+                "y": 230,
+                "w": 272,
+                "h": 580
+              },
+              "text": "<redacted:57>"
+            },
+            "path": "div#frame-peek-popover[data-testid=\"sidebar\"] > div > div > div > div > div > div[data-testid=\"sidebar-recents\"]"
+          },
+          {
+            "testid": "sidebar-rows-skeleton",
+            "count": 2,
+            "sample": {
+              "tag": "div",
+              "id": null,
+              "testid": "sidebar-rows-skeleton",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [],
+              "classes": {
+                "count": 4,
+                "sample": [
+                  "df-placeholder-rows",
+                  "flex",
+                  "flex-col",
+                  "gap-px"
+                ]
+              },
+              "rect": {
+                "x": 8,
+                "y": 275,
+                "w": 272,
+                "h": 100
+              },
+              "text": "<redacted:42>"
+            },
+            "path": "div > div > div > div[data-testid=\"sidebar-recents\"] > div > div > div[data-testid=\"sidebar-rows-skeleton\"]"
+          },
+          {
+            "testid": "user-menu-button",
+            "count": 1,
+            "sample": {
+              "tag": "button",
+              "id": "base-ui-_r_n_",
+              "testid": "user-menu-button",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [],
+              "classes": {
+                "count": 16,
+                "sample": [
+                  "df-user-menu-btn",
+                  "cds-reset",
+                  "flex",
+                  "max-w-full",
+                  "items-center",
+                  "gap-[var(--df-row-gap)]",
+                  "rounded-[var(--df-radius-pill)]",
+                  "pl-[var(--df-row-px)]"
+                ]
+              },
+              "rect": {
+                "x": 8,
+                "y": 828,
+                "w": 272,
+                "h": 32
+              },
+              "text": "<redacted:1>"
+            },
+            "path": "div > aside > div#frame-peek-popover[data-testid=\"sidebar\"] > div > div > div > button#base-ui-_r_n_[data-testid=\"user-menu-button\"]"
+          }
+        ],
+        "updatePromptCandidates": [
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-cds=<redacted:8>"
+            ],
+            "classes": {
+              "count": 11,
+              "sample": [
+                "relative",
+                "h-[1em]",
+                "max-w-full",
+                "overflow-hidden",
+                "bg-[var(--cds-skeleton-base)]",
+                "after:absolute",
+                "after:inset-0",
+                "after:animate-[cds-shimmer_2s_linear_infinite]"
+              ]
+            },
+            "rect": {
+              "x": 21,
+              "y": 288,
+              "w": 6,
+              "h": 6
+            },
+            "text": "<redacted:7>",
+            "path": "div[data-testid=\"sidebar-recents\"] > div > div > div[data-testid=\"sidebar-rows-skeleton\"] > div > span > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-cds=<redacted:8>"
+            ],
+            "classes": {
+              "count": 11,
+              "sample": [
+                "relative",
+                "h-[1em]",
+                "max-w-full",
+                "overflow-hidden",
+                "rounded",
+                "bg-[var(--cds-skeleton-base)]",
+                "after:absolute",
+                "after:inset-0"
+              ]
+            },
+            "rect": {
+              "x": 46,
+              "y": 284,
+              "w": 182,
+              "h": 14
+            },
+            "text": "<redacted:7>",
+            "path": "div > div[data-testid=\"sidebar-recents\"] > div > div > div[data-testid=\"sidebar-rows-skeleton\"] > div > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-cds=<redacted:8>"
+            ],
+            "classes": {
+              "count": 11,
+              "sample": [
+                "relative",
+                "h-[1em]",
+                "max-w-full",
+                "overflow-hidden",
+                "bg-[var(--cds-skeleton-base)]",
+                "after:absolute",
+                "after:inset-0",
+                "after:animate-[cds-shimmer_2s_linear_infinite]"
+              ]
+            },
+            "rect": {
+              "x": 21,
+              "y": 322,
+              "w": 6,
+              "h": 6
+            },
+            "text": "<redacted:7>",
+            "path": "div[data-testid=\"sidebar-recents\"] > div > div > div[data-testid=\"sidebar-rows-skeleton\"] > div > span > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-cds=<redacted:8>"
+            ],
+            "classes": {
+              "count": 11,
+              "sample": [
+                "relative",
+                "h-[1em]",
+                "max-w-full",
+                "overflow-hidden",
+                "rounded",
+                "bg-[var(--cds-skeleton-base)]",
+                "after:absolute",
+                "after:inset-0"
+              ]
+            },
+            "rect": {
+              "x": 46,
+              "y": 318,
+              "w": 144,
+              "h": 14
+            },
+            "text": "<redacted:7>",
+            "path": "div > div[data-testid=\"sidebar-recents\"] > div > div > div[data-testid=\"sidebar-rows-skeleton\"] > div > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-cds=<redacted:8>"
+            ],
+            "classes": {
+              "count": 11,
+              "sample": [
+                "relative",
+                "h-[1em]",
+                "max-w-full",
+                "overflow-hidden",
+                "bg-[var(--cds-skeleton-base)]",
+                "after:absolute",
+                "after:inset-0",
+                "after:animate-[cds-shimmer_2s_linear_infinite]"
+              ]
+            },
+            "rect": {
+              "x": 21,
+              "y": 355,
+              "w": 6,
+              "h": 6
+            },
+            "text": "<redacted:7>",
+            "path": "div[data-testid=\"sidebar-recents\"] > div > div > div[data-testid=\"sidebar-rows-skeleton\"] > div > span > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-cds=<redacted:8>"
+            ],
+            "classes": {
+              "count": 11,
+              "sample": [
+                "relative",
+                "h-[1em]",
+                "max-w-full",
+                "overflow-hidden",
+                "rounded",
+                "bg-[var(--cds-skeleton-base)]",
+                "after:absolute",
+                "after:inset-0"
+              ]
+            },
+            "rect": {
+              "x": 46,
+              "y": 351,
+              "w": 118,
+              "h": 14
+            },
+            "text": "<redacted:7>",
+            "path": "div > div[data-testid=\"sidebar-recents\"] > div > div > div[data-testid=\"sidebar-rows-skeleton\"] > div > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-cds=<redacted:8>"
+            ],
+            "classes": {
+              "count": 11,
+              "sample": [
+                "relative",
+                "h-[1em]",
+                "max-w-full",
+                "overflow-hidden",
+                "bg-[var(--cds-skeleton-base)]",
+                "after:absolute",
+                "after:inset-0",
+                "after:animate-[cds-shimmer_2s_linear_infinite]"
+              ]
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:7>",
+            "path": "div[data-testid=\"sidebar-recents\"] > div > div > div[data-testid=\"sidebar-rows-skeleton\"] > div > span > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-cds=<redacted:8>"
+            ],
+            "classes": {
+              "count": 11,
+              "sample": [
+                "relative",
+                "h-[1em]",
+                "max-w-full",
+                "overflow-hidden",
+                "rounded",
+                "bg-[var(--cds-skeleton-base)]",
+                "after:absolute",
+                "after:inset-0"
+              ]
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:7>",
+            "path": "div > div[data-testid=\"sidebar-recents\"] > div > div > div[data-testid=\"sidebar-rows-skeleton\"] > div > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-cds=<redacted:8>"
+            ],
+            "classes": {
+              "count": 11,
+              "sample": [
+                "relative",
+                "h-[1em]",
+                "max-w-full",
+                "overflow-hidden",
+                "bg-[var(--cds-skeleton-base)]",
+                "after:absolute",
+                "after:inset-0",
+                "after:animate-[cds-shimmer_2s_linear_infinite]"
+              ]
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:7>",
+            "path": "div[data-testid=\"sidebar-recents\"] > div > div > div[data-testid=\"sidebar-rows-skeleton\"] > div > span > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-cds=<redacted:8>"
+            ],
+            "classes": {
+              "count": 11,
+              "sample": [
+                "relative",
+                "h-[1em]",
+                "max-w-full",
+                "overflow-hidden",
+                "rounded",
+                "bg-[var(--cds-skeleton-base)]",
+                "after:absolute",
+                "after:inset-0"
+              ]
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:7>",
+            "path": "div > div[data-testid=\"sidebar-recents\"] > div > div > div[data-testid=\"sidebar-rows-skeleton\"] > div > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-cds=<redacted:8>"
+            ],
+            "classes": {
+              "count": 11,
+              "sample": [
+                "relative",
+                "h-[1em]",
+                "max-w-full",
+                "overflow-hidden",
+                "bg-[var(--cds-skeleton-base)]",
+                "after:absolute",
+                "after:inset-0",
+                "after:animate-[cds-shimmer_2s_linear_infinite]"
+              ]
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:7>",
+            "path": "div[data-testid=\"sidebar-recents\"] > div > div > div[data-testid=\"sidebar-rows-skeleton\"] > div > span > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-cds=<redacted:8>"
+            ],
+            "classes": {
+              "count": 11,
+              "sample": [
+                "relative",
+                "h-[1em]",
+                "max-w-full",
+                "overflow-hidden",
+                "rounded",
+                "bg-[var(--cds-skeleton-base)]",
+                "after:absolute",
+                "after:inset-0"
+              ]
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:7>",
+            "path": "div > div[data-testid=\"sidebar-recents\"] > div > div > div[data-testid=\"sidebar-rows-skeleton\"] > div > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 8,
+              "sample": [
+                "static-composer-boot-fade",
+                "df-banner-slot",
+                "-mt-2",
+                "flex",
+                "shrink-0",
+                "flex-col",
+                "gap-2",
+                "empty:hidden"
+              ]
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "",
+            "path": "div > div > div > div > aside > div#frame-peek-popover[data-testid=\"sidebar\"] > div",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 2,
+              "sample": [
+                "dframe-content-banner",
+                "print:hidden"
+              ]
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "",
+            "path": "div > div > div > div > main > div > div",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 2,
+              "sample": [
+                "relative",
+                "[&_[data-cds=Banner]]:pointer-events-auto"
+              ]
+            },
+            "rect": {
+              "x": 307,
+              "y": 48,
+              "w": 1114,
+              "h": 0
+            },
+            "text": "",
+            "path": "div > div > div > div > div > div > div",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 528,
+              "y": 362,
+              "w": 672,
+              "h": 0
+            },
+            "text": "",
+            "path": "div > div > div > div > div > div > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 528,
+              "y": 362,
+              "w": 672,
+              "h": 0
+            },
+            "text": "",
+            "path": "div > div > div > div > div > div > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 528,
+              "y": 362,
+              "w": 672,
+              "h": 0
+            },
+            "text": "",
+            "path": "div > div > div > div > div > fieldset > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "span",
+            "id": "skill-arg-hint-sr-121ib6",
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-skill-arg-hint-sr=<redacted:14>"
+            ],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 543,
+              "y": 377,
+              "w": 1,
+              "h": 1
+            },
+            "text": "",
+            "path": "fieldset > div > div > div > div > div > span#skill-arg-hint-sr-121ib6[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-cds=<redacted:5>"
+            ],
+            "classes": {
+              "count": 10,
+              "sample": [
+                "cds-reset",
+                "pointer-events-none",
+                "fixed",
+                "flex",
+                "w-[360px]",
+                "max-w-[calc(100vw-2rem)]",
+                "flex-col-reverse",
+                "gap-md"
+              ]
+            },
+            "rect": {
+              "x": 1064,
+              "y": 856,
+              "w": 360,
+              "h": 0
+            },
+            "text": "",
+            "path": "body > div#_r_1k_ > div > div",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "region",
+            "ariaLabel": "Notifications",
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 4,
+              "sample": [
+                "pointer-events-auto",
+                "relative",
+                "outline-none",
+                "focus-visible:outline-hidden"
+              ]
+            },
+            "rect": {
+              "x": 1064,
+              "y": 856,
+              "w": 360,
+              "h": 0
+            },
+            "text": "",
+            "path": "body > div#_r_1k_ > div > div > div[role=\"region\"]",
+            "matchesCopy": false
+          }
+        ]
+      },
+      "shippedProbe": {
+        "status": "partial",
+        "summary": "appRoot=primary:body > #root topTabBar=absent composer=primary:[data-testid=\"chat-input\"] sidebar=MISSING",
+        "regions": [
+          {
+            "key": "appRoot",
+            "found": true,
+            "tier": "primary",
+            "via": "body > #root",
+            "required": true,
+            "absentOk": false
+          },
+          {
+            "key": "topTabBar",
+            "found": false,
+            "tier": null,
+            "via": null,
+            "required": false,
+            "absentOk": true
+          },
+          {
+            "key": "composer",
+            "found": true,
+            "tier": "primary",
+            "via": "[data-testid=\"chat-input\"]",
+            "required": false,
+            "absentOk": false
+          },
+          {
+            "key": "sidebar",
+            "found": false,
+            "tier": null,
+            "via": null,
+            "required": false,
+            "absentOk": false
+          }
+        ],
+        "findTopTabBar": null
+      }
+    },
+    {
+      "url": "https://claude.ai/code",
+      "ready": {
+        "ready": false,
+        "signedIn": false
+      },
+      "tag": "https://claude.ai/code",
+      "ok": true,
+      "survey": {
+        "url": "https://claude.ai/code",
+        "ts": "2026-08-19T20:25:30.325Z",
+        "viewport": {
+          "w": 1440,
+          "h": 872
+        },
+        "supports": {
+          "hasSelector": true
+        },
+        "bodyChildren": [
+          {
+            "tag": "script",
+            "id": "static-composer-translations",
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:1242>",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "script",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:447>",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "script",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:6109>",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "link",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-entry-stylesheet=",
+              "data-base-ui-inert="
+            ],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "link",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-entry-stylesheet=",
+              "data-base-ui-inert="
+            ],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "link",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-entry-stylesheet=",
+              "data-base-ui-inert="
+            ],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "script",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-entry-stylesheet-guard="
+            ],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:31>",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "div",
+            "id": "root",
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-base-ui-inert="
+            ],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 1440,
+              "h": 872
+            },
+            "text": "<redacted:1321>",
+            "descendants": 543,
+            "computedDisplay": "block",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "div",
+            "id": "portal-root",
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 872,
+              "w": 1440,
+              "h": 0
+            },
+            "text": "<redacted:304>",
+            "descendants": 19,
+            "computedDisplay": "block",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "link",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-link-header=<redacted:7>",
+              "data-base-ui-inert="
+            ],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "script",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:2176>",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-density=<redacted:11>",
+              "data-mode=dark",
+              "data-platform=<redacted:7>",
+              "data-font=<redacted:9>",
+              "data-page-bg=<redacted:9>",
+              "data-base-ui-inert="
+            ],
+            "classes": {
+              "count": 2,
+              "sample": [
+                "cds-root",
+                "text-primary"
+              ]
+            },
+            "rect": {
+              "x": 0,
+              "y": 872,
+              "w": 1440,
+              "h": 0
+            },
+            "text": "",
+            "descendants": 0,
+            "computedDisplay": "block",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-base-ui-inert="
+            ],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 872,
+              "w": 1440,
+              "h": 0
+            },
+            "text": "",
+            "descendants": 0,
+            "computedDisplay": "block",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "div",
+            "id": "_r_v_",
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-base-ui-portal=",
+              "data-base-ui-inert="
+            ],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 872,
+              "w": 1440,
+              "h": 0
+            },
+            "text": "",
+            "descendants": 3,
+            "computedDisplay": "block",
+            "computedPosition": "static"
+          },
+          {
+            "tag": "script",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "",
+            "descendants": 0,
+            "computedDisplay": "none",
+            "computedPosition": "static"
+          }
+        ],
+        "landmarks": {
+          "navs": [],
+          "headers": [
+            {
+              "tag": "header",
+              "id": null,
+              "testid": null,
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [],
+              "classes": {
+                "count": 8,
+                "sample": [
+                  "w-full",
+                  "epitaxy-composer-width",
+                  "flex",
+                  "flex-row",
+                  "items-center",
+                  "gap-[calc(var(--g3)+2px)]",
+                  "pt-[12px]",
+                  "pb-[24px]"
+                ]
+              },
+              "rect": {
+                "x": 448,
+                "y": 41,
+                "w": 840,
+                "h": 61
+              },
+              "text": "<redacted:22>",
+              "path": "div > div > div > div > div > div > header"
+            }
+          ],
+          "asides": [
+            {
+              "tag": "aside",
+              "id": null,
+              "testid": null,
+              "role": null,
+              "ariaLabel": "Sidebar",
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-variant=<redacted:3>",
+                "data-density=<redacted:11>"
+              ],
+              "classes": {
+                "count": 1,
+                "sample": [
+                  "dframe-sidebar"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 288,
+                "h": 872
+              },
+              "text": "<redacted:288>",
+              "path": "div > div > div > div > div > div > aside"
+            }
+          ],
+          "mains": [
+            {
+              "tag": "main",
+              "id": null,
+              "testid": null,
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-perf-region=<redacted:4>"
+              ],
+              "classes": {
+                "count": 1,
+                "sample": [
+                  "dframe-content"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 1440,
+                "h": 872
+              },
+              "text": "<redacted:1032>",
+              "path": "div#root > div > div > div > div > div > main"
+            }
+          ],
+          "tablists": [],
+          "tabs": [],
+          "dialogs": []
+        },
+        "tabCandidates": [
+          {
+            "label": "Home",
+            "tag": "a",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": "Home",
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": "/new",
+            "dataAttrs": [],
+            "classes": {
+              "count": 2,
+              "sample": [
+                "flex",
+                "items-center"
+              ]
+            },
+            "rect": {
+              "x": 16,
+              "y": 12,
+              "w": 68,
+              "h": 20
+            },
+            "text": "",
+            "path": "div > div > div > aside > div > div > a",
+            "parent": {
+              "tag": "div",
+              "id": null,
+              "testid": null,
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [],
+              "classes": {
+                "count": 6,
+                "sample": [
+                  "draggable-none",
+                  "ml-2",
+                  "flex",
+                  "min-w-0",
+                  "items-center",
+                  "gap-1.5"
+                ]
+              },
+              "rect": {
+                "x": 16,
+                "y": 12,
+                "w": 68,
+                "h": 20
+              },
+              "text": ""
+            },
+            "parentPath": "div > div > div > div > aside > div > div",
+            "grandparent": {
+              "tag": "div",
+              "id": null,
+              "testid": null,
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [],
+              "classes": {
+                "count": 7,
+                "sample": [
+                  "df-titlebar",
+                  "draggable",
+                  "h-11",
+                  "shrink-0",
+                  "flex",
+                  "items-center",
+                  "px-2"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 288,
+                "h": 44
+              },
+              "text": ""
+            }
+          },
+          {
+            "label": "Home",
+            "tag": "button",
+            "id": "_r_9_",
+            "testid": null,
+            "role": null,
+            "ariaLabel": "Home",
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-mode=cowork",
+              "data-base-ui-tooltip-trigger="
+            ],
+            "classes": {
+              "count": 2,
+              "sample": [
+                "df-pill",
+                "hide-focus-ring"
+              ]
+            },
+            "rect": {
+              "x": 9,
+              "y": 45,
+              "w": 136,
+              "h": 30
+            },
+            "text": "Home",
+            "path": "div > div > div > aside > div#frame-peek-popover[data-testid=\"sidebar\"] > div[role=\"group\"] > button#_r_9_",
+            "parent": {
+              "tag": "div",
+              "id": null,
+              "testid": null,
+              "role": "group",
+              "ariaLabel": "<redacted:4>",
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-chorus-callout=<redacted:5>",
+                "data-segmented=<redacted:4>",
+                "data-pills=2"
+              ],
+              "classes": {
+                "count": 2,
+                "sample": [
+                  "df-pills",
+                  "static-composer-boot-fade"
+                ]
+              },
+              "rect": {
+                "x": 8,
+                "y": 44,
+                "w": 272,
+                "h": 32
+              },
+              "text": "<redacted:8>"
+            },
+            "parentPath": "div > div > div > div > aside > div#frame-peek-popover[data-testid=\"sidebar\"] > div[role=\"group\"]",
+            "grandparent": {
+              "tag": "div",
+              "id": "frame-peek-popover",
+              "testid": "sidebar",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-perf-region=sidebar"
+              ],
+              "classes": {
+                "count": 10,
+                "sample": [
+                  "dframe-sidebar-body",
+                  "flex",
+                  "flex-col",
+                  "flex-1",
+                  "min-h-0",
+                  "gap-2",
+                  "px-2",
+                  "pt-3"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 44,
+                "w": 288,
+                "h": 828
+              },
+              "text": "<redacted:288>"
+            }
+          },
+          {
+            "label": "Code",
+            "tag": "button",
+            "id": "_r_c_",
+            "testid": null,
+            "role": null,
+            "ariaLabel": "Code",
+            "ariaSelected": null,
+            "ariaCurrent": "page",
+            "href": null,
+            "dataAttrs": [
+              "data-mode=code",
+              "data-active=<redacted:4>",
+              "data-trigger-disabled="
+            ],
+            "classes": {
+              "count": 2,
+              "sample": [
+                "df-pill",
+                "hide-focus-ring"
+              ]
+            },
+            "rect": {
+              "x": 145,
+              "y": 45,
+              "w": 133,
+              "h": 30
+            },
+            "text": "Code",
+            "path": "div > div > div > aside > div#frame-peek-popover[data-testid=\"sidebar\"] > div[role=\"group\"] > button#_r_c_",
+            "parent": {
+              "tag": "div",
+              "id": null,
+              "testid": null,
+              "role": "group",
+              "ariaLabel": "<redacted:4>",
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-chorus-callout=<redacted:5>",
+                "data-segmented=<redacted:4>",
+                "data-pills=2"
+              ],
+              "classes": {
+                "count": 2,
+                "sample": [
+                  "df-pills",
+                  "static-composer-boot-fade"
+                ]
+              },
+              "rect": {
+                "x": 8,
+                "y": 44,
+                "w": 272,
+                "h": 32
+              },
+              "text": "<redacted:8>"
+            },
+            "parentPath": "div > div > div > div > aside > div#frame-peek-popover[data-testid=\"sidebar\"] > div[role=\"group\"]",
+            "grandparent": {
+              "tag": "div",
+              "id": "frame-peek-popover",
+              "testid": "sidebar",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-perf-region=sidebar"
+              ],
+              "classes": {
+                "count": 10,
+                "sample": [
+                  "dframe-sidebar-body",
+                  "flex",
+                  "flex-col",
+                  "flex-1",
+                  "min-h-0",
+                  "gap-2",
+                  "px-2",
+                  "pt-3"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 44,
+                "w": 288,
+                "h": 828
+              },
+              "text": "<redacted:288>"
+            }
+          }
+        ],
+        "tabBarContainer": {
+          "tag": "aside",
+          "id": null,
+          "testid": null,
+          "role": null,
+          "ariaLabel": "Sidebar",
+          "ariaSelected": null,
+          "ariaCurrent": null,
+          "href": null,
+          "dataAttrs": [
+            "data-variant=<redacted:3>",
+            "data-density=<redacted:11>"
+          ],
+          "classes": {
+            "count": 1,
+            "sample": [
+              "dframe-sidebar"
+            ]
+          },
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "w": 288,
+            "h": 872
+          },
+          "text": "<redacted:288>",
+          "path": "div > div > div > div > div > div > aside",
+          "childCount": 3,
+          "children": [
+            {
+              "tag": "div",
+              "id": "_r_0_",
+              "testid": null,
+              "role": "separator",
+              "ariaLabel": "<redacted:14>",
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-base-ui-tooltip-trigger=",
+                "data-cds=<redacted:12>"
+              ],
+              "classes": {
+                "count": 10,
+                "sample": [
+                  "cds-reset",
+                  "group/resize",
+                  "outline-none",
+                  "focus-visible:outline-hidden",
+                  "w-3",
+                  "cursor-col-resize",
+                  "absolute",
+                  "inset-y-0"
+                ]
+              },
+              "rect": {
+                "x": 282,
+                "y": 0,
+                "w": 12,
+                "h": 872
+              },
+              "text": ""
+            },
+            {
+              "tag": "div",
+              "id": null,
+              "testid": null,
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [],
+              "classes": {
+                "count": 7,
+                "sample": [
+                  "df-titlebar",
+                  "draggable",
+                  "h-11",
+                  "shrink-0",
+                  "flex",
+                  "items-center",
+                  "px-2"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 288,
+                "h": 44
+              },
+              "text": ""
+            },
+            {
+              "tag": "div",
+              "id": "frame-peek-popover",
+              "testid": "sidebar",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-perf-region=sidebar"
+              ],
+              "classes": {
+                "count": 10,
+                "sample": [
+                  "dframe-sidebar-body",
+                  "flex",
+                  "flex-col",
+                  "flex-1",
+                  "min-h-0",
+                  "gap-2",
+                  "px-2",
+                  "pt-3"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 44,
+                "w": 288,
+                "h": 828
+              },
+              "text": "<redacted:288>"
+            }
+          ],
+          "parent": {
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-density=<redacted:11>",
+              "data-platform=<redacted:3>",
+              "data-font=<redacted:9>",
+              "data-page-bg=<redacted:9>",
+              "data-mode=dark"
+            ],
+            "classes": {
+              "count": 3,
+              "sample": [
+                "cds-root",
+                "text-primary",
+                "contents"
+              ]
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "<redacted:288>"
+          },
+          "parentPath": "div#root > div > div > div > div > div > div",
+          "computed": {
+            "position": "absolute",
+            "display": "flex",
+            "flexDirection": "column",
+            "zIndex": "20"
+          }
+        },
+        "rightPanelContainer": null,
+        "modeSwitch": {
+          "tag": "div",
+          "id": null,
+          "testid": null,
+          "role": "group",
+          "ariaLabel": "<redacted:4>",
+          "ariaSelected": null,
+          "ariaCurrent": null,
+          "href": null,
+          "dataAttrs": [
+            "data-chorus-callout=<redacted:5>",
+            "data-segmented=<redacted:4>",
+            "data-pills=2"
+          ],
+          "classes": {
+            "count": 2,
+            "sample": [
+              "df-pills",
+              "static-composer-boot-fade"
+            ]
+          },
+          "rect": {
+            "x": 8,
+            "y": 44,
+            "w": 272,
+            "h": 32
+          },
+          "text": "<redacted:8>",
+          "path": "div > div > div > div > aside > div#frame-peek-popover[data-testid=\"sidebar\"] > div[role=\"group\"]",
+          "pills": [
+            {
+              "tag": "div",
+              "id": null,
+              "testid": null,
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-at=<redacted:7>",
+                "data-snap="
+              ],
+              "classes": {
+                "count": 1,
+                "sample": [
+                  "df-pill-indicator"
+                ]
+              },
+              "rect": {
+                "x": 145,
+                "y": 45,
+                "w": 133,
+                "h": 30
+              },
+              "text": "",
+              "mode": null,
+              "active": false
+            },
+            {
+              "tag": "button",
+              "id": "_r_9_",
+              "testid": null,
+              "role": null,
+              "ariaLabel": "Home",
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-mode=cowork",
+                "data-base-ui-tooltip-trigger="
+              ],
+              "classes": {
+                "count": 2,
+                "sample": [
+                  "df-pill",
+                  "hide-focus-ring"
+                ]
+              },
+              "rect": {
+                "x": 9,
+                "y": 45,
+                "w": 136,
+                "h": 30
+              },
+              "text": "Home",
+              "mode": "cowork",
+              "active": false
+            },
+            {
+              "tag": "button",
+              "id": "_r_c_",
+              "testid": null,
+              "role": null,
+              "ariaLabel": "Code",
+              "ariaSelected": null,
+              "ariaCurrent": "page",
+              "href": null,
+              "dataAttrs": [
+                "data-mode=code",
+                "data-active=<redacted:4>",
+                "data-trigger-disabled="
+              ],
+              "classes": {
+                "count": 2,
+                "sample": [
+                  "df-pill",
+                  "hide-focus-ring"
+                ]
+              },
+              "rect": {
+                "x": 145,
+                "y": 45,
+                "w": 133,
+                "h": 30
+              },
+              "text": "Code",
+              "mode": "code",
+              "active": true
+            }
+          ]
+        },
+        "composer": {
+          "tag": "div",
+          "id": null,
+          "testid": "code-prompt-input",
+          "role": "textbox",
+          "ariaLabel": "<redacted:6>",
+          "ariaSelected": null,
+          "ariaCurrent": null,
+          "href": null,
+          "dataAttrs": [
+            "data-cds=<redacted:6>"
+          ],
+          "classes": {
+            "count": 2,
+            "sample": [
+              "tiptap",
+              "ProseMirror"
+            ]
+          },
+          "rect": {
+            "x": 480,
+            "y": 785,
+            "w": 730,
+            "h": 44
+          },
+          "text": "",
+          "path": "div > div > div > div > div > div > div[data-testid=\"code-prompt-input\"][role=\"textbox\"]"
+        },
+        "sidebarProbes": {
+          "byAriaLabel": null,
+          "byPinToggle": null,
+          "firstNav": null
+        },
+        "testids": [
+          {
+            "testid": "code-prompt-input",
+            "count": 1,
+            "sample": {
+              "tag": "div",
+              "id": null,
+              "testid": "code-prompt-input",
+              "role": "textbox",
+              "ariaLabel": "<redacted:6>",
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-cds=<redacted:6>"
+              ],
+              "classes": {
+                "count": 2,
+                "sample": [
+                  "tiptap",
+                  "ProseMirror"
+                ]
+              },
+              "rect": {
+                "x": 480,
+                "y": 785,
+                "w": 730,
+                "h": 44
+              },
+              "text": ""
+            },
+            "path": "div > div > div > div > div > div > div[data-testid=\"code-prompt-input\"][role=\"textbox\"]"
+          },
+          {
+            "testid": "code-prompt-send",
+            "count": 1,
+            "sample": {
+              "tag": "button",
+              "id": null,
+              "testid": "code-prompt-send",
+              "role": null,
+              "ariaLabel": "Send",
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [],
+              "classes": {
+                "count": 27,
+                "sample": [
+                  "group/btn",
+                  "relative",
+                  "isolate",
+                  "inline-flex",
+                  "items-center",
+                  "whitespace-nowrap",
+                  "border-0",
+                  "cursor-default"
+                ]
+              },
+              "rect": {
+                "x": 1214,
+                "y": 795,
+                "w": 24,
+                "h": 24
+              },
+              "text": ""
+            },
+            "path": "div > div > div > div > span#_r_2g_ > span#_r_2j_ > button[data-testid=\"code-prompt-send\"]"
+          },
+          {
+            "testid": "code-sidebar-feedback-button",
+            "count": 1,
+            "sample": {
+              "tag": "button",
+              "id": "_r_58_",
+              "testid": "code-sidebar-feedback-button",
+              "role": null,
+              "ariaLabel": "Send feedback",
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-cds=<redacted:6>",
+                "data-base-ui-tooltip-trigger="
+              ],
+              "classes": {
+                "count": 33,
+                "sample": [
+                  "cds-reset",
+                  "group/btn",
+                  "relative",
+                  "isolate",
+                  "inline-flex",
+                  "shrink-0",
+                  "items-center",
+                  "justify-center"
+                ]
+              },
+              "rect": {
+                "x": 248,
+                "y": 828,
+                "w": 32,
+                "h": 32
+              },
+              "text": ""
+            },
+            "path": "div > aside > div#frame-peek-popover[data-testid=\"sidebar\"] > div > div > div > button#_r_58_[data-testid=\"code-sidebar-feedback-button\"]"
+          },
+          {
+            "testid": "epitaxy-env-pill",
+            "count": 1,
+            "sample": {
+              "tag": "button",
+              "id": "_r_27_",
+              "testid": "epitaxy-env-pill",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-base-ui-tooltip-trigger="
+              ],
+              "classes": {
+                "count": 25,
+                "sample": [
+                  "relative",
+                  "inline-flex",
+                  "items-center",
+                  "gap-g5",
+                  "h-[24px]",
+                  "px-p5",
+                  "rounded-r5",
+                  "bg-fill-secondary"
+                ]
+              },
+              "rect": {
+                "x": 480,
+                "y": 751,
+                "w": 210,
+                "h": 24
+              },
+              "text": "<redacted:21>"
+            },
+            "path": "div > div > div > div > div > div > button#_r_27_[data-testid=\"epitaxy-env-pill\"]"
+          },
+          {
+            "testid": "pending-nav-body",
+            "count": 1,
+            "sample": {
+              "tag": "div",
+              "id": null,
+              "testid": "pending-nav-body",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [],
+              "classes": {
+                "count": 2,
+                "sample": [
+                  "h-full",
+                  "w-full"
+                ]
+              },
+              "rect": {
+                "x": 288,
+                "y": 0,
+                "w": 1152,
+                "h": 872
+              },
+              "text": "<redacted:1032>"
+            },
+            "path": "div > div > div > div > div > div[data-testid=\"pending-nav-frame\"] > div[data-testid=\"pending-nav-body\"]"
+          },
+          {
+            "testid": "pending-nav-frame",
+            "count": 1,
+            "sample": {
+              "tag": "div",
+              "id": null,
+              "testid": "pending-nav-frame",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [],
+              "classes": {
+                "count": 3,
+                "sample": [
+                  "relative",
+                  "flex-1",
+                  "min-h-0"
+                ]
+              },
+              "rect": {
+                "x": 288,
+                "y": 0,
+                "w": 1152,
+                "h": 872
+              },
+              "text": "<redacted:1032>"
+            },
+            "path": "div > div > div > div > div > div > div[data-testid=\"pending-nav-frame\"]"
+          },
+          {
+            "testid": "pending-nav-shield",
+            "count": 1,
+            "sample": {
+              "tag": "div",
+              "id": null,
+              "testid": "pending-nav-shield",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [],
+              "classes": {
+                "count": 3,
+                "sample": [
+                  "absolute",
+                  "inset-0",
+                  "cursor-default"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 0,
+                "h": 0
+              },
+              "text": ""
+            },
+            "path": "div > div > div > div > div > div[data-testid=\"pending-nav-frame\"] > div[data-testid=\"pending-nav-shield\"]"
+          },
+          {
+            "testid": "sidebar",
+            "count": 1,
+            "sample": {
+              "tag": "div",
+              "id": "frame-peek-popover",
+              "testid": "sidebar",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-perf-region=sidebar"
+              ],
+              "classes": {
+                "count": 10,
+                "sample": [
+                  "dframe-sidebar-body",
+                  "flex",
+                  "flex-col",
+                  "flex-1",
+                  "min-h-0",
+                  "gap-2",
+                  "px-2",
+                  "pt-3"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 44,
+                "w": 288,
+                "h": 828
+              },
+              "text": "<redacted:288>"
+            },
+            "path": "div > div > div > div > div > aside > div#frame-peek-popover[data-testid=\"sidebar\"]"
+          },
+          {
+            "testid": "sidebar-pinned",
+            "count": 2,
+            "sample": {
+              "tag": "div",
+              "id": null,
+              "testid": "sidebar-pinned",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-perf-region=sidebar_pinned",
+                "data-stub="
+              ],
+              "classes": {
+                "count": 5,
+                "sample": [
+                  "group/section",
+                  "flex",
+                  "flex-col",
+                  "gap-px",
+                  "df-pin-section-reveal"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 0,
+                "h": 0
+              },
+              "text": "<redacted:17>"
+            },
+            "path": "div#frame-peek-popover[data-testid=\"sidebar\"] > div > div > div > div > div > div[data-testid=\"sidebar-pinned\"]"
+          },
+          {
+            "testid": "sidebar-projects",
+            "count": 1,
+            "sample": {
+              "tag": "div",
+              "id": null,
+              "testid": "sidebar-projects",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-kind=<redacted:13>",
+                "data-first-paint=<redacted:8>",
+                "data-perf-region=sidebar_projects"
+              ],
+              "classes": {
+                "count": 2,
+                "sample": [
+                  "flex",
+                  "flex-col"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 0,
+                "h": 0
+              },
+              "text": "<redacted:40>"
+            },
+            "path": "div > div > div > div > div > div > div[data-testid=\"sidebar-projects\"]"
+          },
+          {
+            "testid": "sidebar-recents",
+            "count": 2,
+            "sample": {
+              "tag": "div",
+              "id": null,
+              "testid": "sidebar-recents",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [
+                "data-perf-region=sidebar_recents",
+                "data-chorus-callout=recents",
+                "data-first-paint=<redacted:8>"
+              ],
+              "classes": {
+                "count": 4,
+                "sample": [
+                  "df-recents-anchor",
+                  "grow",
+                  "shrink-0",
+                  "min-h-[120px]"
+                ]
+              },
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 0,
+                "h": 0
+              },
+              "text": "Chats and tasks"
+            },
+            "path": "div#frame-peek-popover[data-testid=\"sidebar\"] > div > div > div > div > div > div[data-testid=\"sidebar-recents\"]"
+          },
+          {
+            "testid": "user-menu-button",
+            "count": 1,
+            "sample": {
+              "tag": "button",
+              "id": "base-ui-_r_o_",
+              "testid": "user-menu-button",
+              "role": null,
+              "ariaLabel": null,
+              "ariaSelected": null,
+              "ariaCurrent": null,
+              "href": null,
+              "dataAttrs": [],
+              "classes": {
+                "count": 16,
+                "sample": [
+                  "df-user-menu-btn",
+                  "cds-reset",
+                  "flex",
+                  "max-w-full",
+                  "items-center",
+                  "gap-[var(--df-row-gap)]",
+                  "rounded-[var(--df-radius-pill)]",
+                  "pl-[var(--df-row-px)]"
+                ]
+              },
+              "rect": {
+                "x": 8,
+                "y": 828,
+                "w": 145,
+                "h": 32
+              },
+              "text": "<redacted:9>"
+            },
+            "path": "div > aside > div#frame-peek-popover[data-testid=\"sidebar\"] > div > div > div > button#base-ui-_r_o_[data-testid=\"user-menu-button\"]"
+          }
+        ],
+        "updatePromptCandidates": [
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 8,
+              "sample": [
+                "static-composer-boot-fade",
+                "df-banner-slot",
+                "-mt-2",
+                "flex",
+                "shrink-0",
+                "flex-col",
+                "gap-2",
+                "empty:hidden"
+              ]
+            },
+            "rect": {
+              "x": 8,
+              "y": 766,
+              "w": 272,
+              "h": 44
+            },
+            "text": "<redacted:24>",
+            "path": "div > div > div > div > aside > div#frame-peek-popover[data-testid=\"sidebar\"] > div",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 2,
+              "sample": [
+                "dframe-content-banner",
+                "print:hidden"
+              ]
+            },
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "w": 0,
+              "h": 0
+            },
+            "text": "",
+            "path": "div > div > div > div > main > div > div",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 1,
+              "sample": [
+                "sr-only"
+              ]
+            },
+            "rect": {
+              "x": 479,
+              "y": 101,
+              "w": 1,
+              "h": 1
+            },
+            "text": "",
+            "path": "div > div > div > div > div > div > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 1,
+              "sample": [
+                "sr-only"
+              ]
+            },
+            "rect": {
+              "x": 479,
+              "y": 101,
+              "w": 1,
+              "h": 1
+            },
+            "text": "",
+            "path": "div > div > div > div > div > div > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "span",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 2,
+              "sample": [
+                "sr-only",
+                "select-none"
+              ]
+            },
+            "rect": {
+              "x": 479,
+              "y": 750,
+              "w": 1,
+              "h": 1
+            },
+            "text": "",
+            "path": "div > div > div > div > div > div > span[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "span",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 2,
+              "sample": [
+                "sr-only",
+                "select-none"
+              ]
+            },
+            "rect": {
+              "x": 479,
+              "y": 750,
+              "w": 1,
+              "h": 1
+            },
+            "text": "",
+            "path": "div > div > div > div > div > div > span[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "span",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 1,
+              "sample": [
+                "sr-only"
+              ]
+            },
+            "rect": {
+              "x": 479,
+              "y": 784,
+              "w": 1,
+              "h": 1
+            },
+            "text": "",
+            "path": "div > div > div > div > div > div > span[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "span",
+            "id": "skill-arg-hint-sr-j7h8ga",
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-skill-arg-hint-sr=<redacted:14>"
+            ],
+            "classes": {
+              "count": 0,
+              "sample": []
+            },
+            "rect": {
+              "x": 480,
+              "y": 785,
+              "w": 1,
+              "h": 1
+            },
+            "text": "",
+            "path": "div > div > div > div > div > div > span#skill-arg-hint-sr-j7h8ga[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "span",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 1,
+              "sample": [
+                "sr-only"
+              ]
+            },
+            "rect": {
+              "x": 1123,
+              "y": 849,
+              "w": 1,
+              "h": 1
+            },
+            "text": "<redacted:13>",
+            "path": "div > div > div > div > div > div > span[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "span",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 1,
+              "sample": [
+                "sr-only"
+              ]
+            },
+            "rect": {
+              "x": 1123,
+              "y": 849,
+              "w": 1,
+              "h": 1
+            },
+            "text": "",
+            "path": "div > div > div > div > div > div > span[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "span",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 1,
+              "sample": [
+                "sr-only"
+              ]
+            },
+            "rect": {
+              "x": 287,
+              "y": -1,
+              "w": 1,
+              "h": 1
+            },
+            "text": "",
+            "path": "div > div > div[data-testid=\"pending-nav-frame\"] > div[data-testid=\"pending-nav-body\"] > div > div > span[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "status",
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 1,
+              "sample": [
+                "sr-only"
+              ]
+            },
+            "rect": {
+              "x": 287,
+              "y": 871,
+              "w": 1,
+              "h": 1
+            },
+            "text": "",
+            "path": "div > div > div > div > div > div[data-testid=\"pending-nav-frame\"] > div[role=\"status\"]",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": null,
+            "ariaLabel": null,
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [
+              "data-cds=<redacted:5>"
+            ],
+            "classes": {
+              "count": 10,
+              "sample": [
+                "cds-reset",
+                "pointer-events-none",
+                "fixed",
+                "flex",
+                "w-[360px]",
+                "max-w-[calc(100vw-2rem)]",
+                "flex-col-reverse",
+                "gap-md"
+              ]
+            },
+            "rect": {
+              "x": 1064,
+              "y": 856,
+              "w": 360,
+              "h": 0
+            },
+            "text": "",
+            "path": "body > div#_r_v_ > div > div",
+            "matchesCopy": false
+          },
+          {
+            "how": "structural",
+            "tag": "div",
+            "id": null,
+            "testid": null,
+            "role": "region",
+            "ariaLabel": "Notifications",
+            "ariaSelected": null,
+            "ariaCurrent": null,
+            "href": null,
+            "dataAttrs": [],
+            "classes": {
+              "count": 4,
+              "sample": [
+                "pointer-events-auto",
+                "relative",
+                "outline-none",
+                "focus-visible:outline-hidden"
+              ]
+            },
+            "rect": {
+              "x": 1064,
+              "y": 856,
+              "w": 360,
+              "h": 0
+            },
+            "text": "",
+            "path": "body > div#_r_v_ > div > div > div[role=\"region\"]",
+            "matchesCopy": false
+          }
+        ]
+      },
+      "shippedProbe": {
+        "status": "recognized",
+        "summary": "appRoot=primary:body > #root topTabBar=absent composer=absent sidebar=absent",
+        "regions": [
+          {
+            "key": "appRoot",
+            "found": true,
+            "tier": "primary",
+            "via": "body > #root",
+            "required": true,
+            "absentOk": false
+          },
+          {
+            "key": "topTabBar",
+            "found": false,
+            "tier": null,
+            "via": null,
+            "required": false,
+            "absentOk": true
+          },
+          {
+            "key": "composer",
+            "found": false,
+            "tier": null,
+            "via": null,
+            "required": false,
+            "absentOk": true
+          },
+          {
+            "key": "sidebar",
+            "found": false,
+            "tier": null,
+            "via": null,
+            "required": false,
+            "absentOk": true
+          }
+        ],
+        "findTopTabBar": null
+      }
+    }
+  ]
+}
