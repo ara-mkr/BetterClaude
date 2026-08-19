@@ -181,3 +181,68 @@ body {
   outline: 2px solid var(--bc-focus-ring, var(--bc-accent, #6059e6));
   outline-offset: 2px;
 }
+
+/* ------------------------------------------------------------------ *
+ * Embedded mode (the pane is the main window's second tab)
+ *
+ * `bc-embedded` is set on <html> by electron/code-preload.js when main.js has
+ * created this as a WebContentsView inside the main window instead of as its
+ * own BrowserWindow. Applied to <html>, and applied during preload, so the
+ * rules below win on the very first frame rather than after a visible reflow.
+ * ------------------------------------------------------------------ */
+
+/* ui/title-bar.css unconditionally reserves the bar's height at the top of
+   <body>. In embedded mode the bar belongs to the window above this pane and is
+   never mounted here, so that inset would be a 46px empty strip pushing the
+   terminal down and clipping its last row off the bottom. */
+html.bc-embedded body {
+  padding-top: 0 !important;
+  height: 100vh !important;
+}
+
+/* The pane is a child view: it has no window of its own to drag, minimise, or
+   maximise. Belt and braces — the preload already skips mounting the bar, so
+   this only matters if a future change mounts it unconditionally again. */
+html.bc-embedded #betterclaude-titlebar {
+  display: none !important;
+}
+
+/* Settings lives in the status row when there is no title bar to host it.
+   Pushed to the far end so it reads as chrome rather than as another item in
+   the folder/status group. */
+#bc-code-settings-btn {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0.75;
+  transition: opacity 120ms ease, background-color 120ms ease, border-color 120ms ease;
+}
+
+#bc-code-settings-btn img {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  #bc-code-settings-btn:hover {
+    opacity: 1;
+    background: var(--bc-bg-elevated, #1c1630);
+    border-color: var(--bc-border, #2c2347);
+  }
+}
+
+#bc-code-settings-btn:focus-visible {
+  outline: 2px solid var(--bc-accent, #6059e6);
+  outline-offset: 2px;
+  opacity: 1;
+}

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, nativeTheme, shell, dialog, screen, globalShortcut, clipboard, Notification } = require("electron");
+const { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, nativeTheme, shell, dialog, screen, globalShortcut, clipboard, Notification } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
@@ -17,7 +17,7 @@ const { buildThemeCSSFromVars } = require("../core/theme-engine");
 const { extractThemeVars } = require("../core/tokens");
 const { attachWindowState, getInitialBounds } = require("./window-state");
 const { BUDDY_CANVAS, BUDDY_HIT_BOX, getBuddy, resolveActiveBuddy } = require("../core/buddies");
-const { titleBarOptions } = require("./window-chrome");
+const { titleBarOptions, TITLE_BAR_HEIGHT } = require("./window-chrome");
 const { ClaudeNotFoundError, ClaudeSession, PtySpawnError, locateClaude } = require("./claude-cli");
 const { autoUpdater } = require("electron-updater");
 const { pickLoadingTip } = require("../core/motion-fx");
@@ -759,13 +759,44 @@ ipcMain.handle("buddies:get-thumbnail", (_e, id) => {
 //     copied to the renderer and drawn. Themes/presets change colour and
 //     chrome only, never what the CLI does.
 //
-// Single-window by design, matching how buddyWindow above is handled and what
+// Single-session by design, matching how buddyWindow above is handled and what
 // the tray/menu affordance implies: re-launching focuses the existing session
 // instead of silently starting a second `claude` the user can't see. Concurrent
-// sessions would need a tabbed or split UI to be usable at all, which is a
-// bigger feature than this window (flagged for review rather than assumed).
-let codeWindow = null;
+// sessions would need a tabbed or split UI inside the pane to be usable at all,
+// which is a bigger feature than this one (flagged for review, not assumed).
+//
+// WHY A WebContentsView AND NOT A SECOND BrowserWindow (it used to be one), AND
+// NOT AN IFRAME INSIDE claude.ai's PAGE.
+//
+// The iframe is out on security grounds and that is not negotiable: this pane's
+// renderer talks to a node-pty over a contextBridge. Putting it in the same
+// webContents as remote content from claude.ai would place that bridge one
+// same-origin bug away from the internet. A WebContentsView keeps the exact
+// process and realm boundary the standalone window had — separate webContents,
+// separate preload, `default-src 'none'` CSP on its own local page — and
+// changes only where its pixels land.
+//
+// It also buys the thing Step 4 needs for free: claude.ai reloading itself does
+// not touch this webContents, so the terminal, its scrollback, and the child
+// `claude` process all survive a reload of the page next to them.
+let codeView = null;
+let codeViewShown = false;
 let codeSession = null;
+
+// Where the pane sits, in CSS px relative to the window's content area. The
+// renderer measures claude.ai's real sidebar and reports it (`code-tab:layout`)
+// so the pane lands exactly where claude.ai's own content area is, and follows
+// it when the user drags the sidebar's resize handle or collapses it.
+//
+// Seeded to a full-width content area below the title bar: that is what a
+// missing or unresolvable sidebar should fall back to, and it is also correct
+// for the first frame, before the renderer has measured anything.
+let codeViewBounds = { x: 0, y: TITLE_BAR_HEIGHT, width: 0, height: 0 };
+
+// cwd for the FIRST session only, consumed by the `code:ready` handler once the
+// renderer has measured its terminal. Later folder changes go through
+// openCodeWindowInFolder(), which restarts an already-running session instead.
+let codePendingCwd = null;
 
 // Terminal geometry before the renderer has measured itself. The real cols/rows
 // arrive over `code:ready` a moment later, and every later resize comes from
@@ -773,6 +804,12 @@ let codeSession = null;
 // immediately doesn't wrap against a 0-column terminal.
 const CODE_DEFAULT_COLS = 100;
 const CODE_DEFAULT_ROWS = 30;
+
+// Last renderer-reported terminal size, so a restart reuses the dimensions the
+// pane is actually drawn at instead of re-spawning at the defaults and
+// immediately resizing (which makes a CLI that paints on startup redraw over
+// itself). Module-scoped now that there is no window object to hang it on.
+let codeLastTerm = { cols: null, rows: null };
 
 /**
  * Working directory for a new session, in the order the user would expect:
@@ -809,7 +846,7 @@ function disposeCodeSession() {
  */
 function startCodeSession({ cwd, cols, rows }) {
   disposeCodeSession();
-  const target = codeWindow;
+  const target = codeView && codeView.webContents;
   if (!target || target.isDestroyed()) return;
 
   let binaryPath;
@@ -817,7 +854,7 @@ function startCodeSession({ cwd, cols, rows }) {
     binaryPath = locateClaude(store.get("codeWindow.claudePath") || undefined);
   } catch (err) {
     if (err instanceof ClaudeNotFoundError) {
-      target.webContents.send("code:fatal", { message: err.message });
+      target.send("code:fatal", { message: err.message });
       return;
     }
     throw err;
@@ -826,13 +863,13 @@ function startCodeSession({ cwd, cols, rows }) {
   try {
     const finalCols = Number.isFinite(cols)
       ? cols
-      : (codeWindow && codeWindow.__bcLastTerm && Number.isFinite(codeWindow.__bcLastTerm.cols))
-        ? codeWindow.__bcLastTerm.cols
+      : Number.isFinite(codeLastTerm.cols)
+        ? codeLastTerm.cols
         : CODE_DEFAULT_COLS;
     const finalRows = Number.isFinite(rows)
       ? rows
-      : (codeWindow && codeWindow.__bcLastTerm && Number.isFinite(codeWindow.__bcLastTerm.rows))
-        ? codeWindow.__bcLastTerm.rows
+      : Number.isFinite(codeLastTerm.rows)
+        ? codeLastTerm.rows
         : CODE_DEFAULT_ROWS;
 
     codeSession = new ClaudeSession({
@@ -843,7 +880,7 @@ function startCodeSession({ cwd, cols, rows }) {
     });
   } catch (err) {
     if (err instanceof PtySpawnError) {
-      target.webContents.send("code:fatal", { message: `${err.message}\n\n${err.detail}` });
+      target.send("code:fatal", { message: `${err.message}\n\n${err.detail}` });
       return;
     }
     throw err;
@@ -857,34 +894,25 @@ function startCodeSession({ cwd, cols, rows }) {
     // window closing and the child dying, and send() on destroyed webContents
     // throws.
     if (target.isDestroyed()) return;
-    target.webContents.send("code:data", chunk);
+    target.send("code:data", chunk);
   });
   session.on("exit", ({ exitCode, signal }) => {
     if (session === codeSession) codeSession = null;
     if (target.isDestroyed()) return;
-    target.webContents.send("code:exit", { exitCode, signal });
+    target.send("code:exit", { exitCode, signal });
   });
 
   if (!target.isDestroyed()) {
-    target.webContents.send("code:started", { cwd, binaryPath, pid: session.pid });
+    target.send("code:started", { cwd, binaryPath, pid: session.pid });
   }
 }
 
-function createCodeWindow(requestedCwd) {
-  const cwd = resolveCodeCwd(requestedCwd);
-
-  codeWindow = new BrowserWindow({
-    width: 980,
-    height: 660,
-    minWidth: 520,
-    minHeight: 320,
-    ...titleBarOptions,
-    title: "BetterClaude · Code",
-    icon: APP_ICON_PATH,
-    // Matches the default theme's --bc-bg so the window doesn't flash white
-    // before the theme stylesheet lands. Live theming then paints over it.
-    backgroundColor: "#14101f",
-    show: false,
+/**
+ * Build the embedded Code pane. One per app run; the child `claude` process
+ * outlives every hide/show, and the pane is only torn down when the window is.
+ */
+function createCodeView() {
+  codeView = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, "code-preload.js"),
       contextIsolation: true,
@@ -892,72 +920,117 @@ function createCodeWindow(requestedCwd) {
       // boundary through code-preload.js's contextBridge surface.
       nodeIntegration: false,
       sandbox: false,
+      // Chromium throttles timers in views it considers backgrounded. A hidden
+      // terminal that stops draining its pty and then dumps a wall of buffered
+      // output on re-show reads as a hang, so opt out.
+      backgroundThrottling: false,
+      // Tells code-preload.js it is embedded rather than standing alone, which
+      // is how it knows not to draw a second title bar underneath the main
+      // window's. additionalArguments rather than a query string because it is
+      // readable at preload start, before the page's first script runs.
+      additionalArguments: ["--bc-embedded"],
     },
   });
 
-  codeWindow.loadFile(path.join(__dirname, "code-window.html"));
+  // Matches the default theme's --bc-bg so the pane doesn't flash white before
+  // the theme stylesheet lands. Live theming then paints over it.
+  codeView.setBackgroundColor("#14101f");
+  codeView.webContents.loadFile(path.join(__dirname, "code-window.html"));
 
-  // The pending cwd is read back by the `code:ready` handler once the renderer
-  // has measured its real terminal size, so the very first pty is created at
-  // the right dimensions instead of being spawned at a guess and immediately
-  // resized (which makes a CLI that paints on startup redraw over itself).
-  codeWindow.__bcPendingCwd = cwd;
-
-  codeWindow.once("ready-to-show", () => {
-    if (codeWindow && !codeWindow.isDestroyed()) codeWindow.show();
-  });
-
-  // Same opt-in renderer logging createWindow() has: without it a failure in
-  // the terminal page (a missing bundle, a preload throw) shows up only as an
-  // empty window with no explanation.
   if (process.env.BC_DEBUG_CONSOLE) {
-    codeWindow.webContents.on("console-message", (_e, level, message, line, sourceId) => {
+    codeView.webContents.on("console-message", (_e, level, message, line, sourceId) => {
       console.log(`[code-renderer:${level}] ${message} (${sourceId}:${line})`);
     });
-    codeWindow.webContents.on("preload-error", (_e, preloadPath, error) => {
+    codeView.webContents.on("preload-error", (_e, preloadPath, error) => {
       console.error(`[code-preload-error] ${preloadPath}`, error);
     });
   }
 
-  // Acceptance criterion: closing the window must leave no orphaned `claude`.
-  // "closed" is too late to be the only hook on Windows/Linux, where the app
-  // may quit immediately after, so the child is killed as the window starts
-  // closing and again once it's gone.
-  codeWindow.on("close", disposeCodeSession);
-  codeWindow.on("closed", () => {
-    disposeCodeSession();
-    codeWindow = null;
-  });
-
-  // A CLI session can print links (docs URLs, MCP consent pages). Open those
-  // in the real browser; never navigate this window away from its own page.
-  codeWindow.webContents.setWindowOpenHandler(({ url }) => {
+  // A CLI session can print links (docs URLs, MCP consent pages). Open those in
+  // the real browser; never navigate this view away from its own local page.
+  codeView.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) shell.openExternal(url);
     return { action: "deny" };
   });
 
-  return codeWindow;
+  return codeView;
+}
+
+/** Apply the current bounds, clamped to the window so the pane can't overhang. */
+function layoutCodeView() {
+  if (!codeView || !mainWindow || mainWindow.isDestroyed()) return;
+  const { width, height } = mainWindow.getContentBounds();
+  const x = Math.max(0, Math.min(codeViewBounds.x, width));
+  const y = Math.max(0, Math.min(codeViewBounds.y, height));
+  codeView.setBounds({
+    x,
+    y,
+    width: Math.max(0, width - x),
+    height: Math.max(0, height - y),
+  });
 }
 
 /**
- * The single entry point every launch affordance (tray, menu, accelerator)
- * goes through. Focuses an existing session rather than starting a second one.
+ * Show or hide the pane.
+ *
+ * Hiding detaches the view from the window's hierarchy rather than destroying
+ * it. `removeChildView` unparents; it does not close the webContents — so the
+ * terminal, its scrollback, and the running `claude` child all survive being
+ * hidden, and switching back is instant rather than a fresh session. That is
+ * also what makes the pane immune to claude.ai reloading itself next door.
+ */
+function setCodeViewShown(shown) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (shown === codeViewShown) return;
+  if (!codeView) createCodeView();
+
+  if (shown) {
+    mainWindow.contentView.addChildView(codeView);
+    layoutCodeView();
+    codeView.webContents.focus();
+  } else {
+    mainWindow.contentView.removeChildView(codeView);
+    // Focus has to go somewhere deliberate. Left alone it stays with the
+    // detached view, and the user's next keystroke lands in a terminal they
+    // can no longer see.
+    mainWindow.webContents.focus();
+  }
+  codeViewShown = shown;
+  if (!mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send("code-tab:state", { shown });
+  }
+}
+
+/**
+ * The single entry point every launch affordance (tray, menu, accelerator,
+ * --code, the in-page pill) goes through. Focuses the existing session rather
+ * than starting a second one.
  */
 function openCodeWindow(requestedCwd) {
-  if (codeWindow && !codeWindow.isDestroyed()) {
-    if (codeWindow.isMinimized()) codeWindow.restore();
-    codeWindow.show();
-    codeWindow.focus();
-    return codeWindow;
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+
+  const firstRun = !codeView;
+  setCodeViewShown(true);
+  // The pending cwd is read back by the `code:ready` handler once the renderer
+  // has measured its real terminal size, so the very first pty is created at
+  // the right dimensions instead of being spawned at a guess.
+  if (firstRun) codePendingCwd = resolveCodeCwd(requestedCwd);
+  // Keep the in-page pill in step when something other than the pill opened the
+  // pane (menu, tray, accelerator, --code).
+  if (!mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send("code-tab:state", { shown: true });
   }
-  return createCodeWindow(requestedCwd);
+  return codeView;
 }
 
 /**
- * Asks for a folder, then opens the Code window there. Separate from
- * openCodeWindow so the plain "Open Claude Code" path never blocks on a
- * dialog. Reads a directory path only — nothing inside it is opened or
- * inspected; it's handed to the pty as its cwd.
+ * Asks for a folder, then opens the Code pane there. Separate from
+ * openCodeWindow so the plain "Open Claude Code" path never blocks on a dialog.
+ * Reads a directory path only — nothing inside it is opened or inspected; it is
+ * handed to the pty as its cwd.
  */
 async function openCodeWindowInFolder() {
   const result = await dialog.showOpenDialog({
@@ -969,33 +1042,35 @@ async function openCodeWindowInFolder() {
   if (result.canceled || !result.filePaths.length) return null;
   const picked = result.filePaths[0];
 
-  // An already-open window is pinned to the cwd its child was spawned in;
-  // a pty's working directory can't be changed after the fact. Restarting the
-  // session in the new folder is the honest way to honour the request, and it
-  // only ever discards a session the user explicitly redirected.
-  if (codeWindow && !codeWindow.isDestroyed()) {
-    codeWindow.show();
-    codeWindow.focus();
-    codeWindow.webContents.send("code:restarting", { cwd: picked });
-    startCodeSession({ cwd: picked, cols: CODE_DEFAULT_COLS, rows: CODE_DEFAULT_ROWS });
-    return codeWindow;
+  const hadSession = !!codeView;
+  openCodeWindow(picked);
+  // An already-running session is pinned to the cwd its child was spawned in; a
+  // pty's working directory can't be changed after the fact. Restarting in the
+  // new folder is the honest way to honour the request, and it only ever
+  // discards a session the user explicitly redirected.
+  if (hadSession) {
+    codeView.webContents.send("code:restarting", { cwd: picked });
+    startCodeSession({
+      cwd: picked,
+      cols: codeLastTerm.cols || CODE_DEFAULT_COLS,
+      rows: codeLastTerm.rows || CODE_DEFAULT_ROWS,
+    });
   }
-  return createCodeWindow(picked);
+  return codeView;
+}
+
+/** True when `sender` is the embedded pane's own webContents. */
+function isCodeSender(sender) {
+  return !!(codeView && !codeView.webContents.isDestroyed() && sender === codeView.webContents);
 }
 
 // Renderer reports the terminal's measured size once xterm has laid out, which
 // is when the first pty can be created at the correct dimensions.
 ipcMain.on("code:ready", (e, { cols, rows }) => {
-  const win = BrowserWindow.fromWebContents(e.sender);
-  if (!win || win !== codeWindow) return;
-  const cwd = resolveCodeCwd(codeWindow.__bcPendingCwd);
-  codeWindow.__bcPendingCwd = null;
-  // Remember the renderer-reported terminal size so future restarts can reuse it.
-  try {
-    win.__bcLastTerm = { cols, rows };
-  } catch (err) {
-    // best-effort only
-  }
+  if (!isCodeSender(e.sender)) return;
+  const cwd = resolveCodeCwd(codePendingCwd);
+  codePendingCwd = null;
+  codeLastTerm = { cols, rows };
   startCodeSession({ cwd, cols, rows });
 });
 
@@ -1003,52 +1078,164 @@ ipcMain.on("code:ready", (e, { cols, rows }) => {
 // child's stdin, and it never synthesises, replays, or rewrites input.
 ipcMain.on("code:input", (e, data) => {
   if (!codeSession) return;
-  if (BrowserWindow.fromWebContents(e.sender) !== codeWindow) return;
+  if (!isCodeSender(e.sender)) return;
   if (typeof data !== "string") return;
   codeSession.write(data);
 });
 
 ipcMain.on("code:resize", (e, { cols, rows }) => {
-  if (!codeSession) return;
-  if (BrowserWindow.fromWebContents(e.sender) !== codeWindow) return;
-  // Validate incoming dimensions to avoid NaN or non-numeric payloads reaching the pty.
+  if (!isCodeSender(e.sender)) return;
+  // Validate incoming dimensions to avoid NaN or non-numeric payloads reaching
+  // the pty. Recorded even when there is no live session, so a restart after an
+  // exit reuses the size the pane is actually drawn at.
   if (!Number.isFinite(cols) || !Number.isFinite(rows)) return;
-  codeSession.resize(cols, rows);
-  // Track last-known terminal size on the window so restarts can reuse it.
-  try {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    if (win && win === codeWindow) win.__bcLastTerm = { cols, rows };
-  } catch (err) {
-    // best-effort only
-  }
+  codeLastTerm = { cols, rows };
+  if (codeSession) codeSession.resize(cols, rows);
 });
 
-// Restart after the child exits, so a finished or crashed session doesn't
-// leave a dead window the user has to close and reopen.
+// Restart after the child exits, so a finished or crashed session doesn't leave
+// a dead pane the user has to close and reopen.
 ipcMain.on("code:restart", (e, { cols, rows }) => {
-  if (BrowserWindow.fromWebContents(e.sender) !== codeWindow) return;
+  if (!isCodeSender(e.sender)) return;
   startCodeSession({ cwd: resolveCodeCwd(), cols, rows });
+});
+
+// --- In-window tab plumbing (sender: the claude.ai renderer) ---
+
+/** Only the main window may drive the tab. */
+function isMainSender(sender) {
+  return !!(mainWindow && !mainWindow.isDestroyed() && sender === mainWindow.webContents);
+}
+
+ipcMain.handle("code-tab:show", (e) => {
+  if (!isMainSender(e.sender)) return false;
+  openCodeWindow();
+  return true;
+});
+
+ipcMain.handle("code-tab:hide", (e) => {
+  if (!isMainSender(e.sender)) return false;
+  setCodeViewShown(false);
+  return true;
+});
+
+ipcMain.handle("code-tab:get-state", (e) => {
+  if (!isMainSender(e.sender)) return { shown: false };
+  return { shown: codeViewShown };
+});
+
+/**
+ * The renderer's measurement of claude.ai's own content area.
+ *
+ * Trusted for geometry only, and clamped in layoutCodeView() — a bad number
+ * can misplace the pane, never escape the window.
+ */
+ipcMain.on("code-tab:layout", (e, rect) => {
+  if (!isMainSender(e.sender)) return;
+  if (!rect || !Number.isFinite(rect.x) || !Number.isFinite(rect.y)) return;
+  codeViewBounds = { ...codeViewBounds, x: rect.x, y: rect.y };
+  if (codeViewShown) layoutCodeView();
 });
 
 ipcMain.handle("code:pick-folder", () => openCodeWindowInFolder());
 
-// Window controls for THIS window. The existing `window:*` handlers are hard-
-// wired to mainWindow, so the shared title bar needs sender-scoped equivalents
-// rather than a second window's close button hiding the claude.ai window.
+// Window controls the Code pane may ask for.
+//
+// These existed because the pane used to be its own BrowserWindow wearing the
+// shared title bar, and `BrowserWindow.fromWebContents(e.sender)` found that
+// window. It no longer does: a WebContentsView's webContents has no
+// BrowserWindow of its own, so the old lookup returned null and every one of
+// these silently did nothing. They now act on the window the pane is embedded
+// in, and "close" means "close the tab", not "quit the app" — a Code pane that
+// could close the whole claude.ai window would be a nasty surprise.
+//
+// Embedded panes don't mount a title bar at all (see electron/code-preload.js),
+// so in practice nothing calls minimize/maximize today. Kept, correct, and
+// sender-scoped rather than deleted, because the pane can still be run
+// stand-alone for debugging.
 ipcMain.handle("code:window-minimize", (e) => {
-  const win = BrowserWindow.fromWebContents(e.sender);
-  if (win && !win.isDestroyed()) win.minimize();
+  if (!isCodeSender(e.sender) || !mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.minimize();
 });
 ipcMain.handle("code:window-maximize-toggle", (e) => {
-  const win = BrowserWindow.fromWebContents(e.sender);
-  if (!win || win.isDestroyed()) return;
-  if (win.isMaximized()) win.unmaximize();
-  else win.maximize();
+  if (!isCodeSender(e.sender) || !mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMaximized()) mainWindow.unmaximize();
+  else mainWindow.maximize();
 });
 ipcMain.handle("code:window-close", (e) => {
-  const win = BrowserWindow.fromWebContents(e.sender);
-  if (win && !win.isDestroyed()) win.close();
+  if (!isCodeSender(e.sender)) return;
+  setCodeViewShown(false);
 });
+
+/**
+ * Survive claude.ai reloading itself.
+ *
+ * claude.ai periodically ships a new build and asks the user to refresh, and
+ * its service worker can reload the shell on its own. Either way the page we
+ * inject into is replaced underneath us.
+ *
+ * THE RELOAD IS NEVER INTERCEPTED. Nothing here calls preventDefault on a
+ * navigation, delays one, or rewrites a URL. Anthropic's reload is Anthropic's
+ * to perform; a wrapper that swallowed it would pin the user to a stale build
+ * with no way to tell. Everything below is after-the-fact recovery.
+ *
+ * Most of the work is already done for us: a full reload re-runs the preload,
+ * which re-applies the whole injection framework from scratch. This exists for
+ * the three cases where that is not true —
+ *
+ *   1. `did-navigate-in-page` — a same-document navigation, no preload re-run.
+ *      core/claude-dom.js's route watcher normally catches these from inside
+ *      the page; this is the belt to that suspenders, and it also covers a
+ *      navigation that happens before the watcher has mounted.
+ *   2. `render-process-gone` — the page came back, but nothing in the old realm
+ *      survived and any state main.js was mirroring is now stale.
+ *   3. The embedded Code pane, which is NOT part of the reloaded page. It is a
+ *      sibling WebContentsView, so its terminal, scrollback and child `claude`
+ *      process all live straight through the reload — but the view's stacking
+ *      order relative to a freshly-created page needs re-asserting, and the new
+ *      renderer has no idea the pane is open until it is told.
+ *
+ * Explicitly NOT related to BetterClaude's own electron-updater flow (see
+ * setupAutoUpdater). The two are kept apart in the code and in every log line
+ * so nobody has to work out which "update" they are looking at.
+ */
+function attachClaudeReloadRecovery(win) {
+  const wc = win.webContents;
+
+  const reassert = (reason) => {
+    if (!win || win.isDestroyed() || wc.isDestroyed()) return;
+    if (codeViewShown && codeView) {
+      // Re-parent so the pane is above the newly-created page rather than
+      // behind it. removeChildView does not close the webContents, so the
+      // session is untouched by this — see setCodeViewShown.
+      win.contentView.removeChildView(codeView);
+      win.contentView.addChildView(codeView);
+      layoutCodeView();
+    }
+    wc.send("code-tab:state", { shown: codeViewShown });
+    wc.send("betterclaude:reinject", { reason });
+  };
+
+  // dom-ready fires once the document exists but before subresources finish,
+  // which is the earliest point injection can safely re-apply; did-finish-load
+  // is the settled state. Both, because a slow-loading page would otherwise
+  // spend seconds with the pane behind it, and a page that never finishes
+  // loading would never recover at all.
+  wc.on("dom-ready", () => reassert("dom-ready"));
+  wc.on("did-finish-load", () => reassert("did-finish-load"));
+  wc.on("did-navigate-in-page", (_e, _url, isMainFrame) => {
+    if (isMainFrame) reassert("in-page navigation");
+  });
+  wc.on("render-process-gone", (_e, details) => {
+    console.warn(`[BetterClaude] claude.ai renderer gone (${details && details.reason}); injection re-applies on reload`);
+  });
+  wc.on("did-fail-load", (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    // -3 is ERR_ABORTED, which is what a superseded navigation looks like —
+    // normal during rapid route changes, not a failure worth reporting.
+    if (!isMainFrame || errorCode === -3) return;
+    console.warn(`[BetterClaude] claude.ai failed to load (${errorCode} ${errorDescription}) ${validatedURL}`);
+  });
+}
 
 function createWindow() {
   const bounds = getInitialBounds(store);
@@ -1095,6 +1282,8 @@ function createWindow() {
     });
   }
 
+  attachClaudeReloadRecovery(mainWindow);
+
   mainWindow.on("close", (e) => {
     if (!isQuitting && process.platform === "darwin") {
       e.preventDefault();
@@ -1109,7 +1298,29 @@ function createWindow() {
   // the buddy should stay exactly where it is.)
   mainWindow.on("closed", () => {
     if (process.platform !== "darwin") destroyBuddyWindow();
+    // The pane lives inside this window, so its webContents dies with it.
+    // Acceptance criterion inherited from the standalone window: closing must
+    // leave no orphaned `claude`.
+    disposeCodeSession();
+    codeView = null;
+    codeViewShown = false;
   });
+
+  // Same guarantee one beat earlier. "closed" is too late to be the only hook
+  // on Windows/Linux, where the app may quit immediately after — kill the child
+  // as the window starts closing and again once it is gone.
+  mainWindow.on("close", () => {
+    if (isQuitting || process.platform !== "darwin") disposeCodeSession();
+  });
+
+  // The pane is positioned in window coordinates, so it has to follow the
+  // window. `resize` covers drags and maximise; `enter-full-screen` and its
+  // partner fire without a resize event on macOS, where the window keeps its
+  // size and only the content bounds change.
+  const relayoutCodeView = () => { if (codeViewShown) layoutCodeView(); };
+  mainWindow.on("resize", relayoutCodeView);
+  mainWindow.on("enter-full-screen", relayoutCodeView);
+  mainWindow.on("leave-full-screen", relayoutCodeView);
 
   // Keep normal claude.ai link-clicking behavior (open externally for
   // non-claude.ai targets) instead of hijacking navigation.
@@ -2126,9 +2337,14 @@ app.whenReady().then(() => {
   // comment for why a frozen customThemeCSS is a silent-failure trap).
   refreshCustomThemeScaffold();
   createWindow();
-  // `--code` opens straight into a coding session alongside the main window,
-  // for anyone whose usual entry point is the CLI rather than the chat UI.
-  if (process.argv.includes("--code")) openCodeWindow();
+  // `--code` opens straight into a coding session, for anyone whose usual entry
+  // point is the CLI rather than the chat UI. Now that the pane is a child of
+  // the main window it has to wait for that window's first paint — opening it
+  // against a window still loading claude.ai leaves the pane correctly placed
+  // but sized against content bounds that are about to change.
+  if (process.argv.includes("--code")) {
+    mainWindow.once("ready-to-show", () => openCodeWindow());
+  }
   if (isDev) startDevAutoReload();
   buildTray();
   buildAppMenu();

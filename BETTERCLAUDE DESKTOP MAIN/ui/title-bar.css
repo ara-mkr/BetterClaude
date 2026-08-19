@@ -463,3 +463,94 @@ body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-btn {
 body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-center {
   display: none !important;
 }
+
+/* ------------------------------------------------------------------ *
+ * BetterClaude's Code tab (core/code-tab.js)
+ *
+ * One pill mounted next to Anthropic's own Home / Code segmented control. It is
+ * BetterClaude's, not theirs: the 2026-08-19 audit established that the native
+ * Code tab is a routed Anthropic feature with its own product surface behind
+ * it, so we sit beside it instead of taking it over.
+ *
+ * Everything here is expressed in --bc-* tokens and inherited metrics rather
+ * than in copies of Anthropic's numbers. Hardcoding their pill height is the
+ * same class of mistake as hardcoding their selectors: it looks right on the
+ * build it was measured against and drifts silently on the next one.
+ * ------------------------------------------------------------------ */
+
+.bc-code-tab-pill {
+  /* flex:1 with a zero basis makes the three pills share the row evenly, so
+     adding ours re-splits the group instead of overflowing it — and it keeps
+     working if Anthropic ships a fourth. */
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  /* Match the row's height rather than naming a number: the pills are laid out
+     by their own container, and inheriting from it is what keeps ours on the
+     same baseline when Anthropic re-tunes the row. */
+  align-self: stretch;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--bc-text-muted, #a99bd1);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+/* The brand mark is the only thing that distinguishes our pill from Anthropic's
+   two at a glance, and that distinction is the point: the user should be able
+   to tell whose Code they are about to open. */
+.bc-code-tab-pill::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--bc-accent, #6c63ff);
+  opacity: 0.9;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .bc-code-tab-pill:hover {
+    background: var(--nav-item-bg-hover, rgba(255, 255, 255, 0.06));
+    color: var(--bc-text, #ece7fb);
+  }
+}
+
+.bc-code-tab-pill:focus-visible {
+  outline: 2px solid var(--bc-accent, #6c63ff);
+  outline-offset: 2px;
+}
+
+.bc-code-tab-pill[data-bc-active] {
+  background: var(--nav-item-bg-selected, rgba(108, 99, 255, 0.18));
+  border-color: var(--bc-accent, #6c63ff);
+  color: var(--bc-text, #ece7fb);
+}
+
+/* Fallback position: the adapter could not resolve Anthropic's pill container,
+   so core/code-tab.js parked the pill on <body> instead of dropping it. A
+   control in a slightly odd place is a far better failure than a feature that
+   silently disappears. Anchored just under the title bar on the left, which is
+   clear of Claude's own chrome on every route the audit covered. */
+.bc-code-tab-pill.bc-code-tab-floating {
+  position: fixed;
+  top: calc(var(--bc-tb-h) + 8px);
+  left: 12px;
+  z-index: 2147483400;
+  flex: 0 0 auto;
+  height: 28px;
+  background: var(--bc-bg-elevated, #1c1630);
+  border-color: var(--bc-border, #2c2347);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}

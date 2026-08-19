@@ -32,6 +32,14 @@ const { mountTitleBar } = require("../ui/title-bar");
 const { SettingsPanel } = require("../ui/settings-panel/panel");
 const { injectStaticCSS } = require("./static-css");
 
+// Set by electron/main.js via webPreferences.additionalArguments when the pane
+// is a child view of the main window rather than a standalone BrowserWindow.
+// Read from argv rather than a query string because it is available here, at
+// preload start, before the page has run a single line — which is what lets the
+// stylesheet decide on the very first frame whether to leave a 46px gap for a
+// title bar that will never be mounted.
+const IS_EMBEDDED = process.argv.includes("--bc-embedded");
+
 // Appearance-only scope for this window's settings panel.
 //
 // The panel is the real one — same class, same section renderers, same
@@ -140,6 +148,10 @@ async function bootstrap() {
   injectStaticCSS("betterclaude-overlays-css", path.join(__dirname, "../ui/overlays.css"));
   // Last, so this window's own layout wins over the shared chrome sheets.
   injectStaticCSS("betterclaude-code-window-css", path.join(__dirname, "../ui/code-window.css"));
+  // `bc-embedded` removes the title-bar inset and the window-chrome affordances
+  // in ui/code-window.css. Applied to <html> rather than <body> so it lands
+  // before first paint — <body> may not exist yet at this point in bootstrap.
+  if (IS_EMBEDDED) document.documentElement.classList.add("bc-embedded");
 
   let settings = await ipcRenderer.invoke("settings:get");
   const themes = await ipcRenderer.invoke("themes:get-all");
@@ -297,17 +309,42 @@ async function bootstrap() {
   const logoSrc = "data:image/png;base64," +
     fs.readFileSync(path.join(__dirname, "../assets/logo-mark.png")).toString("base64");
 
-  mountTitleBar({
-    title: "BetterClaude · Code",
-    logoSrc,
-    // Sender-scoped channels: the existing `window:*` handlers are hard-wired
-    // to the main window, so reusing them here would minimize or close
-    // claude.ai instead of this window.
-    minimize: () => ipcRenderer.invoke("code:window-minimize"),
-    maximizeToggle: () => ipcRenderer.invoke("code:window-maximize-toggle"),
-    close: () => ipcRenderer.invoke("code:window-close"),
-    openSettings: () => settingsPanel.toggle(),
-  });
+  if (IS_EMBEDDED) {
+    // Embedded as the main window's second tab, so the window already has a
+    // title bar directly above this pane — mounting a second one would draw two
+    // stacked bars and, worse, a second drag region and a second set of window
+    // controls for the same window.
+    //
+    // The settings affordance still has to exist: it is the only way into
+    // themes/presets for this pane. It moves into the pane's own status row,
+    // which is BetterClaude chrome that already sits at the top of the pane.
+    const statusRow = document.getElementById("bc-code-status");
+    if (statusRow) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.id = "bc-code-settings-btn";
+      btn.title = "BetterClaude Settings (Cmd/Ctrl+,)";
+      btn.setAttribute("aria-label", "BetterClaude Settings");
+      const img = document.createElement("img");
+      img.src = logoSrc;
+      img.alt = "";
+      btn.appendChild(img);
+      btn.addEventListener("click", () => settingsPanel.toggle());
+      statusRow.appendChild(btn);
+    }
+  } else {
+    mountTitleBar({
+      title: "BetterClaude · Code",
+      logoSrc,
+      // Sender-scoped channels: the existing `window:*` handlers are hard-wired
+      // to the main window, so reusing them here would minimize or close
+      // claude.ai instead of this pane.
+      minimize: () => ipcRenderer.invoke("code:window-minimize"),
+      maximizeToggle: () => ipcRenderer.invoke("code:window-maximize-toggle"),
+      close: () => ipcRenderer.invoke("code:window-close"),
+      openSettings: () => settingsPanel.toggle(),
+    });
+  }
 
   // Same accelerator the main window uses for Settings, so the shortcut means
   // the same thing in whichever window has focus.
