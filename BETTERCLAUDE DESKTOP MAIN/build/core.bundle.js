@@ -4,9 +4,603 @@ var BetterClaudeCore = (() => {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   };
 
+  // core/top-strip-guard.js
+  var require_top_strip_guard = __commonJS({
+    "core/top-strip-guard.js"(exports, module) {
+      var OWN_ID_PREFIXES = ["betterclaude-", "bc-"];
+      function isOwnChrome(el) {
+        const stopAt = [document.body, document.documentElement];
+        for (let n = el; n && n.nodeType === 1 && !stopAt.includes(n); n = n.parentElement) {
+          const id = n.id || "";
+          if (OWN_ID_PREFIXES.some((prefix) => id.startsWith(prefix))) return true;
+          const classes = n.classList;
+          if (classes && Array.prototype.some.call(classes, (c) => c.startsWith("bc-"))) return true;
+        }
+        return false;
+      }
+      function describeElement(el) {
+        if (!el || el.nodeType !== 1) return "<unknown>";
+        const parts = [el.tagName.toLowerCase()];
+        if (el.id) parts.push(`#${el.id}`);
+        const testid = el.getAttribute("data-testid");
+        if (testid) parts.push(`[data-testid="${testid}"]`);
+        const label = el.getAttribute("aria-label");
+        if (label) parts.push(`[aria-label="${label}"]`);
+        const text = (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 40);
+        if (text) parts.push(`"${text}"`);
+        return parts.join(" ");
+      }
+      function probeReservedStrip(height, samples = 9) {
+        if (!height || height <= 0 || typeof document.elementsFromPoint !== "function") return [];
+        const width = document.documentElement.clientWidth || window.innerWidth || 0;
+        if (width <= 0) return [];
+        const rows = [0.25, 0.5, 0.75].map((f) => Math.round(height * f)).map((y) => Math.min(Math.max(y, 1), Math.max(height - 1, 1)));
+        const bySignature = /* @__PURE__ */ new Map();
+        for (let i = 0; i < samples; i += 1) {
+          const x = Math.round((i + 0.5) / samples * width);
+          for (const y of rows) {
+            const stack = document.elementsFromPoint(x, y) || [];
+            const hit = stack.find(
+              (el) => el !== document.body && el !== document.documentElement && !isOwnChrome(el)
+            );
+            if (!hit) continue;
+            const signature = describeElement(hit);
+            if (!bySignature.has(signature)) bySignature.set(signature, { element: hit, signature, x, y });
+          }
+        }
+        return [...bySignature.values()];
+      }
+      function mountTopStripGuard({ getHeight, enabled = true, warn = console.warn, maxWarnings = 5 } = {}) {
+        const reported = /* @__PURE__ */ new Set();
+        let warnings = 0;
+        let scheduled = null;
+        function check() {
+          if (!enabled || warnings >= maxWarnings) return [];
+          const height = typeof getHeight === "function" ? getHeight() : 0;
+          const collisions = probeReservedStrip(height);
+          for (const collision of collisions) {
+            if (reported.has(collision.signature)) continue;
+            reported.add(collision.signature);
+            warnings += 1;
+            warn(
+              `[BetterClaude] Page content sits underneath the ${height}px title bar and cannot be clicked: ${collision.signature} (at ${collision.x},${collision.y}). Claude's own chrome has moved into the strip BetterClaude reserves. The app root's containing-block transform in ui/title-bar.css should keep fixed-positioned chrome out of this band \u2014 if this fired, something is escaping it (most likely an element portalled to <body> rather than into the app root, which that transform cannot reach).`,
+              collision.element
+            );
+            if (warnings >= maxWarnings) break;
+          }
+          return collisions;
+        }
+        function checkSoon() {
+          if (scheduled) return;
+          scheduled = setTimeout(() => {
+            scheduled = null;
+            check();
+          }, 250);
+        }
+        function unmount() {
+          if (scheduled) clearTimeout(scheduled);
+          scheduled = null;
+        }
+        return { check, checkSoon, unmount };
+      }
+      module.exports = {
+        mountTopStripGuard,
+        probeReservedStrip,
+        isOwnChrome,
+        describeElement,
+        OWN_ID_PREFIXES
+      };
+    }
+  });
+
+  // core/claude-dom.js
+  var require_claude_dom = __commonJS({
+    "core/claude-dom.js"(exports, module) {
+      var { OWN_ID_PREFIXES } = require_top_strip_guard();
+      var ROOT_MARKER_CLASS = "bc-claude-root";
+      var CHAT_HEADER_MARKER_CLASS = "bc-chat-header";
+      var FOREIGN_MARKER_CLASSES = /* @__PURE__ */ new Set([ROOT_MARKER_CLASS, CHAT_HEADER_MARKER_CLASS]);
+      function isOwnClass(cls) {
+        return String(cls).startsWith("bc-") && !FOREIGN_MARKER_CLASSES.has(cls);
+      }
+      function isOwnNode(el) {
+        if (!el || el.nodeType !== 1) return false;
+        const stopAt = [document.body, document.documentElement];
+        for (let n = el; n && n.nodeType === 1 && !stopAt.includes(n); n = n.parentElement) {
+          const id = n.id || "";
+          if (OWN_ID_PREFIXES.some((prefix) => id.startsWith(prefix))) return true;
+          const classes = n.classList;
+          if (classes && Array.prototype.some.call(classes, isOwnClass)) return true;
+        }
+        return false;
+      }
+      function normalizeLabel(raw) {
+        return String(raw == null ? "" : raw).replace(/[\uE000-\uF8FF]/g, "").replace(/\s+/g, " ").trim();
+      }
+      function labelOf(el) {
+        if (!el || el.nodeType !== 1) return "";
+        const aria = normalizeLabel(el.getAttribute && el.getAttribute("aria-label"));
+        if (aria) return aria;
+        return normalizeLabel(el.textContent);
+      }
+      function queryAll(selector, scope) {
+        const root = scope && scope.querySelectorAll ? scope : document;
+        let list;
+        try {
+          list = root.querySelectorAll(selector);
+        } catch (_err) {
+          return [];
+        }
+        return Array.prototype.filter.call(list, (el) => !isOwnNode(el));
+      }
+      function queryOne(selector, scope) {
+        return queryAll(selector, scope)[0] || null;
+      }
+      function boxOf(el) {
+        try {
+          const r = el.getBoundingClientRect();
+          if (!r || r.width <= 0 && r.height <= 0) return null;
+          return r;
+        } catch (_err) {
+          return null;
+        }
+      }
+      var NON_RENDERING_TAGS = /* @__PURE__ */ new Set([
+        "SCRIPT",
+        "STYLE",
+        "LINK",
+        "META",
+        "TITLE",
+        "BASE",
+        "TEMPLATE",
+        "NOSCRIPT"
+      ]);
+      function rootCandidates() {
+        if (!document.body) return [];
+        return Array.prototype.filter.call(
+          document.body.children,
+          (el) => !NON_RENDERING_TAGS.has(el.tagName) && !isOwnNode(el)
+        );
+      }
+      function findAppRoot() {
+        const candidates = rootCandidates();
+        if (!candidates.length) return null;
+        for (const id of ["root", "__next"]) {
+          const match = candidates.find((el) => el.id === id);
+          if (match) return { element: match, via: `body > #${id}`, tier: "primary" };
+        }
+        const composer = queryOne(COMPOSER_SELECTORS.join(","));
+        if (composer) {
+          const owner = candidates.find((el) => el.contains(composer));
+          if (owner) return { element: owner, via: "contains composer", tier: "heuristic" };
+        }
+        let best = null;
+        let bestCount = -1;
+        for (const el of candidates) {
+          const count = el.getElementsByTagName("*").length;
+          if (count > bestCount) {
+            best = el;
+            bestCount = count;
+          }
+        }
+        if (!best || bestCount < 1) return null;
+        return { element: best, via: `busiest body child (${bestCount} nodes)`, tier: "heuristic" };
+      }
+      function findSidebarStructurally(root) {
+        const scope = root || document.body;
+        if (!scope) return null;
+        const anchor = queryOne('[data-testid="user-menu-button"]', scope) || queryOne("[data-mode]", scope);
+        if (!anchor) return null;
+        const viewportH = window.innerHeight || 0;
+        for (let el = anchor.parentElement; el && el !== document.body; el = el.parentElement) {
+          if (isOwnNode(el)) return null;
+          const box = boxOf(el);
+          if (!box) continue;
+          const tallEnough = box.height >= viewportH * 0.5;
+          const narrowEnough = box.width > 0 && box.width <= 460;
+          const leftAnchored = box.left <= 24;
+          if (tallEnough && narrowEnough && leftAnchored) {
+            return { element: el, via: `structural column ${Math.round(box.width)}x${Math.round(box.height)} at left`, tier: "heuristic" };
+          }
+        }
+        return null;
+      }
+      function findModeSwitchStructurally(root) {
+        const pills = queryAll("button[data-mode], a[data-mode]", root || document);
+        const named = queryAll("button, a, [role='tab']", root || document).filter((el) => {
+          const label = labelOf(el);
+          return label === "Home" || label === "Code";
+        });
+        const els = pills.length >= 2 ? pills : named;
+        if (els.length < 2) return null;
+        const chainOf = (el) => {
+          const out = [];
+          for (let n = el; n; n = n.parentElement) out.unshift(n);
+          return out;
+        };
+        const chains = els.map(chainOf);
+        let lca = null;
+        for (let i = 0; i < chains[0].length; i += 1) {
+          const node = chains[0][i];
+          if (chains.every((c) => c[i] === node)) lca = node;
+          else break;
+        }
+        if (!lca || lca === document.body || lca === document.documentElement) return null;
+        return { element: lca, via: `common ancestor of ${els.length} mode controls`, tier: "heuristic" };
+      }
+      var COMPOSER_SELECTORS = [
+        '[data-testid="chat-input"]',
+        '[data-testid="code-prompt-input"]'
+      ];
+      var TARGETS = {
+        appRoot: {
+          label: "Application root",
+          required: true,
+          why: "Carries the containing-block transform that keeps Claude's fixed top chrome out of the title bar's band.",
+          strategies: [{ find: () => findAppRoot() }]
+        },
+        sidebar: {
+          label: "Sidebar (outer)",
+          why: "Anchor for the sidebar theme rules, the width/order layout settings, and the horizontal offset of the embedded Code pane.",
+          absenceIsNormal: ({ signedIn }) => !signedIn,
+          strategies: [
+            // Current build (2026-08-19). aria-label is Anthropic's own accessibility
+            // contract, which makes it markedly more durable than a class or an id.
+            { sel: 'aside[aria-label*="sidebar" i]', tier: "primary" },
+            // Same element, found through the one child that has a testid, for the
+            // case where the label is translated or dropped.
+            { sel: 'aside:has([data-testid="sidebar"])', tier: "primary" },
+            // Pre-2026-08 shape. Still `primary`, and the distinction matters: tier
+            // records CONFIDENCE, not recency. This is an exact, Anthropic-authored
+            // identifier that unambiguously names the sidebar — a build that reverts
+            // to it is a build we fully recognise, not a degraded guess. Marking
+            // known-good older shapes as `fallback` would report `partial` forever
+            // on any revert, which is the cry-wolf failure this module already
+            // learned once.
+            { sel: 'nav:has([data-testid="pin-sidebar-toggle"])', tier: "primary" },
+            // Class-based, so genuinely weaker: Tailwind-adjacent names churn.
+            { sel: "aside.dframe-sidebar", tier: "fallback" },
+            { sel: 'nav[aria-label*="sidebar" i]', tier: "fallback" },
+            { find: (root) => findSidebarStructurally(root) }
+          ]
+        },
+        sidebarInner: {
+          label: "Sidebar content container",
+          why: "The scrolling body of the sidebar; parent of the mode switch and the recents/projects lists.",
+          absenceIsNormal: ({ signedIn }) => !signedIn,
+          strategies: [
+            { sel: '[data-testid="sidebar"]', tier: "primary" },
+            { sel: "#frame-peek-popover", tier: "fallback" },
+            // Structural: the tallest child of the sidebar that isn't the resize
+            // handle or the 44px top row.
+            {
+              find: (root, ctx) => {
+                const sidebar = ctx.get("sidebar");
+                if (!sidebar) return null;
+                let best = null;
+                let bestH = 0;
+                for (const child of sidebar.children) {
+                  const box = boxOf(child);
+                  if (!box || box.width < 80) continue;
+                  if (box.height > bestH) {
+                    best = child;
+                    bestH = box.height;
+                  }
+                }
+                return best ? { element: best, via: "tallest sidebar child", tier: "heuristic" } : null;
+              }
+            }
+          ]
+        },
+        modeSwitch: {
+          label: "Home / Code mode switch",
+          why: "Anthropic's own segmented control. BetterClaude mounts its Code tab adjacent to it; it is never repurposed or intercepted.",
+          absenceIsNormal: ({ signedIn }) => !signedIn,
+          strategies: [
+            // `data-segmented` + `data-pills` are developer-authored and semantic;
+            // the surrounding Tailwind classes and the React `_r_*` ids are not.
+            { sel: '[data-testid="sidebar"] [role="group"][data-segmented]', tier: "primary" },
+            { sel: '[role="group"]:has(> [data-mode])', tier: "primary" },
+            // ARIA tab semantics. Not what ships today, but it is the standard
+            // shape and an exact contract if Anthropic moves to it — same reasoning
+            // as the legacy sidebar selector above.
+            { sel: '[role="tablist"]', tier: "primary" },
+            { sel: '[data-testid="sidebar"] > [role="group"]', tier: "fallback" },
+            { find: (root) => findModeSwitchStructurally(root) }
+          ]
+        },
+        contentPane: {
+          label: "Primary content pane",
+          why: "Left edge of claude.ai's own content column \u2014 where the embedded Code pane has to start so it lands exactly where Claude's content would.",
+          absenceIsNormal: ({ signedIn }) => !signedIn,
+          strategies: [
+            // Anthropic's own design-system class, from the same `dframe-*` family as
+            // the sidebar's. Measured stable across expand, collapse, AND hover-peek,
+            // which is the property that matters here: the sidebar's own box is NOT
+            // stable across peek, and deriving the content origin from it made the
+            // embedded pane jitter every time the pointer crossed the collapsed rail.
+            { sel: "main .dframe-pane-primary", tier: "primary", css: false },
+            { sel: 'main [class*="pane-primary" i]', tier: "fallback", css: false },
+            // Structural: the tallest, widest block inside <main> that does NOT start
+            // at the left edge — i.e. the column sitting beside the sidebar. The
+            // left-edge test is what separates it from main's own full-width wrapper.
+            {
+              find: () => {
+                const main = queryOne("main");
+                if (!main) return null;
+                const viewportW = window.innerWidth || 0;
+                let best = null;
+                let bestArea = 0;
+                for (const el of queryAll("div, section", main)) {
+                  const box = boxOf(el);
+                  if (!box || box.left <= 24) continue;
+                  if (box.width < viewportW * 0.4) continue;
+                  const area = box.width * box.height;
+                  if (area > bestArea) {
+                    best = el;
+                    bestArea = area;
+                  }
+                }
+                return best ? { element: best, via: "widest offset block in <main>", tier: "heuristic" } : null;
+              }
+            }
+          ]
+        },
+        chatHeader: {
+          label: "Content-area header",
+          why: "Themed to match the app background. Must never match the header of an arbitrary panel \u2014 see the audit's stray-slab finding.",
+          absenceIsNormal: () => true,
+          // Marked at runtime so the stylesheet can target the element we measured
+          // instead of re-deriving it — the same technique as bc-claude-root, and for
+          // the same reason: this is a question about geometry, and CSS cannot ask it.
+          marker: CHAT_HEADER_MARKER_CLASS,
+          /**
+           * Only a header that spans its content column is the chat header.
+           *
+           * Scoping from `header` to `main header` was not enough, and assuming it
+           * was is how the stray slab survived a round of "fixing" it: Anthropic's
+           * /code surface puts a `header.epitaxy-composer-width` INSIDE <main> as an
+           * 840px band floating in the middle of a 1794px column. Painting our
+           * background on it produced a purple slab across the top of an otherwise
+           * correct screen (measured live: 486,87 840x59 on a 1794px parent).
+           *
+           * The real distinction is proportional, not nominal: the chat header
+           * stretches its container, this one is an inset island. 80% leaves room for
+           * a header with its own horizontal padding without admitting a centred band.
+           */
+          accept: (el) => {
+            const box = boxOf(el);
+            if (!box) return true;
+            const pane = queryOne("main .dframe-pane-primary") || queryOne("main");
+            const paneBox = pane ? boxOf(pane) : null;
+            if (!paneBox || paneBox.width <= 0) return true;
+            return box.width >= paneBox.width * 0.8;
+          },
+          strategies: [
+            { sel: "main header", tier: "primary" },
+            { sel: '[data-testid="page-header"]', tier: "fallback" },
+            // css:false is load-bearing. A resolver tries strategies in order and
+            // stops at the first hit, so a broad last-resort selector is harmless
+            // here; a stylesheet has no such ordering — every selector in a list
+            // applies at once. Emitting bare `header` into CSS is what painted the
+            // theme background onto claude.ai's /code page header and left a stray
+            // slab across the top of that surface (audit section 5).
+            { sel: "header", tier: "fallback", css: false }
+          ]
+        },
+        composer: {
+          label: "Composer",
+          why: "Insertion target for the prompt-library / file-sync features.",
+          // Absence is ALWAYS fine, and that is not the signal being thrown away it
+          // looks like. claude.ai has plenty of signed-in routes with no composer —
+          // /cowork/projects, /artifacts, /scheduled — and treating those as a
+          // degradation reported `partial` plus an inject-miss line every time the
+          // user clicked Projects. That is the cry-wolf failure this module has now
+          // learned twice; a health field that is red on healthy navigation stops
+          // being read.
+          //
+          // The drift signal is carried by the fallback tiers instead, which is
+          // strictly sharper. If a route genuinely HAS a text-entry surface and our
+          // primary testids stopped matching it, `div[contenteditable="true"]` or
+          // `main textarea` still resolves — at tier `fallback`, which reports
+          // `partial` and names the weak selector. So "Anthropic renamed the
+          // composer" still shows up loudly, and "this page simply has no composer"
+          // no longer does. Enumerating which routes have one would couple this to a
+          // URL list, which is the coupling the whole adapter exists to remove.
+          absenceIsNormal: () => true,
+          strategies: [
+            { sel: COMPOSER_SELECTORS.join(","), tier: "primary" },
+            // Both are far too broad to paint unconditionally — every rich-text
+            // field and every textarea on the page would match. Resolution-only.
+            { sel: 'div[contenteditable="true"]', tier: "fallback", css: false },
+            { sel: "main textarea", tier: "fallback", css: false }
+          ]
+        },
+        accountButton: {
+          label: "Account menu button",
+          why: "The signed-in discriminator. Present on EVERY signed-in route including /code, which the composer is not.",
+          absenceIsNormal: ({ signedIn }) => !signedIn,
+          strategies: [
+            { sel: '[data-testid="user-menu-button"]', tier: "primary" },
+            { sel: 'button[aria-label*="account" i], button[aria-label*="profile" i]', tier: "fallback", css: false }
+          ]
+        }
+      };
+      function cssSelectorList(name, { suffix = "" } = {}) {
+        const target = TARGETS[name];
+        if (!target) return "";
+        return target.strategies.filter((st) => st.sel && st.css !== false).map((st) => `${st.sel}${suffix}`).join(",\n");
+      }
+      function attemptedSelectors(name) {
+        const target = TARGETS[name];
+        if (!target) return [];
+        return target.strategies.map((s) => s.sel || "<structural heuristic>");
+      }
+      function resolveTarget(name, { root = null, cache = null } = {}) {
+        const target = TARGETS[name];
+        if (!target) return null;
+        const ctx = {
+          get: (dep) => {
+            if (cache && cache.has(dep)) {
+              const hit2 = cache.get(dep);
+              return hit2 ? hit2.element : null;
+            }
+            const hit = resolveTarget(dep, { root, cache });
+            return hit ? hit.element : null;
+          }
+        };
+        for (const strategy of target.strategies) {
+          let result = null;
+          try {
+            if (strategy.sel) {
+              const el = queryOne(strategy.sel, root && root.querySelector ? root : document);
+              if (el) result = { element: el, via: strategy.sel, tier: strategy.tier || "fallback" };
+            } else if (strategy.find) {
+              result = strategy.find(root, ctx);
+            }
+          } catch (_err) {
+            result = null;
+          }
+          if (!result || !result.element || isOwnNode(result.element)) continue;
+          if (target.accept && !target.accept(result.element)) continue;
+          return result;
+        }
+        return null;
+      }
+      function resolveAll() {
+        const cache = /* @__PURE__ */ new Map();
+        const rootHit = resolveTarget("appRoot", { cache });
+        cache.set("appRoot", rootHit);
+        const root = rootHit ? rootHit.element : null;
+        Object.keys(TARGETS).forEach((name) => {
+          if (name === "appRoot") return;
+          cache.set(name, resolveTarget(name, { root, cache }));
+        });
+        const accountHit = cache.get("accountButton");
+        const composerHit = cache.get("composer");
+        const signedIn = !!(accountHit || composerHit);
+        const context = { signedIn };
+        const results = {};
+        Object.keys(TARGETS).forEach((name) => {
+          const target = TARGETS[name];
+          const hit = cache.get(name) || null;
+          const absenceIsNormal = target.absenceIsNormal || (() => false);
+          results[name] = {
+            key: name,
+            label: target.label,
+            required: !!target.required,
+            why: target.why,
+            found: !!hit,
+            element: hit ? hit.element : null,
+            via: hit ? hit.via : null,
+            tier: hit ? hit.tier : null,
+            absentOk: hit ? false : !!absenceIsNormal(context)
+          };
+        });
+        return { root, signedIn, targets: results };
+      }
+      function createMissReporter({ warn = console.warn, maxWarnings = 12 } = {}) {
+        const reported = /* @__PURE__ */ new Set();
+        let count = 0;
+        return function reportMiss(name) {
+          if (reported.has(name) || count >= maxWarnings) return;
+          reported.add(name);
+          count += 1;
+          warn("[BetterClaude][inject-miss]", name, attemptedSelectors(name));
+        };
+      }
+      function selfCheck({ log = console.log, warn = console.warn } = {}) {
+        const { targets, signedIn } = resolveAll();
+        const lines = [];
+        let failures = 0;
+        let degraded = 0;
+        Object.keys(targets).forEach((name) => {
+          const t = targets[name];
+          if (t.found) {
+            if (t.tier !== "primary") degraded += 1;
+            lines.push(`  ${t.tier === "primary" ? "PASS" : "PASS*"} ${name} <- ${t.via}`);
+          } else if (t.absentOk) {
+            lines.push(`  n/a  ${name} (correctly absent here)`);
+          } else {
+            failures += 1;
+            lines.push(`  FAIL ${name} (tried: ${attemptedSelectors(name).join(" | ")})`);
+          }
+        });
+        const header = `[BetterClaude] DOM adapter self-check \u2014 ${failures} fail, ${degraded} via fallback, signedIn=${signedIn}`;
+        if (failures) warn(`${header}
+${lines.join("\n")}`);
+        else log(`${header}
+${lines.join("\n")}`);
+        return { failures, degraded, signedIn, targets };
+      }
+      function mountRouteWatcher({ onRouteChange, target = window } = {}) {
+        if (typeof onRouteChange !== "function") return { unmount() {
+        } };
+        let lastPath = location.pathname + location.search;
+        const fire = () => {
+          const now = location.pathname + location.search;
+          if (now === lastPath) return;
+          lastPath = now;
+          try {
+            onRouteChange(now);
+          } catch (err) {
+            console.warn("[BetterClaude] route-change handler threw", err);
+          }
+        };
+        const originals = {};
+        ["pushState", "replaceState"].forEach((method) => {
+          const original = history[method];
+          if (typeof original !== "function") return;
+          originals[method] = original;
+          history[method] = function patched(...args) {
+            const out = original.apply(this, args);
+            fire();
+            return out;
+          };
+        });
+        target.addEventListener("popstate", fire);
+        target.addEventListener("hashchange", fire);
+        return {
+          unmount() {
+            Object.keys(originals).forEach((m) => {
+              history[m] = originals[m];
+            });
+            target.removeEventListener("popstate", fire);
+            target.removeEventListener("hashchange", fire);
+          }
+        };
+      }
+      module.exports = {
+        TARGETS,
+        ROOT_MARKER_CLASS,
+        CHAT_HEADER_MARKER_CLASS,
+        FOREIGN_MARKER_CLASSES,
+        COMPOSER_SELECTORS,
+        isOwnNode,
+        normalizeLabel,
+        labelOf,
+        queryAll,
+        queryOne,
+        boxOf,
+        rootCandidates,
+        findAppRoot,
+        findSidebarStructurally,
+        findModeSwitchStructurally,
+        attemptedSelectors,
+        cssSelectorList,
+        resolveTarget,
+        resolveAll,
+        createMissReporter,
+        selfCheck,
+        mountRouteWatcher
+      };
+    }
+  });
+
   // core/tokens.js
   var require_tokens = __commonJS({
     "core/tokens.js"(exports, module) {
+      var { cssSelectorList } = require_claude_dom();
       function hslToRgb(h, s, l) {
         h = (h % 360 + 360) % 360;
         s = Math.max(0, Math.min(1, s));
@@ -417,6 +1011,13 @@ var BetterClaudeCore = (() => {
         const mix = (base, pct) => `color-mix(in srgb, ${base} ${100 - pct}%, ${towards})`;
         const fallbackRatio = shapeRatio(shape);
         const RADIUS = `var(--bc-radius, calc(2.4em * var(--bc-shape-ratio, ${fallbackRatio})))`;
+        const SIDEBAR_SEL = cssSelectorList("sidebar");
+        const HEADER_SEL = ".bc-chat-header";
+        const NOT_MODE_PILL = ":not([data-mode]):not([data-mode] *)";
+        const sidebarItems = (suffix) => cssSelectorList("sidebar", { suffix: ` a${NOT_MODE_PILL}${suffix}` }) + ",\n" + cssSelectorList("sidebar", { suffix: ` [role="button"]${NOT_MODE_PILL}${suffix}` });
+        const SIDEBAR_ITEM_SEL = sidebarItems("");
+        const SIDEBAR_ITEM_HOVER_SEL = sidebarItems(":hover");
+        const SIDEBAR_ITEM_SELECTED_SEL = cssSelectorList("sidebar", { suffix: ` a[aria-current]${NOT_MODE_PILL}` }) + ",\n" + cssSelectorList("sidebar", { suffix: ` a.active${NOT_MODE_PILL}` }) + ",\n" + cssSelectorList("sidebar", { suffix: ` [aria-selected="true"]${NOT_MODE_PILL}` });
         return `/* BetterClaude scaffold: ${name} */
 :root {
   color-scheme: ${isDark ? "dark" : "light"};
@@ -512,41 +1113,52 @@ body.bc-signed-out * {
   color: var(--bc-text) !important;
 }
 
-/* claude.ai's sidebar <nav> carries no stable class or testid of its own \u2014
-   only Tailwind utility classes that vary across builds \u2014 but it always
-   contains the pin-sidebar-toggle button, which does have a stable testid.
-   :has() lets us key off that real, verified hook instead of a guessed
-   class name (the old "nav[class*='sidebar']" / "[data-testid='sidebar']"
-   never matched anything on the live site). */
-nav:has([data-testid="pin-sidebar-toggle"]) {
+/* The sidebar, resolved through core/claude-dom.js rather than named here.
+   This block used to hardcode nav:has([data-testid="pin-sidebar-toggle"]) in
+   eight places. The 2026-08-19 audit found the sidebar had become
+   <aside aria-label="Sidebar"> with no pin toggle at all, so all eight rules
+   had been matching nothing \u2014 no error, no warning, the sidebar simply stopped
+   being themed at some unknown release. Deriving the selector list from the
+   adapter means the current shape, the previous one, and whatever comes next
+   are all one edit in one file, and the runtime resolver and this stylesheet
+   can never disagree about what the sidebar is. */
+${SIDEBAR_SEL} {
   background: var(--bc-bg-sidebar) !important;
   border-right: 1px solid var(--bc-border) !important;
 }
 
-header {
+/* The chat header, resolved and marked at runtime by core/layout-probe.js.
+   This was the bare tag selector 'header', which painted every header on the
+   page; scoping it to 'main header' was not enough either, because Anthropic's
+   /code surface puts an inset 840px header inside <main> and it rendered as a
+   stray purple slab. The marker is applied only to a header that actually
+   spans its content column. */
+${HEADER_SEL} {
   background: var(--bc-bg) !important;
   border-color: var(--bc-border) !important;
 }
 
-/* Sidebar / settings nav items as a proper state machine (\xA71, \xA73): resting
-   default is the container surface (never the hover tint), hover is gated to
-   non-touch pointers, and the persistent selected/current item has its own
-   token distinct from hover. */
-nav:has([data-testid="pin-sidebar-toggle"]) a,
-nav:has([data-testid="pin-sidebar-toggle"]) [role="button"] {
+/* Sidebar nav items as a proper state machine (\xA71, \xA73): resting default is the
+   container surface (never the hover tint), hover is gated to non-touch
+   pointers, and the persistent selected/current item has its own token
+   distinct from hover.
+
+   Anthropic's own Home/Code pills are excluded from all three states. They are
+   a segmented control with a sliding indicator and their own active styling;
+   painting our nav-item states over them fights that animation and makes the
+   active pill read as two different selections at once. BetterClaude's own
+   adjacent tab opts back in through its own rules in ui/title-bar.css. */
+${SIDEBAR_ITEM_SEL} {
   background: var(--nav-item-bg-default) !important;
   color: var(--nav-item-fg-default) !important;
   border-radius: ${RADIUS} !important;
 }
 @media (hover: hover) and (pointer: fine) {
-  nav:has([data-testid="pin-sidebar-toggle"]) a:hover,
-  nav:has([data-testid="pin-sidebar-toggle"]) [role="button"]:hover {
+${SIDEBAR_ITEM_HOVER_SEL} {
     background: var(--nav-item-bg-hover) !important;
   }
 }
-nav:has([data-testid="pin-sidebar-toggle"]) a[aria-current],
-nav:has([data-testid="pin-sidebar-toggle"]) a.active,
-nav:has([data-testid="pin-sidebar-toggle"]) [aria-selected="true"] {
+${SIDEBAR_ITEM_SELECTED_SEL} {
   background: var(--nav-item-bg-selected) !important;
   color: var(--nav-item-fg-selected) !important;
 }
@@ -1049,6 +1661,7 @@ ${animate ? `
   var require_theme_engine = __commonJS({
     "core/theme-engine.js"(exports, module) {
       var tokens = require_tokens();
+      var { cssSelectorList } = require_claude_dom();
       var {
         buildScaffoldCSS,
         extractThemeVars,
@@ -1067,15 +1680,29 @@ ${animate ? `
       var CUSTOM_STYLE_ID = "betterclaude-custom-css";
       var BASE_STYLE_ID = "betterclaude-base";
       var SELECTORS = {
-        sidebar: 'nav:has([data-testid="pin-sidebar-toggle"])',
-        // claude.ai's own pin/unpin control for the sidebar (the pin glyph near the
-        // top-right of the nav). Same verified testid the sidebar selector above
-        // hangs off — hiding this key never breaks that, because :has() matches a
-        // display:none child just fine.
+        sidebar: cssSelectorList("sidebar"),
+        // claude.ai's own pin/unpin control for the sidebar.
+        //
+        // KNOWN INERT on builds from ~2026-08 onward: the audit found no
+        // `pin-sidebar-toggle` anywhere on the live site — the control was replaced
+        // by "Collapse sidebar", which is a different affordance with different
+        // consequences. Deliberately NOT retargeted at that button: this key is what
+        // the "hide the sidebar pin" setting hides, and quietly repointing it would
+        // make that setting remove the user's only way to collapse the sidebar. Left
+        // naming the thing it actually means, so the setting is a no-op instead of a
+        // surprise. See docs/dom-audit-2026-08-19.md section 2.
         sidebarPin: '[data-testid="pin-sidebar-toggle"]',
-        sidebarToggle: 'button[aria-label*="sidebar" i]',
-        chatHeader: "header",
-        composer: '[data-testid="chat-input"]',
+        sidebarToggle: 'button[aria-label*="sidebar" i], button[aria-label*="collapse sidebar" i]',
+        // Was the bare tag selector `header`, which painted the theme background onto
+        // whatever header the page happened to have — including the floating one on
+        // Anthropic's /code surface, where it rendered as a stray slab across the
+        // top. Now scoped to the content area, with a testid fallback.
+        chatHeader: cssSelectorList("chatHeader"),
+        composer: cssSelectorList("composer"),
+        // Anthropic's Home/Code segmented control. Present so the "hide element"
+        // setting can reach it and so ui/title-bar.css can measure against it; never
+        // used to intercept or re-route it.
+        modeSwitch: cssSelectorList("modeSwitch"),
         suggestedPrompts: '[data-testid="suggested-prompts"]'
       };
       var THEME_VAR_DEFS = [
@@ -7512,305 +8139,103 @@ ${content}
     }
   });
 
-  // core/top-strip-guard.js
-  var require_top_strip_guard = __commonJS({
-    "core/top-strip-guard.js"(exports, module) {
-      var OWN_ID_PREFIXES = ["betterclaude-", "bc-"];
-      function isOwnChrome(el) {
-        const stopAt = [document.body, document.documentElement];
-        for (let n = el; n && n.nodeType === 1 && !stopAt.includes(n); n = n.parentElement) {
-          const id = n.id || "";
-          if (OWN_ID_PREFIXES.some((prefix) => id.startsWith(prefix))) return true;
-          const classes = n.classList;
-          if (classes && Array.prototype.some.call(classes, (c) => c.startsWith("bc-"))) return true;
-        }
-        return false;
-      }
-      function describeElement(el) {
-        if (!el || el.nodeType !== 1) return "<unknown>";
-        const parts = [el.tagName.toLowerCase()];
-        if (el.id) parts.push(`#${el.id}`);
-        const testid = el.getAttribute("data-testid");
-        if (testid) parts.push(`[data-testid="${testid}"]`);
-        const label = el.getAttribute("aria-label");
-        if (label) parts.push(`[aria-label="${label}"]`);
-        const text = (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 40);
-        if (text) parts.push(`"${text}"`);
-        return parts.join(" ");
-      }
-      function probeReservedStrip(height, samples = 9) {
-        if (!height || height <= 0 || typeof document.elementsFromPoint !== "function") return [];
-        const width = document.documentElement.clientWidth || window.innerWidth || 0;
-        if (width <= 0) return [];
-        const rows = [0.25, 0.5, 0.75].map((f) => Math.round(height * f)).map((y) => Math.min(Math.max(y, 1), Math.max(height - 1, 1)));
-        const bySignature = /* @__PURE__ */ new Map();
-        for (let i = 0; i < samples; i += 1) {
-          const x = Math.round((i + 0.5) / samples * width);
-          for (const y of rows) {
-            const stack = document.elementsFromPoint(x, y) || [];
-            const hit = stack.find(
-              (el) => el !== document.body && el !== document.documentElement && !isOwnChrome(el)
-            );
-            if (!hit) continue;
-            const signature = describeElement(hit);
-            if (!bySignature.has(signature)) bySignature.set(signature, { element: hit, signature, x, y });
-          }
-        }
-        return [...bySignature.values()];
-      }
-      function mountTopStripGuard({ getHeight, enabled = true, warn = console.warn, maxWarnings = 5 } = {}) {
-        const reported = /* @__PURE__ */ new Set();
-        let warnings = 0;
-        let scheduled = null;
-        function check() {
-          if (!enabled || warnings >= maxWarnings) return [];
-          const height = typeof getHeight === "function" ? getHeight() : 0;
-          const collisions = probeReservedStrip(height);
-          for (const collision of collisions) {
-            if (reported.has(collision.signature)) continue;
-            reported.add(collision.signature);
-            warnings += 1;
-            warn(
-              `[BetterClaude] Page content sits underneath the ${height}px title bar and cannot be clicked: ${collision.signature} (at ${collision.x},${collision.y}). Claude's own chrome has moved into the strip BetterClaude reserves. The app root's containing-block transform in ui/title-bar.css should keep fixed-positioned chrome out of this band \u2014 if this fired, something is escaping it (most likely an element portalled to <body> rather than into the app root, which that transform cannot reach).`,
-              collision.element
-            );
-            if (warnings >= maxWarnings) break;
-          }
-          return collisions;
-        }
-        function checkSoon() {
-          if (scheduled) return;
-          scheduled = setTimeout(() => {
-            scheduled = null;
-            check();
-          }, 250);
-        }
-        function unmount() {
-          if (scheduled) clearTimeout(scheduled);
-          scheduled = null;
-        }
-        return { check, checkSoon, unmount };
-      }
-      module.exports = {
-        mountTopStripGuard,
-        probeReservedStrip,
-        isOwnChrome,
-        describeElement,
-        OWN_ID_PREFIXES
-      };
-    }
-  });
-
   // core/layout-probe.js
   var require_layout_probe = __commonJS({
     "core/layout-probe.js"(exports, module) {
-      var { OWN_ID_PREFIXES } = require_top_strip_guard();
-      var ROOT_MARKER_CLASS = "bc-claude-root";
+      var {
+        ROOT_MARKER_CLASS,
+        TARGETS,
+        findAppRoot,
+        resolveTarget,
+        resolveAll,
+        createMissReporter,
+        attemptedSelectors
+      } = require_claude_dom();
+      var MARKED_TARGETS = Object.keys(TARGETS).filter((key) => TARGETS[key].marker);
       var STATUS_CLASSES = {
         recognized: "bc-layout-recognized",
         partial: "bc-layout-partial",
         unrecognized: "bc-layout-unrecognized"
       };
-      var NON_RENDERING_TAGS = /* @__PURE__ */ new Set([
-        "SCRIPT",
-        "STYLE",
-        "LINK",
-        "META",
-        "TITLE",
-        "BASE",
-        "TEMPLATE",
-        "NOSCRIPT"
-      ]);
-      function isOwnNode(el) {
-        if (!el || el.nodeType !== 1) return false;
-        const id = el.id || "";
-        if (OWN_ID_PREFIXES.some((prefix) => id.startsWith(prefix))) return true;
-        const classes = el.classList;
-        if (!classes) return false;
-        return Array.prototype.some.call(
-          classes,
-          (c) => c.startsWith("bc-") && c !== ROOT_MARKER_CLASS
-        );
-      }
-      function rootCandidates() {
-        if (!document.body) return [];
-        return Array.prototype.filter.call(
-          document.body.children,
-          (el) => !NON_RENDERING_TAGS.has(el.tagName) && !isOwnNode(el)
-        );
-      }
+      var STATUS_REGIONS = ["appRoot", "sidebar", "modeSwitch", "composer", "accountButton"];
       function findClaudeRoot() {
-        const candidates = rootCandidates();
-        if (!candidates.length) return null;
-        for (const id of ["root", "__next"]) {
-          const match = candidates.find((el) => el.id === id);
-          if (match) return { element: match, via: `body > #${id}`, tier: "primary" };
-        }
-        const composer = document.querySelector('[data-testid="chat-input"]');
-        if (composer) {
-          const owner = candidates.find((el) => el.contains(composer));
-          if (owner) return { element: owner, via: "contains composer", tier: "heuristic" };
-        }
-        let best = null;
-        let bestCount = -1;
-        for (const el of candidates) {
-          const count = el.getElementsByTagName("*").length;
-          if (count > bestCount) {
-            best = el;
-            bestCount = count;
-          }
-        }
-        if (!best || bestCount < 1) return null;
-        return { element: best, via: `busiest body child (${bestCount} nodes)`, tier: "heuristic" };
+        return findAppRoot();
       }
       function findTopTabBar(root) {
-        const scope = root || document.body;
-        if (!scope) return null;
-        const tablist = scope.querySelector('[role="tablist"]');
-        if (tablist) return { element: tablist, via: '[role="tablist"]', tier: "primary" };
-        const tabs = scope.querySelectorAll('[role="tab"]');
-        if (tabs.length >= 2 && tabs[0].parentElement) {
-          return { element: tabs[0].parentElement, via: `${tabs.length}x [role="tab"]`, tier: "fallback" };
-        }
-        const band = Math.max((window.innerHeight || 0) * 0.25, 120);
-        const sidebar = document.querySelector('nav[aria-label*="sidebar" i]') || document.querySelector('nav:has([data-testid="pin-sidebar-toggle"])');
-        const containers = scope.querySelectorAll("nav, header, [role='navigation'], [class*='tab' i]");
-        for (const el of containers) {
-          if (sidebar && (el === sidebar || sidebar.contains(el) || el.contains(sidebar))) continue;
-          const rect = el.getBoundingClientRect();
-          if (rect.top > band || rect.width <= 0) continue;
-          if (rect.height > 96 || rect.width < 200 || rect.width < rect.height * 3) continue;
-          const controls = Array.prototype.filter.call(
-            el.querySelectorAll("a, button"),
-            (c) => c.getBoundingClientRect().width > 0
-          );
-          if (controls.length < 2) continue;
-          const tops = controls.map((c) => Math.round(c.getBoundingClientRect().top));
-          const rowSize = Math.max(...tops.map((t) => tops.filter((o) => Math.abs(o - t) <= 4).length));
-          if (rowSize >= 2) {
-            return { element: el, via: `top-band row of ${rowSize} controls`, tier: "fallback" };
-          }
-        }
-        return null;
+        return resolveTarget("modeSwitch", { root });
       }
-      var REGIONS = [
-        {
-          key: "appRoot",
-          label: "Application root",
-          required: true,
-          find: () => findClaudeRoot(),
-          why: "Carries the containing-block transform that keeps Claude's fixed top chrome out of the title bar's band."
-        },
-        {
-          key: "topTabBar",
-          label: "Top-level tab bar",
-          required: false,
-          // Absence is always fine. Verified live against the current build: it ships
-          // NO top-level tab bar at all — no [role="tablist"], no [role="tab"], no
-          // <header> — and every top-band control lives inside the left sidebar. So
-          // "not found" is the correct, healthy answer here, and treating it as a
-          // degradation would report `partial` on a working app in perpetuity.
-          // Whether Anthropic reverted the tab bar, gates it per account, or only
-          // shows it on other routes, this region can only ever be informational.
-          absenceIsNormal: () => true,
-          find: (root) => findTopTabBar(root),
-          why: "The surface that regressed when the Code tab moved into the reserved strip. Absent in the current build."
-        },
-        {
-          key: "composer",
-          label: "Composer",
-          required: false,
-          // Absent by design on the sign-in route.
-          absenceIsNormal: ({ signedOut }) => signedOut,
-          find: () => {
-            const el = document.querySelector('[data-testid="chat-input"]');
-            return el ? { element: el, via: '[data-testid="chat-input"]', tier: "primary" } : null;
-          },
-          why: "Signed-in/signed-out discriminator and the insertion target for prompt/file features."
-        },
-        {
-          key: "sidebar",
-          label: "Conversation sidebar",
-          required: false,
-          // Signed in, the sidebar always exists; its absence there is a real signal.
-          absenceIsNormal: ({ signedOut }) => signedOut,
-          find: () => {
-            const pinned = document.querySelector('nav:has([data-testid="pin-sidebar-toggle"])');
-            if (pinned) return { element: pinned, via: 'nav:has([data-testid="pin-sidebar-toggle"])', tier: "primary" };
-            const nav = document.querySelector("nav");
-            return nav ? { element: nav, via: "first <nav>", tier: "fallback" } : null;
-          },
-          why: "Target of the sidebar width/position/pin layout settings."
-        }
-      ];
       function probeLayout() {
-        const rootResult = findClaudeRoot();
-        const root = rootResult ? rootResult.element : null;
-        const regions = REGIONS.map((region) => {
-          let result = null;
-          try {
-            result = region.key === "appRoot" ? rootResult : region.find(root);
-          } catch (err) {
-            result = null;
-          }
+        const { root, signedIn, targets } = resolveAll();
+        const regions = STATUS_REGIONS.map((key) => {
+          const t = targets[key];
           return {
-            key: region.key,
-            label: region.label,
-            required: !!region.required,
-            absenceIsNormal: region.absenceIsNormal || (() => false),
-            why: region.why,
-            found: !!result,
-            via: result ? result.via : null,
-            tier: result ? result.tier : null,
-            element: result ? result.element : null
+            key,
+            label: t.label,
+            required: t.required,
+            why: t.why,
+            found: t.found,
+            via: t.via,
+            tier: t.tier,
+            absentOk: t.absentOk,
+            element: t.element
           };
         });
         const missingRequired = regions.filter((r) => r.required && !r.found);
-        const composerRegion = regions.find((r) => r.key === "composer");
-        const signedOut = !(composerRegion && composerRegion.found);
-        const context = { signedOut };
-        regions.forEach((r) => {
-          r.absentOk = r.found ? false : r.absenceIsNormal(context);
-        });
         const degraded = regions.filter((r) => r.found ? r.tier !== "primary" : !r.absentOk);
         let status;
         if (missingRequired.length) status = "unrecognized";
         else if (degraded.length) status = "partial";
         else status = "recognized";
-        const summary = regions.map((r) => {
-          if (r.found) return `${r.key}=${r.tier}:${r.via}`;
-          return `${r.key}=${r.absentOk ? "absent" : "MISSING"}`;
-        }).join(" ");
-        return { status, regions, root, summary };
+        const summary = regions.map((r) => r.found ? `${r.key}=${r.tier}:${r.via}` : `${r.key}=${r.absentOk ? "absent" : "MISSING"}`).join(" ");
+        const marked = {};
+        MARKED_TARGETS.forEach((key) => {
+          const hit = targets[key];
+          marked[key] = hit && hit.found ? hit.element : null;
+        });
+        return { status, regions, root, signedIn, summary, marked };
       }
       function applyLayoutMarkers(probe) {
         document.querySelectorAll(`.${ROOT_MARKER_CLASS}`).forEach((el) => {
           el.classList.remove(ROOT_MARKER_CLASS);
         });
         if (probe.root) probe.root.classList.add(ROOT_MARKER_CLASS);
-        if (document.body) {
-          Object.values(STATUS_CLASSES).forEach((cls) => document.body.classList.remove(cls));
-          document.body.classList.add(STATUS_CLASSES[probe.status] || STATUS_CLASSES.unrecognized);
-        }
+        if (!document.body) return;
+        const { classList } = document.body;
+        Object.values(STATUS_CLASSES).forEach((cls) => classList.remove(cls));
+        classList.add(STATUS_CLASSES[probe.status] || STATUS_CLASSES.unrecognized);
+        classList.toggle("bc-signed-out", !probe.signedIn);
+        probe.regions.forEach((r) => {
+          classList.toggle(`bc-miss-${r.key}`, !r.found && !r.absentOk);
+        });
+        MARKED_TARGETS.forEach((key) => {
+          const marker = TARGETS[key].marker;
+          document.querySelectorAll(`.${marker}`).forEach((el) => el.classList.remove(marker));
+          const hit = probe.marked[key];
+          if (hit) hit.classList.add(marker);
+        });
       }
       function mountLayoutProbe({
         onChange = null,
         verbose = false,
         log = console.log,
         warn = console.warn,
-        // Same cap, and the same reasoning, as top-strip-guard's: a genuinely
-        // persistent condition is one bug however many route changes rediscover it,
-        // and a warning repeated on every DOM mutation burst is indistinguishable
-        // from noise. Learned the hard way — before the tab-bar detector was
-        // shape-constrained, its false positive re-warned on every navigation.
+        // A genuinely persistent condition is one bug however many route changes
+        // rediscover it, and a warning repeated on every DOM mutation burst is
+        // indistinguishable from noise. Learned the hard way — before the tab-bar
+        // detector was shape-constrained, its false positive re-warned on every
+        // navigation.
         maxWarnings = 5
       } = {}) {
         let last = null;
         let scheduled = null;
         let warnings = 0;
+        const reportMiss = createMissReporter({ warn });
         function check() {
           const probe = probeLayout();
           applyLayoutMarkers(probe);
+          probe.regions.forEach((r) => {
+            if (!r.found && !r.absentOk) reportMiss(r.key);
+          });
           const signature = `${probe.status}|${probe.summary}`;
           if (signature !== last) {
             const isFirstProbe = last === null;
@@ -7823,7 +8248,7 @@ ${content}
               );
             } else if (probe.status === "partial" && !isFirstProbe && mayWarn) {
               warn(
-                `[BetterClaude] Claude UI structure: PARTIALLY RECOGNIZED \u2014 at least one region resolved via a fallback rather than its primary selector. Regions: ${probe.summary}`
+                `[BetterClaude] Claude UI structure: PARTIALLY RECOGNIZED \u2014 at least one region resolved via a weaker selector than its primary. Regions: ${probe.summary}`
               );
             } else if (verbose) {
               log(`[BetterClaude] Claude UI structure: ${probe.status.toUpperCase()}. Regions: ${probe.summary}`);
@@ -7851,10 +8276,260 @@ ${content}
         applyLayoutMarkers,
         findClaudeRoot,
         findTopTabBar,
-        rootCandidates,
-        REGIONS,
+        attemptedSelectors,
+        STATUS_REGIONS,
         ROOT_MARKER_CLASS,
         STATUS_CLASSES
+      };
+    }
+  });
+
+  // core/code-tab.js
+  var require_code_tab = __commonJS({
+    "core/code-tab.js"(exports, module) {
+      var { resolveTarget, queryOne, boxOf } = require_claude_dom();
+      var PILL_ID = "bc-code-tab-pill";
+      var PILL_LABEL = "CLI";
+      var FLOATING_CLASS = "bc-code-tab-floating";
+      var railAllowance = 0;
+      function measureContentArea({ titleBarHeight = 0 } = {}) {
+        const pane = resolveTarget("contentPane");
+        const paneBox = pane ? boxOf(pane.element) : null;
+        let left;
+        if (paneBox) {
+          left = Math.round(paneBox.left);
+        } else {
+          const sidebar = resolveTarget("sidebar");
+          const sidebarBox = sidebar ? boxOf(sidebar.element) : null;
+          left = sidebarBox ? Math.round(sidebarBox.right) : 0;
+        }
+        const collapsedToggle = queryOne('button[aria-label*="open sidebar" i]');
+        if (collapsedToggle) {
+          const toggleBox = boxOf(collapsedToggle);
+          if (toggleBox) railAllowance = Math.round(toggleBox.right) + 8;
+        }
+        left = Math.max(0, left, railAllowance);
+        const top = Math.round(titleBarHeight);
+        return {
+          x: left,
+          y: top,
+          width: Math.max(0, Math.round(window.innerWidth - left)),
+          height: Math.max(0, Math.round(window.innerHeight - top)),
+          anchoredTo: paneBox ? "contentPane" : "sidebar"
+        };
+      }
+      function createPill({ onActivate }) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.id = PILL_ID;
+        btn.className = "bc-code-tab-pill";
+        btn.setAttribute("aria-label", "BetterClaude Code (Claude Code CLI)");
+        btn.title = "BetterClaude Code \u2014 runs the Claude Code CLI from this machine, in this window";
+        btn.textContent = PILL_LABEL;
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onActivate();
+        });
+        return btn;
+      }
+      function mountCodeTab({ onActivate, onDeactivate, onLayout, titleBarHeight = 0 } = {}) {
+        let active = false;
+        let pill = null;
+        let resizeObserver = null;
+        let observedPane = null;
+        let lastPublished = "";
+        function publishLayout() {
+          if (!onLayout) return;
+          const rect = measureContentArea({ titleBarHeight });
+          const signature = `${rect.x}:${rect.y}:${rect.width}:${rect.height}`;
+          if (signature === lastPublished) return;
+          lastPublished = signature;
+          onLayout(rect);
+        }
+        function watchLayout() {
+          if (typeof ResizeObserver !== "function") return;
+          const pane = resolveTarget("contentPane");
+          const el = pane ? pane.element : null;
+          if (el === observedPane) return;
+          if (resizeObserver) resizeObserver.disconnect();
+          observedPane = el;
+          if (!el) return;
+          resizeObserver = new ResizeObserver(() => publishLayout());
+          resizeObserver.observe(el);
+        }
+        function sync() {
+          if (!pill) pill = createPill({ onActivate: () => setActive(!active) });
+          const group = resolveTarget("modeSwitch");
+          if (group) {
+            pill.classList.remove(FLOATING_CLASS);
+            if (pill.parentElement !== group.element) group.element.appendChild(pill);
+          } else if (pill.parentElement !== document.body) {
+            pill.classList.add(FLOATING_CLASS);
+            document.body.appendChild(pill);
+          }
+          pill.setAttribute("aria-pressed", active ? "true" : "false");
+          pill.toggleAttribute("data-bc-active", active);
+          watchLayout();
+          publishLayout();
+        }
+        function onDocumentClick(event) {
+          if (!active) return;
+          const target = event.target;
+          if (!target || !target.closest) return;
+          if (target.closest(`#${PILL_ID}`)) return;
+          const group = resolveTarget("modeSwitch");
+          if (!group || !group.element.contains(target)) return;
+          if (target.closest("[data-mode]")) setActive(false);
+        }
+        function setActive(next) {
+          if (next === active) {
+            if (next && onActivate) onActivate();
+            return;
+          }
+          active = next;
+          document.body.classList.toggle("bc-code-tab-active", active);
+          sync();
+          if (active) {
+            if (onActivate) onActivate();
+          } else if (onDeactivate) {
+            onDeactivate();
+          }
+        }
+        document.addEventListener("click", onDocumentClick, { capture: true, passive: true });
+        window.addEventListener("resize", publishLayout);
+        sync();
+        return {
+          sync,
+          setActive,
+          isActive: () => active,
+          publishLayout,
+          unmount() {
+            document.removeEventListener("click", onDocumentClick, { capture: true });
+            window.removeEventListener("resize", publishLayout);
+            if (resizeObserver) resizeObserver.disconnect();
+            if (pill && pill.parentElement) pill.parentElement.removeChild(pill);
+            pill = null;
+          }
+        };
+      }
+      module.exports = { mountCodeTab, measureContentArea, PILL_ID, FLOATING_CLASS };
+    }
+  });
+
+  // core/claude-reload.js
+  var require_claude_reload = __commonJS({
+    "core/claude-reload.js"(exports, module) {
+      var { normalizeLabel, queryAll } = require_claude_dom();
+      var CANDIDATE_CONTAINERS = [
+        '[role="alert"]',
+        '[role="status"]',
+        "[aria-live]",
+        '[data-testid*="update" i]',
+        '[data-testid*="refresh" i]',
+        '[data-testid*="reload" i]',
+        '[class*="toast" i]',
+        '[class*="banner" i]'
+      ];
+      var COPY_PATTERNS = [
+        /\bnew version\b/i,
+        /\brefresh\b.{0,30}\bupdate\b/i,
+        /\bupdate\b.{0,30}\brefresh\b/i,
+        /\breload\b.{0,30}\b(update|version|page)\b/i,
+        /\brestart\b.{0,30}\b(update|apply)\b/i,
+        /\bout of date\b/i,
+        /\bupdate available\b/i
+      ];
+      function describeForLog(el) {
+        const parts = [el.tagName.toLowerCase()];
+        if (el.id) parts.push(`#${el.id}`);
+        const testid = el.getAttribute("data-testid");
+        if (testid) parts.push(`[data-testid="${testid}"]`);
+        const role = el.getAttribute("role");
+        if (role) parts.push(`[role="${role}"]`);
+        const live = el.getAttribute("aria-live");
+        if (live) parts.push(`[aria-live="${live}"]`);
+        const classes = Array.prototype.slice.call(el.classList || [], 0, 4);
+        if (classes.length) parts.push(`.${classes.join(".")}`);
+        return parts.join("");
+      }
+      function findReloadPrompt() {
+        for (const selector of CANDIDATE_CONTAINERS) {
+          for (const el of queryAll(selector)) {
+            const text = normalizeLabel(el.textContent).slice(0, 200);
+            if (!text || text.length > 200) continue;
+            const pattern = COPY_PATTERNS.find((re) => re.test(text));
+            if (!pattern) continue;
+            return {
+              element: el,
+              matchedBy: `copy:${pattern.source}`,
+              signature: `${describeForLog(el)} via ${selector}`
+            };
+          }
+        }
+        return null;
+      }
+      var PORTAL_CONTAINERS = ["#portal-root", "[data-base-ui-portal]"];
+      function mountClaudeReloadWatch({ onDetected = null, warn = console.warn } = {}) {
+        const seen = /* @__PURE__ */ new Set();
+        let observer = null;
+        let scheduled = null;
+        const observed = /* @__PURE__ */ new Set();
+        function check() {
+          let hit = null;
+          try {
+            hit = findReloadPrompt();
+          } catch (_err) {
+            return null;
+          }
+          if (!hit || seen.has(hit.signature)) return hit;
+          seen.add(hit.signature);
+          warn(
+            `[BetterClaude][claude-reload-prompt] claude.ai appears to be asking for a page reload (this is Anthropic's own prompt, NOT a BetterClaude update). BetterClaude does not intercept it; injected UI re-applies automatically once the reload completes. Matched ${hit.matchedBy} on ${hit.signature}`
+          );
+          if (onDetected) onDetected({ matchedBy: hit.matchedBy, signature: hit.signature });
+          return hit;
+        }
+        function checkSoon() {
+          if (scheduled) return;
+          scheduled = setTimeout(() => {
+            scheduled = null;
+            check();
+          }, 250);
+        }
+        function attach() {
+          if (typeof MutationObserver !== "function" || !document.body) return;
+          if (!observer) observer = new MutationObserver(() => {
+            attach();
+            checkSoon();
+          });
+          if (!observed.has(document.body)) {
+            observed.add(document.body);
+            observer.observe(document.body, { childList: true, subtree: false });
+          }
+          PORTAL_CONTAINERS.forEach((selector) => {
+            queryAll(selector).forEach((el) => {
+              if (observed.has(el)) return;
+              observed.add(el);
+              observer.observe(el, { childList: true, subtree: true });
+            });
+          });
+        }
+        attach();
+        function unmount() {
+          if (scheduled) clearTimeout(scheduled);
+          scheduled = null;
+          if (observer) observer.disconnect();
+          observer = null;
+          observed.clear();
+        }
+        return { check, checkSoon, findReloadPrompt, unmount };
+      }
+      module.exports = {
+        mountClaudeReloadWatch,
+        findReloadPrompt,
+        CANDIDATE_CONTAINERS,
+        COPY_PATTERNS
       };
     }
   });
@@ -7902,6 +8577,9 @@ ${content}
         findClaudeRoot,
         findTopTabBar
       } = require_layout_probe();
+      var claudeDom = require_claude_dom();
+      var { mountCodeTab, measureContentArea } = require_code_tab();
+      var { mountClaudeReloadWatch, findReloadPrompt } = require_claude_reload();
       module.exports = {
         ThemeEngine,
         SELECTORS,
@@ -7965,7 +8643,24 @@ ${content}
         probeLayout,
         applyLayoutMarkers,
         findClaudeRoot,
-        findTopTabBar
+        findTopTabBar,
+        // The DOM adapter every other module resolves claude.ai's markup through.
+        // Exported whole rather than piecemeal: the extension build and the audit
+        // scripts both want `resolveAll`/`selfCheck`/`resolveTarget`, and a curated
+        // re-export list here is one more place to forget to update.
+        claudeDom,
+        resolveTarget: claudeDom.resolveTarget,
+        resolveAll: claudeDom.resolveAll,
+        selfCheck: claudeDom.selfCheck,
+        mountRouteWatcher: claudeDom.mountRouteWatcher,
+        // Embedded Claude Code tab (the in-page control; the pane itself is an
+        // Electron WebContentsView and has no extension-build equivalent).
+        mountCodeTab,
+        measureContentArea,
+        // Detection of claude.ai's OWN reload prompt. Distinct from UpdateBanner
+        // above, which is BetterClaude's electron-updater surface.
+        mountClaudeReloadWatch,
+        findReloadPrompt
       };
     }
   });
