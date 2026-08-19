@@ -13,6 +13,8 @@
  *      numeric input is clamped against engineered bounds (§2.2, §5.3).
  */
 
+const { cssSelectorList } = require("./claude-dom");
+
 /* ------------------------------------------------------------------ *
  * Color math (hex + rgb()/rgba()/hsl()/hsla(); themes/vars are mostly
  * authored as 6-digit hex, but glassmorphism-style themes use translucent
@@ -769,6 +771,27 @@ function buildScaffoldCSS(vars = {}, opts = {}) {
   const fallbackRatio = shapeRatio(shape);
   const RADIUS = `var(--bc-radius, calc(2.4em * var(--bc-shape-ratio, ${fallbackRatio})))`;
 
+  // claude.ai regions, resolved through core/claude-dom.js. Every one of these
+  // is a LIST, not a single selector — that is the whole point. See the sidebar
+  // block further down for what a single-selector version of this cost.
+  const SIDEBAR_SEL = cssSelectorList("sidebar");
+  const HEADER_SEL = cssSelectorList("chatHeader");
+  // Anthropic's own mode pills, excluded from our nav-item state machine so we
+  // don't fight their sliding active indicator.
+  const NOT_MODE_PILL = ':not([data-mode]):not([data-mode] *)';
+  const sidebarItems = (suffix) =>
+    cssSelectorList("sidebar", { suffix: ` a${NOT_MODE_PILL}${suffix}` }) +
+    ",\n" +
+    cssSelectorList("sidebar", { suffix: ` [role="button"]${NOT_MODE_PILL}${suffix}` });
+  const SIDEBAR_ITEM_SEL = sidebarItems("");
+  const SIDEBAR_ITEM_HOVER_SEL = sidebarItems(":hover");
+  const SIDEBAR_ITEM_SELECTED_SEL =
+    cssSelectorList("sidebar", { suffix: ` a[aria-current]${NOT_MODE_PILL}` }) +
+    ",\n" +
+    cssSelectorList("sidebar", { suffix: ` a.active${NOT_MODE_PILL}` }) +
+    ",\n" +
+    cssSelectorList("sidebar", { suffix: ` [aria-selected="true"]${NOT_MODE_PILL}` });
+
   // Relational radius, expressed in CSS so it scales with control height and
   // is capped at height/2 by construction (ratio<=0.5). The browser also
   // proportionally caps any border-radius at half the box's shorter side, so
@@ -868,41 +891,50 @@ body.bc-signed-out * {
   color: var(--bc-text) !important;
 }
 
-/* claude.ai's sidebar <nav> carries no stable class or testid of its own —
-   only Tailwind utility classes that vary across builds — but it always
-   contains the pin-sidebar-toggle button, which does have a stable testid.
-   :has() lets us key off that real, verified hook instead of a guessed
-   class name (the old "nav[class*='sidebar']" / "[data-testid='sidebar']"
-   never matched anything on the live site). */
-nav:has([data-testid="pin-sidebar-toggle"]) {
+/* The sidebar, resolved through core/claude-dom.js rather than named here.
+   This block used to hardcode nav:has([data-testid="pin-sidebar-toggle"]) in
+   eight places. The 2026-08-19 audit found the sidebar had become
+   <aside aria-label="Sidebar"> with no pin toggle at all, so all eight rules
+   had been matching nothing — no error, no warning, the sidebar simply stopped
+   being themed at some unknown release. Deriving the selector list from the
+   adapter means the current shape, the previous one, and whatever comes next
+   are all one edit in one file, and the runtime resolver and this stylesheet
+   can never disagree about what the sidebar is. */
+${SIDEBAR_SEL} {
   background: var(--bc-bg-sidebar) !important;
   border-right: 1px solid var(--bc-border) !important;
 }
 
-header {
+/* Scoped to the content area. This was the bare tag selector 'header', which
+   painted every header on the page — including the floating one on Anthropic's
+   /code surface, where it rendered as a stray purple slab across the top of an
+   otherwise-correct screen. */
+${HEADER_SEL} {
   background: var(--bc-bg) !important;
   border-color: var(--bc-border) !important;
 }
 
-/* Sidebar / settings nav items as a proper state machine (§1, §3): resting
-   default is the container surface (never the hover tint), hover is gated to
-   non-touch pointers, and the persistent selected/current item has its own
-   token distinct from hover. */
-nav:has([data-testid="pin-sidebar-toggle"]) a,
-nav:has([data-testid="pin-sidebar-toggle"]) [role="button"] {
+/* Sidebar nav items as a proper state machine (§1, §3): resting default is the
+   container surface (never the hover tint), hover is gated to non-touch
+   pointers, and the persistent selected/current item has its own token
+   distinct from hover.
+
+   Anthropic's own Home/Code pills are excluded from all three states. They are
+   a segmented control with a sliding indicator and their own active styling;
+   painting our nav-item states over them fights that animation and makes the
+   active pill read as two different selections at once. BetterClaude's own
+   adjacent tab opts back in through its own rules in ui/title-bar.css. */
+${SIDEBAR_ITEM_SEL} {
   background: var(--nav-item-bg-default) !important;
   color: var(--nav-item-fg-default) !important;
   border-radius: ${RADIUS} !important;
 }
 @media (hover: hover) and (pointer: fine) {
-  nav:has([data-testid="pin-sidebar-toggle"]) a:hover,
-  nav:has([data-testid="pin-sidebar-toggle"]) [role="button"]:hover {
+${SIDEBAR_ITEM_HOVER_SEL} {
     background: var(--nav-item-bg-hover) !important;
   }
 }
-nav:has([data-testid="pin-sidebar-toggle"]) a[aria-current],
-nav:has([data-testid="pin-sidebar-toggle"]) a.active,
-nav:has([data-testid="pin-sidebar-toggle"]) [aria-selected="true"] {
+${SIDEBAR_ITEM_SELECTED_SEL} {
   background: var(--nav-item-bg-selected) !important;
   color: var(--nav-item-fg-selected) !important;
 }

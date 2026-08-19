@@ -4,6 +4,7 @@
  */
 
 const tokens = require("./tokens");
+const { cssSelectorList } = require("./claude-dom");
 const {
   buildScaffoldCSS,
   extractThemeVars,
@@ -33,16 +34,38 @@ const BASE_STYLE_ID = "betterclaude-base";
 // sidebarToggle and chatHeader happened to already match reality.
 // suggestedPrompts is still unverified (couldn't find that surface live) —
 // treat it as a guess until it's confirmed against a real "new chat" screen.
+// Every entry that names a region core/claude-dom.js already models is derived
+// from that adapter's strategy table rather than written out here, so a
+// stylesheet and a querySelector can never disagree about what "the sidebar"
+// is, and a new Anthropic shape is one edit in one file.
+//
+// The keys are stable regardless: `layout.hiddenElements` is persisted user
+// data holding these names, so renaming one silently drops whatever the user
+// had hidden.
 const SELECTORS = {
-  sidebar: 'nav:has([data-testid="pin-sidebar-toggle"])',
-  // claude.ai's own pin/unpin control for the sidebar (the pin glyph near the
-  // top-right of the nav). Same verified testid the sidebar selector above
-  // hangs off — hiding this key never breaks that, because :has() matches a
-  // display:none child just fine.
+  sidebar: cssSelectorList("sidebar"),
+  // claude.ai's own pin/unpin control for the sidebar.
+  //
+  // KNOWN INERT on builds from ~2026-08 onward: the audit found no
+  // `pin-sidebar-toggle` anywhere on the live site — the control was replaced
+  // by "Collapse sidebar", which is a different affordance with different
+  // consequences. Deliberately NOT retargeted at that button: this key is what
+  // the "hide the sidebar pin" setting hides, and quietly repointing it would
+  // make that setting remove the user's only way to collapse the sidebar. Left
+  // naming the thing it actually means, so the setting is a no-op instead of a
+  // surprise. See docs/dom-audit-2026-08-19.md section 2.
   sidebarPin: '[data-testid="pin-sidebar-toggle"]',
-  sidebarToggle: 'button[aria-label*="sidebar" i]',
-  chatHeader: 'header',
-  composer: '[data-testid="chat-input"]',
+  sidebarToggle: 'button[aria-label*="sidebar" i], button[aria-label*="collapse sidebar" i]',
+  // Was the bare tag selector `header`, which painted the theme background onto
+  // whatever header the page happened to have — including the floating one on
+  // Anthropic's /code surface, where it rendered as a stray slab across the
+  // top. Now scoped to the content area, with a testid fallback.
+  chatHeader: cssSelectorList("chatHeader"),
+  composer: cssSelectorList("composer"),
+  // Anthropic's Home/Code segmented control. Present so the "hide element"
+  // setting can reach it and so ui/title-bar.css can measure against it; never
+  // used to intercept or re-route it.
+  modeSwitch: cssSelectorList("modeSwitch"),
   suggestedPrompts: '[data-testid="suggested-prompts"]',
 };
 
