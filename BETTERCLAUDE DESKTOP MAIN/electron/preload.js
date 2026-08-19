@@ -36,6 +36,7 @@ const { mountLayoutProbe } = require("../core/layout-probe");
 const { selfCheck, mountRouteWatcher } = require("../core/claude-dom");
 const { mountCodeTab } = require("../core/code-tab");
 const { mountClaudeReloadWatch } = require("../core/claude-reload");
+const { mountOverlayOcclusionGuard } = require("../core/overlay-occlusion");
 
 const { mountTitleBar } = require("../ui/title-bar");
 const { TITLE_BAR_HEIGHT } = require("./window-chrome");
@@ -490,6 +491,15 @@ async function bootstrap() {
   ipcRenderer.invoke("code-tab:get-state").then(({ shown }) => {
     if (codeTab && shown) codeTab.setActive(true);
   }).catch(() => {});
+
+  // The embedded pane is a native view composited above this page, so it also
+  // covers BetterClaude's own overlays. Step it aside while one is open — see
+  // core/overlay-occlusion.js for why this is behavioural rather than a list of
+  // overlay ids.
+  const occlusionGuard = mountOverlayOcclusionGuard({
+    onChange: (blocking) => ipcRenderer.send("code-tab:suspend", blocking),
+  });
+  window.addEventListener("pagehide", () => occlusionGuard.unmount(), { once: true });
 
   // Re-injection after claude.ai reloads itself.
   //

@@ -8534,6 +8534,90 @@ ${content}
     }
   });
 
+  // core/overlay-occlusion.js
+  var require_overlay_occlusion = __commonJS({
+    "core/overlay-occlusion.js"(exports, module) {
+      var OWN_ID_PREFIXES = ["betterclaude-", "bc-"];
+      var BLOCKING_AREA_RATIO = 0.25;
+      function isOwnBodyChild(el) {
+        const id = el.id || "";
+        return OWN_ID_PREFIXES.some((prefix) => id.startsWith(prefix));
+      }
+      function anyBlockingOverlay() {
+        if (!document.body) return false;
+        const viewportArea = (window.innerWidth || 0) * (window.innerHeight || 0);
+        if (viewportArea <= 0) return false;
+        return Array.prototype.some.call(document.body.children, (el) => {
+          if (!isOwnBodyChild(el)) return false;
+          let style;
+          try {
+            style = getComputedStyle(el);
+          } catch (_err) {
+            return false;
+          }
+          if (style.display === "none" || style.visibility === "hidden") return false;
+          if (style.pointerEvents === "none") return false;
+          const box = el.getBoundingClientRect();
+          return box.width * box.height > viewportArea * BLOCKING_AREA_RATIO;
+        });
+      }
+      function mountOverlayOcclusionGuard({ onChange } = {}) {
+        if (typeof onChange !== "function") return { check() {
+        }, unmount() {
+        } };
+        let last = null;
+        let scheduled = null;
+        let observer = null;
+        const watched = /* @__PURE__ */ new Set();
+        function check() {
+          const blocking = anyBlockingOverlay();
+          if (blocking === last) return blocking;
+          last = blocking;
+          onChange(blocking);
+          return blocking;
+        }
+        function checkSoon() {
+          check();
+          if (scheduled) return;
+          scheduled = setTimeout(() => {
+            scheduled = null;
+            check();
+          }, 250);
+        }
+        function attach() {
+          if (typeof MutationObserver !== "function" || !document.body) return;
+          if (!observer) observer = new MutationObserver(() => {
+            attach();
+            checkSoon();
+          });
+          if (!watched.has(document.body)) {
+            watched.add(document.body);
+            observer.observe(document.body, { childList: true, subtree: false });
+          }
+          Array.prototype.forEach.call(document.body.children, (el) => {
+            if (!isOwnBodyChild(el) || watched.has(el)) return;
+            watched.add(el);
+            observer.observe(el, { attributes: true, attributeFilter: ["class", "style"] });
+          });
+        }
+        attach();
+        check();
+        return {
+          check,
+          checkSoon,
+          unmount() {
+            if (scheduled) clearTimeout(scheduled);
+            scheduled = null;
+            if (observer) observer.disconnect();
+            observer = null;
+            watched.clear();
+          }
+        };
+      }
+      module.exports = { mountOverlayOcclusionGuard, anyBlockingOverlay, BLOCKING_AREA_RATIO };
+    }
+  });
+
   // core/index.js
   var require_index = __commonJS({
     "core/index.js"(exports, module) {
@@ -8580,6 +8664,7 @@ ${content}
       var claudeDom = require_claude_dom();
       var { mountCodeTab, measureContentArea } = require_code_tab();
       var { mountClaudeReloadWatch, findReloadPrompt } = require_claude_reload();
+      var { mountOverlayOcclusionGuard } = require_overlay_occlusion();
       module.exports = {
         ThemeEngine,
         SELECTORS,
@@ -8660,7 +8745,8 @@ ${content}
         // Detection of claude.ai's OWN reload prompt. Distinct from UpdateBanner
         // above, which is BetterClaude's electron-updater surface.
         mountClaudeReloadWatch,
-        findReloadPrompt
+        findReloadPrompt,
+        mountOverlayOcclusionGuard
       };
     }
   });

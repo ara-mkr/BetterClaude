@@ -48,6 +48,7 @@ const {
 const claudeDom = require("./claude-dom");
 const { mountCodeTab, measureContentArea } = require("./code-tab");
 const { mountClaudeReloadWatch, findReloadPrompt } = require("./claude-reload");
+const { mountOverlayOcclusionGuard } = require("./overlay-occlusion");
 
 module.exports = {
   ThemeEngine,
@@ -130,4 +131,5 @@ module.exports = {
   // above, which is BetterClaude's electron-updater surface.
   mountClaudeReloadWatch,
   findReloadPrompt,
+  mountOverlayOcclusionGuard,
 };

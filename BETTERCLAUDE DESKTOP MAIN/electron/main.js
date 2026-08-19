@@ -781,6 +781,13 @@ ipcMain.handle("buddies:get-thumbnail", (_e, id) => {
 // `claude` process all survive a reload of the page next to them.
 let codeView = null;
 let codeViewShown = false;
+// Detached-but-still-open. A WebContentsView composites above the window's web
+// page unconditionally, so it also covers BetterClaude's own in-page overlays —
+// open Settings with the pane showing and the panel renders behind it. The pane
+// therefore steps aside while an overlay is up. This is NOT the same state as
+// `codeViewShown`: the tab is still the tab the user is on, the pill stays
+// active, and the terminal and its child process are untouched.
+let codeViewSuspended = false;
 let codeSession = null;
 
 // Where the pane sits, in CSS px relative to the window's content area. The
@@ -985,9 +992,11 @@ function setCodeViewShown(shown) {
   if (!codeView) createCodeView();
 
   if (shown) {
-    mainWindow.contentView.addChildView(codeView);
-    layoutCodeView();
-    codeView.webContents.focus();
+    if (!codeViewSuspended) {
+      mainWindow.contentView.addChildView(codeView);
+      layoutCodeView();
+      codeView.webContents.focus();
+    }
   } else {
     mainWindow.contentView.removeChildView(codeView);
     // Focus has to go somewhere deliberate. Left alone it stays with the
@@ -998,6 +1007,29 @@ function setCodeViewShown(shown) {
   codeViewShown = shown;
   if (!mainWindow.webContents.isDestroyed()) {
     mainWindow.webContents.send("code-tab:state", { shown });
+  }
+}
+
+/**
+ * Detach or re-attach the pane without changing whether the tab is "open".
+ *
+ * removeChildView unparents; it does not close the webContents. The pty, the
+ * scrollback and the running `claude` child are all unaffected, which is why
+ * this is usable as a transient guard rather than a teardown.
+ */
+function setCodeViewSuspended(suspended) {
+  if (suspended === codeViewSuspended) return;
+  codeViewSuspended = suspended;
+  if (!codeView || !codeViewShown) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (suspended) {
+    mainWindow.contentView.removeChildView(codeView);
+    // Focus follows the pane out of the way, or the user's typing goes to a
+    // terminal that is no longer on screen while they look at a settings panel.
+    mainWindow.webContents.focus();
+  } else {
+    mainWindow.contentView.addChildView(codeView);
+    layoutCodeView();
   }
 }
 
@@ -1119,6 +1151,11 @@ ipcMain.handle("code-tab:hide", (e) => {
   return true;
 });
 
+ipcMain.on("code-tab:suspend", (e, suspended) => {
+  if (!isMainSender(e.sender)) return;
+  setCodeViewSuspended(!!suspended);
+});
+
 ipcMain.handle("code-tab:get-state", (e) => {
   if (!isMainSender(e.sender)) return { shown: false };
   return { shown: codeViewShown };
@@ -1204,7 +1241,7 @@ function attachClaudeReloadRecovery(win) {
 
   const reassert = (reason) => {
     if (!win || win.isDestroyed() || wc.isDestroyed()) return;
-    if (codeViewShown && codeView) {
+    if (codeViewShown && codeView && !codeViewSuspended) {
       // Re-parent so the pane is above the newly-created page rather than
       // behind it. removeChildView does not close the webContents, so the
       // session is untouched by this — see setCodeViewShown.
