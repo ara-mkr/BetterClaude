@@ -394,9 +394,18 @@ function auditButtonPainting() {
   // text. Once the base layer removes their native light fill, that text must
   // be explicitly recolored to the active theme instead of relying on a
   // low-specificity inherited body color.
+  // The `bc-signed-out` class moved out of preload and into
+  // core/layout-probe.js's applyLayoutMarkers, so that exactly one place
+  // decides it and it is decided from the probe's signed-in inference rather
+  // than from "is there a composer" — Anthropic's /code route is signed in and
+  // has no composer. Assert it at its new home; asserting it in preload passed
+  // for the wrong reason and would pass again if it moved back.
+  const layoutProbeCode = stripJsComments(
+    fs.readFileSync(path.join(ROOT, "core", "layout-probe.js"), "utf8")
+  );
   const signInForegroundPinned = /background-color:\s*transparent\s*!important;[^}]*color:\s*var\(--bc-text\)\s*!important;/s.test(engineCode)
     && /body\.bc-signed-out \*\s*\{\s*color:\s*var\(--bc-text\)\s*!important;/s.test(tokensCode)
-    && /classList\.toggle\("bc-signed-out"/.test(preloadCode);
+    && /classList\.toggle\("bc-signed-out"/.test(layoutProbeCode);
   record("sign-in", "signed-out controls and headings use themed readable text", signInForegroundPinned,
     signInForegroundPinned ? "native dark utilities are overridden after light fills are removed" : "missing signed-out foreground safeguard");
 }
@@ -461,9 +470,21 @@ function auditFirstRunChrome() {
   record("first run", "companion is opt-in by default", defaults.personality.companionEnabled === false,
     `companionEnabled = ${defaults.personality.companionEnabled}`);
   const preload = stripJsComments(fs.readFileSync(path.join(ROOT, "electron", "preload.js"), "utf8"));
-  record("first run", "signed-out routes hide auxiliary chrome", /syncContextualChrome/.test(preload)
-    && /data-testid=["']chat-input["']/.test(preload),
-  "companion and cursor FX require a composer to be present");
+  // The gate is still "don't show auxiliary chrome on the sign-in page", but
+  // the signal changed: composer-presence was wrong on Anthropic's /code route
+  // (signed in, no composer), so the check now reads the probe's signed-in
+  // inference, which is derived from the account button OR the composer.
+  const adapter = stripJsComments(fs.readFileSync(path.join(ROOT, "core", "claude-dom.js"), "utf8"));
+  const gatedOnSignedIn = /syncContextualChrome/.test(preload)
+    && /const signedIn = layoutSignedIn/.test(preload)
+    && /interactionFX\.unmount\(\)/.test(preload);
+  const discriminatorIsAccountButton = /accountButton/.test(adapter)
+    && /user-menu-button/.test(adapter)
+    && /code-prompt-input/.test(adapter);
+  record("first run", "signed-out routes hide auxiliary chrome", gatedOnSignedIn && discriminatorIsAccountButton,
+    gatedOnSignedIn && discriminatorIsAccountButton
+      ? "companion and cursor FX gated on the probe's signed-in inference"
+      : `gate=${gatedOnSignedIn} discriminator=${discriminatorIsAccountButton}`);
 }
 
 /* ---------------- Custom appearance state transitions ---------------- */

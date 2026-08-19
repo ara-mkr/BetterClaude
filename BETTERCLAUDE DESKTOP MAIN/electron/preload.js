@@ -33,6 +33,7 @@ const { UpdateBanner } = require("../core/update-banner");
 const { insertIntoComposer } = require("../core/compose-insert");
 const { mountTopStripGuard } = require("../core/top-strip-guard");
 const { mountLayoutProbe } = require("../core/layout-probe");
+const { selfCheck, mountRouteWatcher } = require("../core/claude-dom");
 
 const { mountTitleBar } = require("../ui/title-bar");
 const { TITLE_BAR_HEIGHT } = require("./window-chrome");
@@ -405,6 +406,10 @@ async function bootstrap() {
   // event to trigger re-detection.
   let layoutStatus = "unknown";
   let layoutRegions = [];
+  // Mirrors probe.signedIn. Seeded true so the very first syncContextualChrome()
+  // — which runs before the first probe result lands on a cold start — does not
+  // briefly tear down chrome it is about to put straight back.
+  let layoutSignedIn = true;
   // The live app root, kept current here so consumers don't have to re-probe
   // to get it (a probe walks every body child counting descendants, and
   // re-entering it from a change handler is how you get a double probe on
@@ -415,6 +420,7 @@ async function bootstrap() {
     verbose: !isPackaged,
     onChange: (probe) => {
       layoutStatus = probe.status;
+      layoutSignedIn = probe.signedIn;
       claudeRootEl = probe.root;
       // Copied to plain data rather than passed through: probe.regions holds
       // live Element references, and the settings panel has no business
@@ -428,15 +434,47 @@ async function bootstrap() {
   });
   layoutProbe.check();
 
+  // One-shot adapter self-check against the live page. Runs in packaged builds
+  // too: it costs a single resolution pass and is the difference between a user
+  // reporting "the sidebar theme stopped working" six releases late and
+  // reporting "it printed inject-miss sidebar" the day it broke.
+  selfCheck();
+
+  // claude.ai is a single-page app: most navigations are pushState, which fires
+  // no load event. The chromeObserver below does eventually notice (the DOM
+  // does change), but only mixed in with every other mutation. This gives the
+  // exact event, so re-application happens once per navigation instead of being
+  // debounced out of a mutation burst.
+  //
+  // It wraps history.pushState/replaceState and always calls the original
+  // first, passing its return value through — Claude's own routing is never
+  // blocked, cancelled, delayed, or rewritten.
+  const routeWatcher = mountRouteWatcher({
+    onRouteChange: () => syncContextualChrome(),
+  });
+  window.addEventListener("pagehide", () => routeWatcher.unmount(), { once: true });
+
   // Never show auxiliary chrome on Claude's public sign-in/marketing route.
   // Presence of the composer is the signal — no conversation content is read.
   function syncContextualChrome() {
-    const hasComposer = !!document.querySelector('[data-testid="chat-input"]');
-    document.body.classList.toggle("bc-signed-out", !hasComposer);
+    // Signed-in state comes from the probe (account button OR composer), not
+    // from the composer alone, and `bc-signed-out` is applied by
+    // applyLayoutMarkers rather than here so exactly one place owns it.
+    //
+    // This used to read `!!document.querySelector('[data-testid="chat-input"]')`
+    // and that was wrong in a way nothing reported: Anthropic's /code route is
+    // signed in and has no composer, so the whole signed-out branch fired
+    // there — the sign-in-page geometry (body padding zeroed, root translated,
+    // clip boundary dropped) plus the cursor FX and companion being torn down,
+    // on a route the user is very much signed into. See
+    // docs/dom-audit-2026-08-19.md section 5.
+    const signedIn = layoutSignedIn;
+
     // Route changes are exactly when Claude re-lays-out its top chrome, and
     // this already runs on every one of them (mount + the chromeObserver
-    // below), so neither of these needs an observer of its own. Both debounce
-    // internally, so the chromeObserver firing in bursts costs one probe.
+    // below, plus the SPA route watcher), so neither of these needs an
+    // observer of its own. Both debounce internally, so the chromeObserver
+    // firing in bursts costs one probe.
     //
     // Re-probing here rather than only at bootstrap is what makes the
     // detection survive a soft update: preload re-runs on navigation, but
@@ -446,15 +484,15 @@ async function bootstrap() {
     topStripGuard.checkSoon();
     companion.update({
       ...settings,
-      personality: { ...settings.personality, companionEnabled: !!(settings.personality && settings.personality.companionEnabled && hasComposer) },
+      personality: { ...settings.personality, companionEnabled: !!(settings.personality && settings.personality.companionEnabled && signedIn) },
     });
     // Cursor trails/ripples/radial controls are app chrome, not part of a
     // sign-in screen. Do not let a saved Vibe Bundle spill visual effects
     // over Claude's authentication flow.
-    if (!hasComposer && interactionFX) {
+    if (!signedIn && interactionFX) {
       interactionFX.unmount();
       interactionFX = null;
-    } else if (hasComposer && !interactionFX && (!settings.general || settings.general.enabled !== false)) {
+    } else if (signedIn && !interactionFX && (!settings.general || settings.general.enabled !== false)) {
       interactionFX = new InteractionFX({ onRadialAction: (id) => runRadialAction(id) });
       interactionFX.mount(settings);
     }

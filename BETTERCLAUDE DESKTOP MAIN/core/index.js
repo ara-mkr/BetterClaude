@@ -45,6 +45,7 @@ const {
   findClaudeRoot,
   findTopTabBar,
 } = require("./layout-probe");
+const claudeDom = require("./claude-dom");
 
 module.exports = {
   ThemeEngine,
@@ -110,4 +111,13 @@ module.exports = {
   applyLayoutMarkers,
   findClaudeRoot,
   findTopTabBar,
+  // The DOM adapter every other module resolves claude.ai's markup through.
+  // Exported whole rather than piecemeal: the extension build and the audit
+  // scripts both want `resolveAll`/`selfCheck`/`resolveTarget`, and a curated
+  // re-export list here is one more place to forget to update.
+  claudeDom,
+  resolveTarget: claudeDom.resolveTarget,
+  resolveAll: claudeDom.resolveAll,
+  selfCheck: claudeDom.selfCheck,
+  mountRouteWatcher: claudeDom.mountRouteWatcher,
 };

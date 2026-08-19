@@ -58,103 +58,193 @@ const { app, BrowserWindow } = electron;
 // while the source looked fine.
 const CASES = [
   {
-    name: "Current layout (#root + tablist + composer)",
+    // THE CURRENT SHAPE, transcribed from docs/dom-audit-2026-08-19.md.
+    // <aside aria-label="Sidebar">, a [role="group"][data-segmented] of
+    // [data-mode] pills inside [data-testid="sidebar"], and no ARIA tab
+    // semantics anywhere. Every one of those is different from what this
+    // fixture asserted before the audit, which is the point: the old fixture
+    // described a claude.ai that had already stopped existing, and passed.
+    name: "Current shape (2026-08): aside sidebar + df-pills mode switch",
     body: `<div id="root">
              <div style="display:contents">
-               <div role="tablist"><button role="tab">Home</button><button role="tab">Code</button></div>
-               <nav><button data-testid="pin-sidebar-toggle">pin</button></nav>
-               <div data-testid="chat-input">composer</div>
+               <aside aria-label="Sidebar">
+                 <div><a aria-label="Home" href="/new"></a><button aria-label="Collapse sidebar"></button></div>
+                 <div id="frame-peek-popover" data-testid="sidebar">
+                   <div role="group" data-segmented="true" data-pills="2">
+                     <button data-mode="cowork" aria-label="Home" data-active="true">&#xE08A;Home</button>
+                     <button data-mode="code" aria-label="Code">&#xE048;Code</button>
+                   </div>
+                   <button data-testid="user-menu-button">account</button>
+                 </div>
+               </aside>
+               <main><header>chat header</header><div data-testid="chat-input">composer</div></main>
              </div>
            </div>`,
     status: "recognized",
     rootId: "root",
+    expectSignedIn: true,
+    expectSidebarVia: 'aside[aria-label*="sidebar" i]',
   },
   {
-    name: "Next.js-style root (#__next)",
-    body: `<div id="__next">
-             <div role="tablist"><button role="tab">Home</button></div>
-             <nav><button data-testid="pin-sidebar-toggle">pin</button></nav>
-             <div data-testid="chat-input">composer</div>
+    // The pre-2026-08 shape. Must ALSO read `recognized`, not `partial`:
+    // an exact Anthropic-authored identifier we still recognise is not a
+    // degraded guess, and reporting `partial` on a revert would re-create the
+    // cry-wolf failure this module already learned once.
+    name: "Legacy shape (pre-2026-08): nav sidebar + role=tablist",
+    body: `<div id="root">
+             <div role="tablist"><button role="tab">Home</button><button role="tab">Code</button></div>
+             <nav><button data-testid="pin-sidebar-toggle">pin</button>
+                  <button data-testid="user-menu-button">account</button></nav>
+             <main><header>chat header</header><div data-testid="chat-input">composer</div></main>
            </div>`,
     status: "recognized",
-    rootId: "__next",
+    rootId: "root",
+    expectSignedIn: true,
+    expectSidebarVia: 'nav:has([data-testid="pin-sidebar-toggle"])',
+  },
+  {
+    // REGRESSION TEST for the sharpest finding of the 2026-08-19 audit: on the
+    // live app the ONLY <nav> left in the document is BetterClaude's own
+    // settings-panel nav, and the old `first <nav>` fallback resolved the
+    // sidebar to it. That is worse than a miss — a miss degrades, a confident
+    // wrong answer measures and styles our own chrome while reporting success.
+    // The sidebar here must resolve to the <aside>, never to nav.bc-sp-nav.
+    name: "Our own settings-panel nav is the only <nav> - must not adopt it",
+    body: `<div id="betterclaude-settings-panel">
+             <nav class="bc-sp-nav"><button class="bc-sp-nav-item">Appearance</button></nav>
+           </div>
+           <div id="root">
+             <aside aria-label="Sidebar">
+               <div id="frame-peek-popover" data-testid="sidebar">
+                 <div role="group" data-segmented="true">
+                   <button data-mode="cowork" data-active="true">Home</button>
+                   <button data-mode="code">Code</button>
+                 </div>
+                 <button data-testid="user-menu-button">account</button>
+               </div>
+             </aside>
+             <main><header>h</header><div data-testid="chat-input">composer</div></main>
+           </div>`,
+    status: "recognized",
+    rootId: "root",
+    expectSignedIn: true,
+    expectSidebarVia: 'aside[aria-label*="sidebar" i]',
+  },
+  {
+    // REGRESSION TEST for the /code route: signed in, full sidebar, and NO
+    // [data-testid="chat-input"] anywhere. The old composer-presence check
+    // inferred signed-OUT here, which applied the sign-in-page geometry branch
+    // (body padding zeroed, root translated, clip boundary removed) and
+    // unmounted the cursor FX on a route the user is signed into.
+    name: "Anthropic /code route: signed in with no composer",
+    body: `<div id="root">
+             <aside aria-label="Sidebar">
+               <div id="frame-peek-popover" data-testid="sidebar">
+                 <div role="group" data-segmented="true">
+                   <button data-mode="cowork">Home</button>
+                   <button data-mode="code" data-active="true">Code</button>
+                 </div>
+                 <button data-testid="user-menu-button">account</button>
+               </div>
+             </aside>
+             <main><header>h</header><div data-testid="code-prompt-input">code composer</div></main>
+           </div>`,
+    status: "recognized",
+    rootId: "root",
+    expectSignedIn: true,
   },
   {
     // The scenario the whole module exists for: Anthropic renames the root.
-    // Before this work, every geometry rule keyed on #root/#__next silently
-    // matched nothing here and the title bar covered the page.
+    // Everything else is present and exact, so the ONLY thing that may degrade
+    // the status is the root having been found structurally.
     name: "Root renamed (no #root/#__next) - heuristic must still find the app",
     body: `<div id="app-shell-v3">
-             <div role="tablist"><button role="tab">Home</button><button role="tab">Code</button></div>
-             <nav><button data-testid="pin-sidebar-toggle">pin</button></nav>
-             <div data-testid="chat-input">composer</div>
+             <aside aria-label="Sidebar">
+               <div data-testid="sidebar">
+                 <div role="group" data-segmented="true">
+                   <button data-mode="cowork" data-active="true">Home</button>
+                   <button data-mode="code">Code</button>
+                 </div>
+                 <button data-testid="user-menu-button">account</button>
+               </div>
+             </aside>
+             <main><header>h</header><div data-testid="chat-input">composer</div></main>
            </div>`,
     status: "partial",
     rootId: "app-shell-v3",
+    expectSignedIn: true,
   },
   {
     // display:contents generates no box, so a rect/area-based heuristic would
     // score this root at zero and pick the sibling decoy instead.
     name: "Renamed root with display:contents + a portal decoy sibling",
     body: `<div id="shell" style="display:contents">
-             <div role="tablist"><button role="tab">Home</button></div>
              <div data-testid="chat-input">composer</div>
            </div>
            <div id="portal-root"><div><div>dialog</div></div></div>`,
     status: "partial",
     rootId: "shell",
+    expectSignedIn: true,
   },
   {
-    name: "Signed-out marketing route (no composer) - must not read as broken",
+    // Signed out: sidebar, mode switch, composer and account button are all
+    // correctly absent, so nothing is degraded and the honest answer is
+    // `recognized`. This previously asserted `partial`, which meant the health
+    // field read "degraded" on a perfectly rendered sign-in page — exactly the
+    // reading that trains someone to ignore the signal.
+    name: "Signed-out marketing route - correctly absent is not degraded",
     body: `<div id="root">
-             <header><a href="/a">Product</a><a href="/b">Pricing</a></header>
              <div><div>marketing copy</div></div>
+           </div>`,
+    status: "recognized",
+    rootId: "root",
+    expectSignedIn: false,
+  },
+  {
+    // Pill count and order deliberately different from every case above. A
+    // detector keyed on "2 pills" or "Code is second" passes those and fails
+    // here; this is the regression test for the next reshuffle.
+    name: "Six pills, reordered, Code last",
+    body: `<div id="root">
+             <aside aria-label="Sidebar">
+               <div data-testid="sidebar">
+                 <div role="group" data-segmented="true" data-pills="6">
+                   <button data-mode="projects">Projects</button>
+                   <button data-mode="cowork" data-active="true">Home</button>
+                   <button data-mode="chat">Chat</button>
+                   <button data-mode="artifacts">Artifacts</button>
+                   <button data-mode="scheduled">Scheduled</button>
+                   <button data-mode="code">Code</button>
+                 </div>
+                 <button data-testid="user-menu-button">account</button>
+               </div>
+             </aside>
+             <main><header>h</header><div data-testid="chat-input">composer</div></main>
+           </div>`,
+    status: "recognized",
+    rootId: "root",
+    expectSignedIn: true,
+  },
+  {
+    // Sidebar renamed AND stripped of its label, so every nominal strategy
+    // misses and only the structural column heuristic can answer. It must
+    // still resolve, and the status must drop to `partial` to say so.
+    name: "Sidebar renamed and unlabelled - structural tier must carry it",
+    body: `<div id="root">
+             <div class="shell-rail-v9" style="position:fixed;left:0;top:0;width:288px;height:900px">
+               <div data-testid="sidebar">
+                 <div role="group" data-segmented="true">
+                   <button data-mode="cowork" data-active="true">Home</button>
+                   <button data-mode="code">Code</button>
+                 </div>
+                 <button data-testid="user-menu-button">account</button>
+               </div>
+             </div>
+             <main><header>h</header><div data-testid="chat-input">composer</div></main>
            </div>`,
     status: "partial",
     rootId: "root",
-  },
-  {
-    // Tab count and order are deliberately different from every case above.
-    // A detector keyed on "4 tabs" or "Code is second" passes those and fails
-    // here; this is the regression test for the next reshuffle.
-    name: "Six tabs, reordered, Code last",
-    body: `<div id="root">
-             <div role="tablist">
-               <button role="tab">Projects</button><button role="tab">Home</button>
-               <button role="tab">Chat</button><button role="tab">Cowork</button>
-               <button role="tab">Artifacts</button><button role="tab">Code</button>
-             </div>
-             <nav><button data-testid="pin-sidebar-toggle">pin</button></nav>
-             <div data-testid="chat-input">composer</div>
-           </div>`,
-    status: "recognized",
-    rootId: "root",
-  },
-  {
-    // REGRESSION TEST for a false positive found by running the real app.
-    // This is the shape claude.ai actually ships today: no [role=tablist], no
-    // [role=tab], no <header> — just a tall fixed left sidebar whose Home /
-    // Search / pin cluster sits in the top ~60px of the window.
-    //
-    // The structural tab-bar tier used to match that sidebar and report a
-    // `fallback` tier for topTabBar, which pinned the status at `partial` on a
-    // completely healthy UI and re-warned on every route change. Both halves
-    // of the fix are asserted here: the sidebar must not be mistaken for a tab
-    // bar, and a build with no tab bar at all must still read `recognized`.
-    name: "Real current shape: tall left sidebar, NO tab bar - must be recognized",
-    body: `<div id="root">
-             <nav aria-label="Sidebar" style="position:fixed;left:0;top:0;width:272px;height:1200px">
-               <div style="display:flex;gap:4px">
-                 <a aria-label="Home" href="/new" style="width:68px;height:20px"></a>
-                 <button aria-label="Search" style="width:24px;height:24px"></button>
-                 <button data-testid="pin-sidebar-toggle" style="width:24px;height:24px"></button>
-               </div>
-               <a aria-label="New chat" href="/new" style="width:271px;height:32px"></a>
-             </nav>
-             <div data-testid="chat-input">composer</div>
-           </div>`,
-    status: "recognized",
-    rootId: "root",
+    expectSignedIn: true,
   },
   {
     name: "No app at all (blank/error page) - must report unrecognized",
@@ -205,6 +295,10 @@ async function run() {
         markerCount: marked.length,
         markerMatchesRoot: marked.length === 1 && marked[0] === probe.root,
         bodyStatusClasses: Array.from(document.body.classList).filter((c) => c.startsWith("bc-layout-")),
+        signedIn: probe.signedIn,
+        signedOutClass: document.body.classList.contains("bc-signed-out"),
+        missClasses: Array.from(document.body.classList).filter((c) => c.startsWith("bc-miss-")),
+        sidebarVia: (probe.regions.find((r) => r.key === "sidebar") || {}).via || null,
         // Re-probe in the same document: proves the stale-marker trap that
         // isOwnNode() exempts ROOT_MARKER_CLASS for is actually handled, not
         // just described. Compares the resolved ROOT and not only the status,
@@ -256,6 +350,33 @@ async function run() {
       out.bodyStatusClasses.join(",") || "(none)"
     );
 
+    // Signed-in inference. Asserted separately from status because it drives a
+    // different consequence: `bc-signed-out` swaps the geometry branch and
+    // unmounts the cursor FX, so getting it wrong on a signed-in route is a
+    // visible regression even while the status reads healthy.
+    if (Object.prototype.hasOwnProperty.call(testCase, "expectSignedIn")) {
+      const signedInOk =
+        out.signedIn === testCase.expectSignedIn && out.signedOutClass === !testCase.expectSignedIn;
+      record(
+        `${testCase.name} -> signed-in inference`,
+        signedInOk,
+        `signedIn=${out.signedIn} bc-signed-out=${out.signedOutClass} (expected signedIn=${testCase.expectSignedIn})`
+      );
+    }
+
+    // WHICH strategy answered, not merely that something did. A case can report
+    // the right status while having resolved a region to the wrong element —
+    // the settings-panel-nav trap does exactly that — so the cases that exist
+    // to pin down a specific resolution path assert the path.
+    if (testCase.expectSidebarVia) {
+      const viaOk = out.sidebarVia === testCase.expectSidebarVia;
+      record(
+        `${testCase.name} -> sidebar resolved via expected strategy`,
+        viaOk,
+        viaOk ? out.sidebarVia : `expected "${testCase.expectSidebarVia}", got "${out.sidebarVia}"`
+      );
+    }
+
     // Idempotence: probing twice must return the same status AND the same
     // element. This is the check that catches a marker from pass 1 making the
     // real root invisible to pass 2 — i.e. the app losing its page geometry on
@@ -279,8 +400,9 @@ async function run() {
   }
   console.log(`\n${results.length - failed.length}/${results.length} passed.`);
   console.log(
-    "\nUNVERIFIED-HERE: real claude.ai markup (needs a signed-in session), and\n" +
-      "whether the Code tab is clickable in pixels - see the smoke-test checklist.\n"
+    "\nUNVERIFIED-HERE: whether the injected chrome is clickable in pixels - see\n" +
+      "the smoke-test checklist. Real claude.ai markup is no longer unverified:\n" +
+      "run `npm run audit:dom`, which drives the live site in the app's own session.\n"
   );
   app.exit(failed.length ? 1 : 0);
 }
