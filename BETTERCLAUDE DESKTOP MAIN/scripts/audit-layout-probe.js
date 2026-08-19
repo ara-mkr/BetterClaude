@@ -84,6 +84,7 @@ const CASES = [
     rootId: "root",
     expectSignedIn: true,
     expectSidebarVia: 'aside[aria-label*="sidebar" i]',
+    expectMarkedHeader: 1,
   },
   {
     // The pre-2026-08 shape. Must ALSO read `recognized`, not `partial`:
@@ -299,6 +300,7 @@ async function run() {
         signedOutClass: document.body.classList.contains("bc-signed-out"),
         missClasses: Array.from(document.body.classList).filter((c) => c.startsWith("bc-miss-")),
         sidebarVia: (probe.regions.find((r) => r.key === "sidebar") || {}).via || null,
+        markedHeaders: document.querySelectorAll(".bc-chat-header").length,
         // Re-probe in the same document: proves the stale-marker trap that
         // isOwnNode() exempts ROOT_MARKER_CLASS for is actually handled, not
         // just described. Compares the resolved ROOT and not only the status,
@@ -312,6 +314,7 @@ async function run() {
             status: again.status,
             rootId: again.root ? (again.root.id || "(no id)") : null,
             sameRoot: again.root === probe.root,
+            markedHeaders: document.querySelectorAll(".bc-chat-header").length,
           };
         })(),
       };
@@ -374,6 +377,23 @@ async function run() {
         `${testCase.name} -> sidebar resolved via expected strategy`,
         viaOk,
         viaOk ? out.sidebarVia : `expected "${testCase.expectSidebarVia}", got "${out.sidebarVia}"`
+      );
+    }
+
+    // Marker stability. A marker class we put on one of CLAUDE's elements must
+    // survive the next probe: if the ownership test does not exempt it, the
+    // second pass classifies the marked element as BetterClaude chrome, refuses
+    // to resolve it, and strips the mark — so the styling oscillates on every
+    // mutation and appears simply not to work. Both markers this codebase has
+    // ever added hit exactly that, which is why it is asserted rather than
+    // trusted.
+    if (testCase.expectMarkedHeader != null) {
+      const markerOk2 = out.markedHeaders === testCase.expectMarkedHeader
+        && out.secondPass.markedHeaders === testCase.expectMarkedHeader;
+      record(
+        `${testCase.name} -> chat-header marker stable across re-probe`,
+        markerOk2,
+        `first=${out.markedHeaders} second=${out.secondPass.markedHeaders} (expected ${testCase.expectMarkedHeader})`
       );
     }
 

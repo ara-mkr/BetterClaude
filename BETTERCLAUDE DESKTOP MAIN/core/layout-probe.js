@@ -44,12 +44,20 @@
 
 const {
   ROOT_MARKER_CLASS,
+  TARGETS,
   findAppRoot,
   resolveTarget,
   resolveAll,
   createMissReporter,
   attemptedSelectors,
 } = require("./claude-dom");
+
+// Targets that carry a marker class onto the element they resolve to, so a
+// stylesheet can style "the element we measured" rather than re-deriving it.
+// Same mechanism as ROOT_MARKER_CLASS, and used for the same reason: the
+// question these answer ("does this header span its column?") is geometric, and
+// CSS has no way to ask it.
+const MARKED_TARGETS = Object.keys(TARGETS).filter((key) => TARGETS[key].marker);
 
 // Body-level status classes. Exactly one is present at a time. Only the
 // `unrecognized` one has styling consequences; the other two exist so the state
@@ -154,7 +162,16 @@ function probeLayout() {
     .map((r) => (r.found ? `${r.key}=${r.tier}:${r.via}` : `${r.key}=${r.absentOk ? "absent" : "MISSING"}`))
     .join(" ");
 
-  return { status, regions, root, signedIn, summary };
+  // Marked targets are resolved but deliberately NOT status-bearing: they are
+  // cosmetic anchors, and letting a cosmetic miss pin the status at `partial`
+  // is how a health signal stops being read.
+  const marked = {};
+  MARKED_TARGETS.forEach((key) => {
+    const hit = targets[key];
+    marked[key] = hit && hit.found ? hit.element : null;
+  });
+
+  return { status, regions, root, signedIn, summary, marked };
 }
 
 /**
@@ -199,6 +216,16 @@ function applyLayoutMarkers(probe) {
 
   probe.regions.forEach((r) => {
     classList.toggle(`bc-miss-${r.key}`, !r.found && !r.absentOk);
+  });
+
+  // Marker classes. Cleared document-wide first so exactly one element carries
+  // each: after a soft update the previous holder may be detached, and a marker
+  // left on a live sibling would style two elements at once.
+  MARKED_TARGETS.forEach((key) => {
+    const marker = TARGETS[key].marker;
+    document.querySelectorAll(`.${marker}`).forEach((el) => el.classList.remove(marker));
+    const hit = probe.marked[key];
+    if (hit) hit.classList.add(marker);
   });
 }
 

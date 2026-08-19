@@ -46,6 +46,8 @@ const {
   findTopTabBar,
 } = require("./layout-probe");
 const claudeDom = require("./claude-dom");
+const { mountCodeTab, measureContentArea } = require("./code-tab");
+const { mountClaudeReloadWatch, findReloadPrompt } = require("./claude-reload");
 
 module.exports = {
   ThemeEngine,
@@ -120,4 +122,12 @@ module.exports = {
   resolveAll: claudeDom.resolveAll,
   selfCheck: claudeDom.selfCheck,
   mountRouteWatcher: claudeDom.mountRouteWatcher,
+  // Embedded Claude Code tab (the in-page control; the pane itself is an
+  // Electron WebContentsView and has no extension-build equivalent).
+  mountCodeTab,
+  measureContentArea,
+  // Detection of claude.ai's OWN reload prompt. Distinct from UpdateBanner
+  // above, which is BetterClaude's electron-updater surface.
+  mountClaudeReloadWatch,
+  findReloadPrompt,
 };

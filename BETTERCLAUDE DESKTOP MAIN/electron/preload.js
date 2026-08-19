@@ -34,6 +34,8 @@ const { insertIntoComposer } = require("../core/compose-insert");
 const { mountTopStripGuard } = require("../core/top-strip-guard");
 const { mountLayoutProbe } = require("../core/layout-probe");
 const { selfCheck, mountRouteWatcher } = require("../core/claude-dom");
+const { mountCodeTab } = require("../core/code-tab");
+const { mountClaudeReloadWatch } = require("../core/claude-reload");
 
 const { mountTitleBar } = require("../ui/title-bar");
 const { TITLE_BAR_HEIGHT } = require("./window-chrome");
@@ -410,6 +412,15 @@ async function bootstrap() {
   // — which runs before the first probe result lands on a cold start — does not
   // briefly tear down chrome it is about to put straight back.
   let layoutSignedIn = true;
+  // Assigned once the probe has run (below). syncContextualChrome() can fire
+  // before that, so it is a `let` that is checked rather than a `const` that
+  // would TDZ-fault — same reason updateBanner and pluginLoader are declared
+  // this way further up.
+  let codeTab = null;
+  // Watches for claude.ai's OWN "refresh to update" prompt. Purely
+  // observational — see core/claude-reload.js for why detection is not what
+  // recovery depends on.
+  const claudeReloadWatch = mountClaudeReloadWatch();
   // The live app root, kept current here so consumers don't have to re-probe
   // to get it (a probe walks every body child counting descendants, and
   // re-entering it from a change handler is how you get a double probe on
@@ -454,6 +465,51 @@ async function bootstrap() {
   });
   window.addEventListener("pagehide", () => routeWatcher.unmount(), { once: true });
 
+  // --- Embedded Claude Code tab ---
+  // The pane itself is a WebContentsView owned by main.js (see the long note
+  // there for why it is not an iframe). This side owns only the control that
+  // toggles it and the measurement that tells main.js where claude.ai's own
+  // content area currently is, so the pane lands beside the sidebar rather than
+  // on top of it.
+  codeTab = mountCodeTab({
+    titleBarHeight: TITLE_BAR_HEIGHT,
+    onActivate: () => ipcRenderer.invoke("code-tab:show").catch(() => {}),
+    onDeactivate: () => ipcRenderer.invoke("code-tab:hide").catch(() => {}),
+    onLayout: (rect) => ipcRenderer.send("code-tab:layout", rect),
+  });
+  // Something other than the pill can open the pane (tray, menu, the Settings
+  // accelerator, `--code`), so the pill's state follows main.js rather than
+  // main.js following the pill.
+  ipcRenderer.on("code-tab:state", (_e, { shown }) => {
+    if (codeTab && codeTab.isActive() !== shown) codeTab.setActive(shown);
+  });
+  // A claude.ai reload gives this preload a fresh realm with no memory of the
+  // pane, which outlived the reload in its own webContents. Ask main.js what
+  // the truth is rather than assuming the pane is closed — assuming would leave
+  // the pill reading "off" while the terminal is plainly visible.
+  ipcRenderer.invoke("code-tab:get-state").then(({ shown }) => {
+    if (codeTab && shown) codeTab.setActive(true);
+  }).catch(() => {});
+
+  // Re-injection after claude.ai reloads itself.
+  //
+  // A full reload gives this preload a brand-new realm and re-runs everything
+  // above, so the common case needs nothing. This handler covers the cases a
+  // fresh bootstrap does not: main.js also fires it on `did-navigate-in-page`
+  // (same document, no preload re-run) and after a renderer crash recovery,
+  // where the page came back but the DOM the framework measured is a different
+  // one. Re-running the probe and the tab sync is idempotent, so firing it on
+  // the ordinary path too is harmless and keeps one code path.
+  ipcRenderer.on("betterclaude:reinject", (_e, { reason } = {}) => {
+    if (!isPackaged) console.log(`[BetterClaude] re-applying injection after ${reason || "reload"}`);
+    layoutProbe.check();
+    syncContextualChrome();
+    if (codeTab) {
+      codeTab.sync();
+      codeTab.publishLayout();
+    }
+  });
+
   // Never show auxiliary chrome on Claude's public sign-in/marketing route.
   // Presence of the composer is the signal — no conversation content is read.
   function syncContextualChrome() {
@@ -482,6 +538,15 @@ async function bootstrap() {
     // all, and that is precisely when a new Anthropic build first lands.
     layoutProbe.checkSoon();
     topStripGuard.checkSoon();
+    // Idempotent and cheap: two DOM reads and an early return in the common
+    // case. This is what makes the Code tab self-healing — claude.ai is React,
+    // and a re-render that rebuilds the pill container drops our child, which
+    // would otherwise make the tab vanish mid-session with no error anywhere.
+    if (codeTab) codeTab.sync();
+    // An in-page notice arrives as a DOM mutation, which is exactly what this
+    // handler already runs on. Deduped internally by signature, so calling it
+    // on every burst costs one bounded scan.
+    claudeReloadWatch.check();
     companion.update({
       ...settings,
       personality: { ...settings.personality, companionEnabled: !!(settings.personality && settings.personality.companionEnabled && signedIn) },

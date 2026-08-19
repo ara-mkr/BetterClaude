@@ -775,7 +775,13 @@ function buildScaffoldCSS(vars = {}, opts = {}) {
   // is a LIST, not a single selector — that is the whole point. See the sidebar
   // block further down for what a single-selector version of this cost.
   const SIDEBAR_SEL = cssSelectorList("sidebar");
-  const HEADER_SEL = cssSelectorList("chatHeader");
+  // The chat header is styled through the marker core/layout-probe.js applies,
+  // not through a selector list. "Is this the content column's header, or an
+  // inset band floating inside it?" is a question about proportions, and CSS
+  // cannot ask it — scoping to `main header` looked like the fix and was not:
+  // Anthropic's /code surface has an 840px header inside a 1794px <main>, and
+  // painting it left a purple slab across the top of that screen.
+  const HEADER_SEL = ".bc-chat-header";
   // Anthropic's own mode pills, excluded from our nav-item state machine so we
   // don't fight their sliding active indicator.
   const NOT_MODE_PILL = ':not([data-mode]):not([data-mode] *)';
@@ -905,10 +911,12 @@ ${SIDEBAR_SEL} {
   border-right: 1px solid var(--bc-border) !important;
 }
 
-/* Scoped to the content area. This was the bare tag selector 'header', which
-   painted every header on the page — including the floating one on Anthropic's
-   /code surface, where it rendered as a stray purple slab across the top of an
-   otherwise-correct screen. */
+/* The chat header, resolved and marked at runtime by core/layout-probe.js.
+   This was the bare tag selector 'header', which painted every header on the
+   page; scoping it to 'main header' was not enough either, because Anthropic's
+   /code surface puts an inset 840px header inside <main> and it rendered as a
+   stray purple slab. The marker is applied only to a header that actually
+   spans its content column. */
 ${HEADER_SEL} {
   background: var(--bc-bg) !important;
   border-color: var(--bc-border) !important;

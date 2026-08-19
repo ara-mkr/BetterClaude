@@ -48,22 +48,36 @@ const { OWN_ID_PREFIXES } = require("./top-strip-guard");
 // Ownership
 // ---------------------------------------------------------------------------
 
-// Marker class applied to whichever element turns out to be claude.ai's app
-// root. Declared here rather than further down because the ownership test
-// below has to know about it before anything else can run.
+// Marker classes applied to elements that belong to claude.ai, not to us.
+// Declared here rather than further down because the ownership test below has
+// to know about them before anything else can run.
 const ROOT_MARKER_CLASS = "bc-claude-root";
+const CHAT_HEADER_MARKER_CLASS = "bc-chat-header";
+
+/**
+ * Every `bc-` class we put on an element that is NOT BetterClaude's.
+ *
+ * This set must contain every marker in TARGETS. Forgetting to add one is a
+ * spectacular, silent failure and it has now happened twice:
+ *
+ *   - The root marker: the first resolution of a document marks the app root,
+ *     and every subsequent one then rejects both that root AND — because the
+ *     test walks ancestors — every element inside it. The app resolves
+ *     everything correctly once and nothing at all from the first route change
+ *     onward.
+ *   - The chat-header marker, added later and initially not exempted: the
+ *     header was marked, the next probe classified it as ours and cleared the
+ *     mark, the probe after that re-added it. It oscillated on every mutation,
+ *     so the styling appeared simply not to work.
+ *
+ * Both were found by running the thing rather than by reading it, which is why
+ * scripts/audit-layout-probe.js asserts marker stability across a re-probe.
+ */
+const FOREIGN_MARKER_CLASSES = new Set([ROOT_MARKER_CLASS, CHAT_HEADER_MARKER_CLASS]);
 
 /** True for a `bc-` class that really does mean "BetterClaude owns this". */
 function isOwnClass(cls) {
-  // ROOT_MARKER_CLASS is the one `bc-` class we put on an element that is
-  // emphatically NOT ours — it means "this is claude.ai's root". Counting it as
-  // ownership is catastrophic and non-obvious: the first resolution of a
-  // document marks the root, and every subsequent one then rejects both that
-  // root AND (because the test walks ancestors) every single element inside it,
-  // so the app resolves everything correctly once and resolves nothing at all
-  // from the first route change onward. Caught by the re-probe assertion in
-  // scripts/audit-layout-probe.js rather than by reading, twice now.
-  return String(cls).startsWith("bc-") && cls !== ROOT_MARKER_CLASS;
+  return String(cls).startsWith("bc-") && !FOREIGN_MARKER_CLASSES.has(cls);
 }
 
 /**
@@ -389,10 +403,74 @@ const TARGETS = {
     ],
   },
 
+  contentPane: {
+    label: "Primary content pane",
+    why: "Left edge of claude.ai's own content column — where the embedded Code pane has to start so it lands exactly where Claude's content would.",
+    absenceIsNormal: ({ signedIn }) => !signedIn,
+    strategies: [
+      // Anthropic's own design-system class, from the same `dframe-*` family as
+      // the sidebar's. Measured stable across expand, collapse, AND hover-peek,
+      // which is the property that matters here: the sidebar's own box is NOT
+      // stable across peek, and deriving the content origin from it made the
+      // embedded pane jitter every time the pointer crossed the collapsed rail.
+      { sel: "main .dframe-pane-primary", tier: "primary", css: false },
+      { sel: 'main [class*="pane-primary" i]', tier: "fallback", css: false },
+      // Structural: the tallest, widest block inside <main> that does NOT start
+      // at the left edge — i.e. the column sitting beside the sidebar. The
+      // left-edge test is what separates it from main's own full-width wrapper.
+      {
+        find: () => {
+          const main = queryOne("main");
+          if (!main) return null;
+          const viewportW = window.innerWidth || 0;
+          let best = null;
+          let bestArea = 0;
+          for (const el of queryAll("div, section", main)) {
+            const box = boxOf(el);
+            if (!box || box.left <= 24) continue;
+            if (box.width < viewportW * 0.4) continue;
+            const area = box.width * box.height;
+            if (area > bestArea) {
+              best = el;
+              bestArea = area;
+            }
+          }
+          return best ? { element: best, via: "widest offset block in <main>", tier: "heuristic" } : null;
+        },
+      },
+    ],
+  },
+
   chatHeader: {
     label: "Content-area header",
     why: "Themed to match the app background. Must never match the header of an arbitrary panel — see the audit's stray-slab finding.",
     absenceIsNormal: () => true,
+    // Marked at runtime so the stylesheet can target the element we measured
+    // instead of re-deriving it — the same technique as bc-claude-root, and for
+    // the same reason: this is a question about geometry, and CSS cannot ask it.
+    marker: CHAT_HEADER_MARKER_CLASS,
+    /**
+     * Only a header that spans its content column is the chat header.
+     *
+     * Scoping from `header` to `main header` was not enough, and assuming it
+     * was is how the stray slab survived a round of "fixing" it: Anthropic's
+     * /code surface puts a `header.epitaxy-composer-width` INSIDE <main> as an
+     * 840px band floating in the middle of a 1794px column. Painting our
+     * background on it produced a purple slab across the top of an otherwise
+     * correct screen (measured live: 486,87 840x59 on a 1794px parent).
+     *
+     * The real distinction is proportional, not nominal: the chat header
+     * stretches its container, this one is an inset island. 80% leaves room for
+     * a header with its own horizontal padding without admitting a centred band.
+     */
+    accept: (el) => {
+      const box = boxOf(el);
+      if (!box) return true; // unrendered: nothing to mispaint, let it resolve
+      const pane = queryOne("main .dframe-pane-primary") || queryOne("main");
+      const paneBox = pane ? boxOf(pane) : null;
+      if (!paneBox || paneBox.width <= 0) return true;
+      return box.width >= paneBox.width * 0.8;
+    },
     strategies: [
       { sel: "main header", tier: "primary" },
       { sel: '[data-testid="page-header"]', tier: "fallback" },
@@ -409,7 +487,23 @@ const TARGETS = {
   composer: {
     label: "Composer",
     why: "Insertion target for the prompt-library / file-sync features.",
-    absenceIsNormal: ({ signedIn }) => !signedIn,
+    // Absence is ALWAYS fine, and that is not the signal being thrown away it
+    // looks like. claude.ai has plenty of signed-in routes with no composer —
+    // /cowork/projects, /artifacts, /scheduled — and treating those as a
+    // degradation reported `partial` plus an inject-miss line every time the
+    // user clicked Projects. That is the cry-wolf failure this module has now
+    // learned twice; a health field that is red on healthy navigation stops
+    // being read.
+    //
+    // The drift signal is carried by the fallback tiers instead, which is
+    // strictly sharper. If a route genuinely HAS a text-entry surface and our
+    // primary testids stopped matching it, `div[contenteditable="true"]` or
+    // `main textarea` still resolves — at tier `fallback`, which reports
+    // `partial` and names the weak selector. So "Anthropic renamed the
+    // composer" still shows up loudly, and "this page simply has no composer"
+    // no longer does. Enumerating which routes have one would couple this to a
+    // URL list, which is the coupling the whole adapter exists to remove.
+    absenceIsNormal: () => true,
     strategies: [
       { sel: COMPOSER_SELECTORS.join(","), tier: "primary" },
       // Both are far too broad to paint unconditionally — every rich-text
@@ -504,7 +598,13 @@ function resolveTarget(name, { root = null, cache = null } = {}) {
       // A strategy that throws reads as a miss and the next one is tried.
       result = null;
     }
-    if (result && result.element && !isOwnNode(result.element)) return result;
+    if (!result || !result.element || isOwnNode(result.element)) continue;
+    // A strategy may add a runtime predicate on top of its selector, for the
+    // cases where "is this the right element?" is a question about geometry
+    // that CSS cannot ask. Rejecting here rather than in the selector keeps the
+    // next strategy in play instead of returning a confidently wrong element.
+    if (target.accept && !target.accept(result.element)) continue;
+    return result;
   }
   return null;
 }
@@ -678,6 +778,8 @@ function mountRouteWatcher({ onRouteChange, target = window } = {}) {
 module.exports = {
   TARGETS,
   ROOT_MARKER_CLASS,
+  CHAT_HEADER_MARKER_CLASS,
+  FOREIGN_MARKER_CLASSES,
   COMPOSER_SELECTORS,
   isOwnNode,
   normalizeLabel,
