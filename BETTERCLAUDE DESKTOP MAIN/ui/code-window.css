@@ -12,6 +12,7 @@
 
 html {
   background: var(--bc-bg, #14101f);
+  height: 100%;
 }
 
 body {
@@ -137,6 +138,7 @@ body {
   text-align: center;
   background: color-mix(in srgb, var(--bc-bg, #14101f) 88%, transparent);
   backdrop-filter: blur(2px);
+  z-index: 10;
 }
 
 #bc-code-overlay[data-visible="true"] {

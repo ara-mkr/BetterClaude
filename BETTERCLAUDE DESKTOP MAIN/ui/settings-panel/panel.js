@@ -26,6 +26,7 @@
  */
 
 const { openColorPopover } = require("./color-popover");
+const { openTimePopover, formatTime12 } = require("./time-popover");
 const { THEME_LABELS } = require("./theme-labels");
 const { el, field, toggleField } = require("./dom-helpers");
 const { COMPONENT_FAMILIES, contrastRatio, WCAG_AA_BODY } = require("../../core/tokens");
@@ -592,6 +593,27 @@ class SettingsPanel {
     });
   }
 
+  // Trigger button for the schedule's light/dark time fields, opening the
+  // custom-themed time-popover instead of the OS-native <input type="time">.
+  // onCommit only fires once, when the popover closes — never per keystroke —
+  // which is what actually stops the settings-changed re-render from
+  // stomping on an in-progress edit (see time-popover.js's header comment).
+  _buildTimeTrigger(initialValue24h, onCommit) {
+    let value = initialValue24h;
+    const btn = el("button", { type: "button", class: "bc-time-trigger", text: formatTime12(value) });
+    btn.addEventListener("click", () => {
+      openTimePopover(btn, value, (next) => {
+        value = next;
+        btn.textContent = formatTime12(next);
+      }, (final) => {
+        value = final;
+        btn.textContent = formatTime12(final);
+        onCommit(final);
+      });
+    });
+    return btn;
+  }
+
   _buildScheduleSection() {
     const { settings } = this;
     const schedule = settings.appearance.schedule || {};
@@ -622,13 +644,15 @@ class SettingsPanel {
     darkSelect.addEventListener("change", () => this._set("appearance.schedule.darkThemeId", darkSelect.value));
     wrap.appendChild(field("Dark theme", darkSelect));
 
-    const lightStart = el("input", { type: "time", value: schedule.lightStart || "07:00" });
-    lightStart.addEventListener("change", () => this._set("appearance.schedule.lightStart", lightStart.value));
-    wrap.appendChild(field("Light starts at", lightStart));
+    wrap.appendChild(field("Light starts at", this._buildTimeTrigger(
+      schedule.lightStart || "07:00",
+      (value) => this._set("appearance.schedule.lightStart", value),
+    )));
 
-    const darkStart = el("input", { type: "time", value: schedule.darkStart || "19:00" });
-    darkStart.addEventListener("change", () => this._set("appearance.schedule.darkStart", darkStart.value));
-    wrap.appendChild(field("Dark starts at", darkStart));
+    wrap.appendChild(field("Dark starts at", this._buildTimeTrigger(
+      schedule.darkStart || "19:00",
+      (value) => this._set("appearance.schedule.darkStart", value),
+    )));
 
     return wrap;
   }
@@ -1480,7 +1504,8 @@ class SettingsPanel {
     const hintEl = el("p", { class: "bc-hint" });
     const regionsEl = el("p", { class: "bc-hint" });
 
-    const paint = ({ status, regions }) => {
+    const paint = (probe) => {
+      const { status, regions } = probe || { status: "unknown", regions: [] };
       const key = LABELS[status] ? status : "unknown";
       valueEl.textContent = LABELS[key];
       hintEl.textContent = HINTS[key];

@@ -69,12 +69,27 @@ module.exports = {
         toggle.addEventListener("change", () => {
           const desiredState = toggle.checked;
           const previousState = !desiredState;
-          this.host.togglePlugin(widget.id, desiredState).catch((err) => {
-            toggle.checked = previousState;
-            if (this.host.notify) {
-              this.host.notify(`Could not ${desiredState ? "enable" : "disable"} ${widget.label}: ${err.message || err}`);
-            } else {
-              console.error("[BetterClaude] widget toggle failed:", err);
+          // Serialize requests: tag this request and ignore stale responses.
+          const reqId = String(Date.now()) + Math.random().toString(36).slice(2, 6);
+          toggle.dataset.reqId = reqId;
+          toggle.disabled = true;
+          this.host.togglePlugin(widget.id, desiredState).then(() => {
+            // Only clear the pending lock if this response matches the latest
+            if (toggle.dataset.reqId === reqId) {
+              toggle.disabled = false;
+              delete toggle.dataset.reqId;
+            }
+          }).catch((err) => {
+            // Roll back visible state only if this is the matching request
+            if (toggle.dataset.reqId === reqId) {
+              toggle.checked = previousState;
+              toggle.disabled = false;
+              delete toggle.dataset.reqId;
+              if (this.host.notify) {
+                this.host.notify(`Could not ${desiredState ? "enable" : "disable"} ${widget.label}: ${err.message || err}`);
+              } else {
+                console.error("[BetterClaude] widget toggle failed:", err);
+              }
             }
           });
         });

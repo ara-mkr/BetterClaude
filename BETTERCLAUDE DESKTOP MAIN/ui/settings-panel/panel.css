@@ -280,14 +280,6 @@
   border-radius: 10px;
   background: var(--bc-bg, #14101f);
 }
-.bc-schedule-section input[type="time"] {
-  background: var(--bc-bg-elevated, #1c1630);
-  border: 1px solid var(--bc-border, #3a2e5c);
-  color: var(--bc-text, #ece7fb);
-  border-radius: 6px;
-  padding: 4px 8px;
-}
-
 .bc-theme-card-footer {
   display: flex;
   align-items: center;
@@ -394,6 +386,110 @@
   border-radius: 6px;
   padding: 6px 8px;
   font-family: SFMono-Regular, Menlo, monospace;
+}
+
+.bc-time-trigger {
+  background: var(--bc-bg, #14101f);
+  border: 1px solid var(--bc-border, #3a2e5c);
+  color: var(--bc-text, #ece7fb);
+  border-radius: 8px;
+  padding: 6px 14px;
+  min-width: 100px;
+  font: inherit;
+  cursor: pointer;
+}
+.bc-time-trigger:hover {
+  border-color: var(--bc-accent, #8b5cf6);
+}
+
+.bc-time-popover {
+  position: fixed;
+  z-index: 2147483647;
+  background: var(--bc-bg-elevated, #1c1630);
+  border: 1px solid var(--bc-border, #3a2e5c);
+  border-radius: 14px;
+  padding: 14px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  font: 13px -apple-system, sans-serif;
+  color: var(--bc-text, #ece7fb);
+}
+.bc-tp-spinners {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bc-tp-spinner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.bc-tp-spinner-input {
+  width: 44px;
+  text-align: center;
+  background: var(--bc-bg, #14101f);
+  border: 1px solid var(--bc-border, #3a2e5c);
+  color: var(--bc-text, #ece7fb);
+  border-radius: 8px;
+  padding: 6px 0;
+  font: 600 16px SFMono-Regular, Menlo, monospace;
+}
+.bc-tp-spinner-input:focus-visible {
+  outline: 2px solid var(--bc-accent, #8b5cf6);
+  outline-offset: 2px;
+}
+.bc-tp-spinner-btn {
+  width: 28px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--bc-border, #3a2e5c);
+  color: var(--bc-text-muted, #cbbdf0);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 9px;
+  line-height: 1;
+  padding: 0;
+}
+.bc-tp-spinner-btn:hover {
+  background: color-mix(in srgb, var(--bc-accent, #8b5cf6) 18%, transparent);
+  color: var(--bc-text, #ece7fb);
+  border-color: var(--bc-accent, #8b5cf6);
+}
+.bc-tp-colon {
+  font-weight: 700;
+  padding-bottom: 24px;
+  opacity: 0.7;
+}
+.bc-tp-ampm {
+  display: flex;
+  gap: 4px;
+  background: var(--bc-bg, #14101f);
+  border: 1px solid var(--bc-border, #3a2e5c);
+  border-radius: 8px;
+  padding: 3px;
+  width: 100%;
+}
+.bc-tp-ampm-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--bc-text-muted, #cbbdf0);
+  border-radius: 6px;
+  padding: 6px 0;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.bc-tp-ampm-btn.bc-active {
+  background: var(--bc-accent, #8b5cf6);
+  color: var(--btn-primary-fg, #fff);
 }
 
 /* --- Master enable/disable toggle --- */

@@ -338,13 +338,18 @@
 }
 
 /* --- In-app update banner (core/update-banner.js) ---
-   Sits just below the toast tier so a toast fired at the same moment still
-   reads on top, and anchors bottom-right rather than centre so it never
-   covers claude.ai's composer. */
+   Anchored top-right, just under the title bar — the same corner
+   .bc-toast-popup already uses for "something needs your attention" surfaces
+   — rather than bottom-right, so a new-version notice reads like the rest of
+   the app's transient UI instead of hiding down by the composer where it's
+   easy to miss on a tall window. Reads --bc-tb-h (the title bar's real
+   height, published by ui/title-bar.css) the same way the settings panel
+   does, so it clears the title bar's traffic-light row instead of a
+   hardcoded offset that could drift from it. */
 #betterclaude-update-banner {
   position: fixed;
   right: 16px;
-  bottom: 16px;
+  top: calc(var(--bc-tb-h, 0px) + 16px);
   z-index: 2147483600;
   display: none;
   width: 320px;

@@ -824,11 +824,22 @@ function startCodeSession({ cwd, cols, rows }) {
   }
 
   try {
+    const finalCols = Number.isFinite(cols)
+      ? cols
+      : (codeWindow && codeWindow.__bcLastTerm && Number.isFinite(codeWindow.__bcLastTerm.cols))
+        ? codeWindow.__bcLastTerm.cols
+        : CODE_DEFAULT_COLS;
+    const finalRows = Number.isFinite(rows)
+      ? rows
+      : (codeWindow && codeWindow.__bcLastTerm && Number.isFinite(codeWindow.__bcLastTerm.rows))
+        ? codeWindow.__bcLastTerm.rows
+        : CODE_DEFAULT_ROWS;
+
     codeSession = new ClaudeSession({
       binaryPath,
       cwd,
-      cols: cols || CODE_DEFAULT_COLS,
-      rows: rows || CODE_DEFAULT_ROWS,
+      cols: finalCols,
+      rows: finalRows,
     });
   } catch (err) {
     if (err instanceof PtySpawnError) {
@@ -979,6 +990,12 @@ ipcMain.on("code:ready", (e, { cols, rows }) => {
   if (!win || win !== codeWindow) return;
   const cwd = resolveCodeCwd(codeWindow.__bcPendingCwd);
   codeWindow.__bcPendingCwd = null;
+  // Remember the renderer-reported terminal size so future restarts can reuse it.
+  try {
+    win.__bcLastTerm = { cols, rows };
+  } catch (err) {
+    // best-effort only
+  }
   startCodeSession({ cwd, cols, rows });
 });
 
@@ -994,7 +1011,16 @@ ipcMain.on("code:input", (e, data) => {
 ipcMain.on("code:resize", (e, { cols, rows }) => {
   if (!codeSession) return;
   if (BrowserWindow.fromWebContents(e.sender) !== codeWindow) return;
+  // Validate incoming dimensions to avoid NaN or non-numeric payloads reaching the pty.
+  if (!Number.isFinite(cols) || !Number.isFinite(rows)) return;
   codeSession.resize(cols, rows);
+  // Track last-known terminal size on the window so restarts can reuse it.
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (win && win === codeWindow) win.__bcLastTerm = { cols, rows };
+  } catch (err) {
+    // best-effort only
+  }
 });
 
 // Restart after the child exits, so a finished or crashed session doesn't
@@ -2094,13 +2120,6 @@ function startDevAutoReload() {
 }
 
 app.whenReady().then(() => {
-  // Menu-bar-only app: no Dock/Cmd+Tab presence. The tray icon and the buddy
-  // overlay (click, not drag) are the only ways back in once the window is
-  // closed/hidden.
-  if (process.platform === "darwin" && app.dock) {
-    app.dock.hide();
-  }
-
   seedBuiltinPlugins();
   // Before any window opens, so the first paint already uses the current
   // scaffold rather than flashing a stale custom theme (see the function's
@@ -2146,6 +2165,19 @@ app.whenReady().then(() => {
     if (store.get("updates.autoCheck") === false) return;
     checkForUpdates();
   }, 5000);
+  // BetterClaude is a menu-bar/dock-resident app people leave running for
+  // days — a launch-time-only check means anything released after that first
+  // 5s window is silently missed until the next full quit+relaunch. Re-check
+  // periodically on the same opt-out. Skips while a check is already in
+  // flight or the banner already has something for the user to act on
+  // (available/downloading/downloaded), so this never re-triggers
+  // "checking" and makes an already-showing banner flicker.
+  const UPDATE_RECHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
+  setInterval(() => {
+    if (store.get("updates.autoCheck") === false) return;
+    if (["checking", "available", "downloading", "downloaded"].includes(updateStatus.state)) return;
+    checkForUpdates();
+  }, UPDATE_RECHECK_INTERVAL_MS);
 
   nativeTheme.on("updated", () => {
     BrowserWindow.getAllWindows().forEach((w) =>
