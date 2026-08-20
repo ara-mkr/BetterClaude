@@ -792,7 +792,16 @@ function pickComposerPlaceholder(composerBg, composerFg, naturalMuted) {
 // in core/theme-engine.js (duplicated, not imported, to keep this module
 // dependency-free per its "pure functions only" contract above); kept in
 // sync manually since the injected-chrome id list rarely changes.
-const OWN_CHROME_IDS = ["betterclaude-titlebar", "betterclaude-settings-panel", "betterclaude-hud", "betterclaude-plugin-dock"];
+// "bc-code-tab-pill" is the odd one out and belongs here anyway: unlike the
+// four containers above it is a single element mounted INSIDE Anthropic's own
+// nav row rather than as a sibling of the app root. It is still BetterClaude
+// chrome, and leaving it off this list is why it rendered as the one square,
+// unfilled control in a row of rounded ones — the scaffold applied the page's
+// corner-shape preference to it and theme-engine's "every unpainted button is
+// transparent" rule erased its selected fill. Both of those rules carry an
+// 8-id specificity chain, so no amount of !important in ui/title-bar.css could
+// outrank them; being excluded here is the only fix that actually works.
+const OWN_CHROME_IDS = ["betterclaude-titlebar", "betterclaude-settings-panel", "betterclaude-hud", "betterclaude-plugin-dock", "bc-code-tab-pill"];
 const OWN_CHROME_EXCLUDE = OWN_CHROME_IDS.map((id) => `:not(#${id}):not(#${id} *)`).join("");
 // Scope for "every real element of the actual page". Previously
 // `:where(#__next, #root) *`, which silently matched NOTHING (theme text

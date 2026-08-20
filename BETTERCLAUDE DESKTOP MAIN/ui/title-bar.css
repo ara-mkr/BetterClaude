@@ -494,8 +494,22 @@ body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-center {
   align-self: stretch;
   padding: 0 10px;
   border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
+  /* !important on both of these because the injected theme scaffold outranks
+     us on claude.ai's own DOM, and it was quietly winning:
+       - core/theme-engine.js forces `background: transparent` onto every button
+         it does not itself paint, which flattened this pill's selected fill to
+         nothing and left the glow ringing an empty box;
+       - the scaffold's `button { border-radius: var(--bc-radius) }` applies the
+         page-wide corner-shape preference, so on a "sharp" setting this pill
+         squared off to 0 while Anthropic's own pills kept their 7px (their
+         utility CSS outranks the scaffold). The one square control in a row of
+         rounded ones is most of what read as a "harsh box".
+     This pill is BetterClaude chrome that happens to live inside Anthropic's
+     nav, so it follows the ROW it sits in, not the page's shape preference —
+     the same reasoning that already excludes #betterclaude-titlebar from those
+     rules; it just isn't reachable by that id, hence !important here. */
+  border-radius: 7px !important;
+  background: transparent !important;
   color: var(--bc-text-muted, #a99bd1);
   font: inherit;
   font-size: 13px;
@@ -523,7 +537,7 @@ body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-center {
 
 @media (hover: hover) and (pointer: fine) {
   .bc-code-tab-pill:hover {
-    background: var(--nav-item-bg-hover, rgba(255, 255, 255, 0.06));
+    background: var(--nav-item-bg-hover, rgba(255, 255, 255, 0.06)) !important;
     color: var(--bc-text, #ece7fb);
   }
 }
@@ -541,19 +555,27 @@ body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-center {
    whole nav: a bright outlined rectangle sitting next to two borderless pills.
    The fill plus a soft accent bloom reads as selected at a glance without
    drawing a box nothing else in the row has.
-   Two shadows: the inset one is the load-bearing half, because it is painted
-   INSIDE the pill and so still shows if Anthropic's container ever clips
-   overflow; the outer bloom is the part that actually glows when it doesn't.
-   Both are color-mixed off the live accent, so they follow the theme (and a
-   runtime accent change) instead of pinning a purple. */
+   Deliberately NO 1px ring, inset or otherwise. A first pass kept a 22% inset
+   hairline "to define the edge" and it read as exactly the same outlined box
+   at normal zoom — a crisp 1px line is a border to the eye whatever its alpha,
+   which is the entire thing being fixed. Only diffuse blurs here: the inset
+   bloom is the load-bearing half, because it is painted INSIDE the pill and so
+   survives a container that clips overflow, while the two outer blurs are the
+   glow proper when it doesn't. All color-mixed off the live accent, so they
+   follow the theme (and a runtime accent change) rather than pinning a purple. */
 .bc-code-tab-pill[data-bc-active] {
-  background: var(--nav-item-bg-selected, rgba(108, 99, 255, 0.18));
+  /* color-mix rather than the theme's --nav-item-bg-selected: that token is
+     an 18% accent wash tuned for sidebar rows on the page background, and it
+     is nearly invisible over this row's own translucent group fill. A slightly
+     stronger mix is what makes the pill read as filled-and-lit rather than
+     outlined. */
+  background: color-mix(in srgb, var(--bc-accent, #6c63ff) 30%, transparent) !important;
   border-color: transparent;
   color: var(--bc-text, #ece7fb);
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--bc-accent, #6c63ff) 22%, transparent),
-    inset 0 0 10px color-mix(in srgb, var(--bc-accent, #6c63ff) 20%, transparent),
-    0 0 12px color-mix(in srgb, var(--bc-accent, #6c63ff) 30%, transparent);
+    inset 0 0 12px color-mix(in srgb, var(--bc-accent, #6c63ff) 26%, transparent),
+    0 0 16px color-mix(in srgb, var(--bc-accent, #6c63ff) 38%, transparent),
+    0 0 4px color-mix(in srgb, var(--bc-accent, #6c63ff) 30%, transparent);
 }
 
 /* The brand dot picks up the same bloom while active, so the glow reads as one

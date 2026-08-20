@@ -118,7 +118,7 @@ body {
    leaves dark text on our dark canvas. Scope this direct selector away from
    injected BetterClaude chrome; the intentional button/link rules below are
    more specific and still own their colored foregrounds. */
-body, body *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *) {
+body, body *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *) {
   color: var(--bc-text) !important;
 }
 /* Claude's signed-out build can ship an inline-important foreground utility.
@@ -371,8 +371,8 @@ form:has(> * > * > [data-testid="chat-input"]):not(:has(nav)) {
    NOTE: no backticks anywhere in this comment — it sits inside a template
    literal, where one stray backtick silently ends the string and breaks the
    entire module. */
-[class*="sticky"]:has([data-testid="chat-input"]) > div[class*="text-xs"]:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *),
-[class*="sticky"]:has([data-testid="chat-input"]) > div[class*="text-center"]:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *) {
+[class*="sticky"]:has([data-testid="chat-input"]) > div[class*="text-xs"]:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *),
+[class*="sticky"]:has([data-testid="chat-input"]) > div[class*="text-center"]:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *) {
   background: transparent !important;
   background-color: transparent !important;
   border: none !important;
@@ -388,8 +388,8 @@ form:has(> * > * > [data-testid="chat-input"]):not(:has(nav)) {
    text color until the exclusion was appended). No hex literal is written
    in this comment on purpose: it ships inside every generated theme file,
    and the audit rejects hardcoded hex there. */
-[class*="sticky"]:has([data-testid="chat-input"]) > div[class*="text-xs"] a:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *),
-[class*="sticky"]:has([data-testid="chat-input"]) > div[class*="text-center"] a:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *) {
+[class*="sticky"]:has([data-testid="chat-input"]) > div[class*="text-xs"] a:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *),
+[class*="sticky"]:has([data-testid="chat-input"]) > div[class*="text-center"] a:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *) {
   color: var(--bc-text-muted) !important;
   font-size: 12px !important;
 }
@@ -417,7 +417,7 @@ form:has(> * > * > [data-testid="chat-input"]):not(:has(nav)) {
    HUD, plugin dock) — those have their own fixed styling (e.g. the title
    bar's circular traffic lights) and must never follow the page's shape
    preference. */
-button:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *) {
+button:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *) {
   border-radius: var(--bc-radius, calc(2.4em * var(--bc-shape-ratio, 0.28))) !important;
 }
 
@@ -439,14 +439,14 @@ button:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclau
 button[data-testid*="send"] {
   background: var(--btn-primary-bg-default) !important;
 }
-button[data-testid*="send"]:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[data-testid*="send"] *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *) {
+button[data-testid*="send"]:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *), button[data-testid*="send"] *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *) {
   color: var(--btn-primary-fg) !important;
 }
 button[aria-label*="delete" i], button[aria-label*="remove" i] {
   background: var(--btn-destructive-bg-default) !important;
 }
-button[aria-label*="delete" i]:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[aria-label*="delete" i] *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *),
-button[aria-label*="remove" i]:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[aria-label*="remove" i] *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *) {
+button[aria-label*="delete" i]:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *), button[aria-label*="delete" i] *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *),
+button[aria-label*="remove" i]:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *), button[aria-label*="remove" i] *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *) {
   color: var(--btn-destructive-fg) !important;
 }
 
@@ -454,14 +454,14 @@ button[aria-label*="remove" i]:not(#betterclaude-titlebar):not(#betterclaude-tit
   button[data-testid*="send"]:hover {
     background: var(--btn-primary-bg-hover) !important;
   }
-  button[data-testid*="send"]:hover:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[data-testid*="send"]:hover *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *) {
+  button[data-testid*="send"]:hover:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *), button[data-testid*="send"]:hover *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *) {
     color: var(--btn-primary-fg-hover) !important;
   }
   button[aria-label*="delete" i]:hover, button[aria-label*="remove" i]:hover {
     background: var(--btn-destructive-bg-hover) !important;
   }
-  button[aria-label*="delete" i]:hover:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[aria-label*="delete" i]:hover *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *),
-button[aria-label*="remove" i]:hover:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[aria-label*="remove" i]:hover *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *) {
+  button[aria-label*="delete" i]:hover:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *), button[aria-label*="delete" i]:hover *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *),
+button[aria-label*="remove" i]:hover:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *), button[aria-label*="remove" i]:hover *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *) {
     color: var(--btn-destructive-fg-hover) !important;
   }
 }
@@ -471,14 +471,14 @@ button[aria-label*="remove" i]:hover:not(#betterclaude-titlebar):not(#betterclau
 button[data-testid*="send"]:active {
   background: var(--btn-primary-bg-active) !important;
 }
-button[data-testid*="send"]:active:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[data-testid*="send"]:active *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *) {
+button[data-testid*="send"]:active:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *), button[data-testid*="send"]:active *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *) {
   color: var(--btn-primary-fg-active) !important;
 }
 button[aria-label*="delete" i]:active, button[aria-label*="remove" i]:active {
   background: var(--btn-destructive-bg-active) !important;
 }
-button[aria-label*="delete" i]:active:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[aria-label*="delete" i]:active *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *),
-button[aria-label*="remove" i]:active:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[aria-label*="remove" i]:active *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *) {
+button[aria-label*="delete" i]:active:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *), button[aria-label*="delete" i]:active *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *),
+button[aria-label*="remove" i]:active:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *), button[aria-label*="remove" i]:active *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *):not(#bc-code-tab-pill):not(#bc-code-tab-pill *) {
   color: var(--btn-destructive-fg-active) !important;
 }
 

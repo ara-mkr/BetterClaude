@@ -1030,7 +1030,7 @@ ${lines.join("\n")}`);
         }
         return relativeLuminance(composerBg) > 0.5 ? "#6b6b6b" : "#9a9a9a";
       }
-      var OWN_CHROME_IDS = ["betterclaude-titlebar", "betterclaude-settings-panel", "betterclaude-hud", "betterclaude-plugin-dock"];
+      var OWN_CHROME_IDS = ["betterclaude-titlebar", "betterclaude-settings-panel", "betterclaude-hud", "betterclaude-plugin-dock", "bc-code-tab-pill"];
       var OWN_CHROME_EXCLUDE = OWN_CHROME_IDS.map((id) => `:not(#${id}):not(#${id} *)`).join("");
       var PAGE_ROOT_SCOPE = `body *${OWN_CHROME_EXCLUDE}`;
       function buildScaffoldCSS(vars = {}, opts = {}) {
@@ -1939,7 +1939,7 @@ ${animate ? `
         }
         return tag;
       }
-      var PAGE_BTN = `button:not(#betterclaude-titlebar *):not(#betterclaude-settings-panel *):not(#betterclaude-hud *):not(#betterclaude-plugin-dock *)`;
+      var PAGE_BTN = `button:not(#bc-code-tab-pill):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel *):not(#betterclaude-hud *):not(#betterclaude-plugin-dock *)`;
       var PAINTED_BUTTON_ATTRS = [
         ...SCAFFOLD_PAINTED_BUTTON_ATTRS.primary,
         ...SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive

@@ -339,7 +339,12 @@ function ensureStyleTag(id) {
 // Non-chrome page-button selector, factored out because both the transparent
 // -background rule and the real size system target the same set (everything
 // except BetterClaude's own injected UI).
-const PAGE_BTN = `button:not(#betterclaude-titlebar *):not(#betterclaude-settings-panel *):not(#betterclaude-hud *):not(#betterclaude-plugin-dock *)`;
+// The four container ids are excluded as DESCENDANTS (`#id *`) because the
+// buttons inside them are the chrome. #bc-code-tab-pill is excluded as the
+// ELEMENT itself: it is a button in its own right, mounted inside Anthropic's
+// nav row, so the descendant form would never match it. Without this it was
+// caught by the transparent-background rule below and lost its selected fill.
+const PAGE_BTN = `button:not(#bc-code-tab-pill):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel *):not(#betterclaude-hud *):not(#betterclaude-plugin-dock *)`;
 
 // The exclusion list for the "make every other button transparent" rule
 // below is built directly from tokens.SCAFFOLD_PAINTED_BUTTON_ATTRS — the
