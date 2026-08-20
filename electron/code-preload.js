@@ -368,23 +368,17 @@ async function bootstrap() {
     // stacked bars and, worse, a second drag region and a second set of window
     // controls for the same window.
     //
-    // The settings affordance still has to exist: it is the only way into
-    // themes/presets for this pane. It moves into the pane's own status row,
-    // which is BetterClaude chrome that already sits at the top of the pane.
-    const statusRow = document.getElementById("bc-code-status");
-    if (statusRow) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.id = "bc-code-settings-btn";
-      btn.title = "BetterClaude Settings (Cmd/Ctrl+,)";
-      btn.setAttribute("aria-label", "BetterClaude Settings");
-      const img = document.createElement("img");
-      img.src = logoSrc;
-      img.alt = "";
-      btn.appendChild(img);
-      btn.addEventListener("click", () => settingsPanel.toggle());
-      statusRow.appendChild(btn);
-    }
+    // No button of our own here either, for the same reason: the main
+    // window's title bar (ui/title-bar.js, mounted by electron/preload.js)
+    // now has its own permanent settings button directly above this pane, and
+    // that panel already covers every CODE_WINDOW_SECTIONS entry except
+    // Session Bundles (see the SECTIONS filter in electron/preload.js). A
+    // second identical logo button here read as the same control drawn twice
+    // stacked on top of itself. settingsPanel below still exists and is still
+    // reachable — via Cmd/Ctrl+, while this pane has focus, and via the
+    // goto-settings-section listener Team Sync's indicator uses to land
+    // directly on Session Bundles — it just isn't exposed as a second visible
+    // icon anymore.
   } else {
     mountTitleBar({
       title: "BetterClaude · Code",
