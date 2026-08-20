@@ -10,6 +10,15 @@ on:
   push:
     tags:
       - "v*"
+  # Lets a failed/fixed run be re-triggered by hand (Actions tab > this
+  # workflow > "Run workflow") without needing to force-move the release
+  # tag. release_tag defaults to the current run's tag so a plain re-run
+  # from `push` still works unchanged.
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to attach the built .exe to (e.g. v0.3.1)"
+        required: true
 
 permissions:
   contents: write
@@ -38,6 +47,6 @@ jobs:
       - name: Attach Windows installer to release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
           files: dist/*.exe
           fail_on_unmatched_files: true
