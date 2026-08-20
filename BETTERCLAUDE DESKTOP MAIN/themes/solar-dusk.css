@@ -33,17 +33,16 @@
      against the theme's SHIPPED --bc-accent at generation time (pickButtonFg
      above), replacing a hardcoded #ffffff that failed WCAG AA on 19/20
      bundled themes (as low as 1.07:1 on high-contrast's #ffff00 accent).
-     KNOWN GAP: this is a baked value, not a live CSS expression — a user's
-     runtime accent override (ThemeEngine.setAccentColor writes --bc-accent as
-     an inline :root style in core/theme-engine.js, which this project does
-     not touch) will NOT cause this to recompute, and would re-create the
-     exact same stale-white-text bug at runtime. contrast-color()/
-     color-contrast() would let the browser recompute this against the LIVE
-     --bc-accent with no JS at all, but neither is reliably available at this
-     project's stated Chrome 120+ target (contrast-color() only reached
-     stable at Chrome 147). setAccentColor must be taught to recompute
-     --btn-primary-fg/--btn-destructive-fg itself, the same way it already
-     recomputes --bc-focus-ring/--bc-border-focus on every accent change. */
+     This is a baked value, not a live CSS expression, so a runtime accent
+     override would leave it stale — that gap is closed in
+     ThemeEngine.setAccentColor, which recomputes --btn-primary-fg (and its
+     hover/active variants, and the bridged --oncolor-* tokens) from the new
+     accent on every change, the same way it already recomputes
+     --bc-focus-ring/--bc-border-focus. --btn-destructive-fg deliberately
+     needs no recompute: it derives from --bc-danger, which the accent picker
+     never touches. contrast-color() would let the browser do all of this with
+     no JS, but it only reached stable in Chrome 147, past this project's
+     Chrome 120+ target. */
   --btn-primary-fg: #111111;
   --btn-primary-fg-hover: #111111;
   --btn-primary-fg-active: #111111;
@@ -70,6 +69,44 @@
 
   --bc-focus-ring: #ff9f43;
   --bc-border-focus: #ff9f43;
+
+  /* claude.ai's OWN design tokens, retinted to this palette (see
+     buildClaudeTokenBridge above for what each one means and why the ramps
+     aren't uniform). This is what makes the theme reach surfaces the
+     selectors below never name: claude.ai paints its chrome from these, so
+     overriding them themes the app natively instead of fighting it with
+     another !important rule per element. Emitted as space-separated
+     H S% L% triples because that is how the site consumes them, via
+     hsl(var(--bg-100)) — no backticks anywhere in this comment on purpose:
+     it sits inside a template literal, where one stray backtick silently
+     ends the string and breaks the entire module. */
+  --bg-000: 18.462 33.333% 15.294% !important;
+  --bg-100: 16 29.412% 10% !important;
+  --bg-200: 15 33.333% 7.059% !important;
+  --bg-300: 17.143 29.167% 9.412% !important;
+  --bg-400: 17.143 30.435% 9.02% !important;
+  --bg-500: 18.462 30.233% 8.431% !important;
+  --text-000: 31.25 100% 90.588% !important;
+  --text-100: 31.25 100% 90.588% !important;
+  --text-200: 29.492 58.416% 80.196% !important;
+  --text-300: 30 50.794% 75.294% !important;
+  --text-400: 28.767 43.713% 67.255% !important;
+  --text-500: 28.767 43.713% 67.255% !important;
+  --border-100: 31.25 100% 90.588% !important;
+  --border-200: 31.25 100% 90.588% !important;
+  --border-300: 31.25 100% 90.588% !important;
+  --border-400: 31.25 100% 90.588% !important;
+  --accent-pro-000: 29.388 100% 71.176% !important;
+  --accent-pro-100: 29.362 100% 63.137% !important;
+  --accent-pro-200: 29.294 77.273% 56.863% !important;
+  --accent-pro-900: 29.647 58.621% 28.431% !important;
+  --danger-000: 2.29 100% 74.314% !important;
+  --danger-100: 2.5 100% 67.059% !important;
+  --danger-200: 2.763 75.248% 60.392% !important;
+  --danger-900: 2.368 49.351% 30.196% !important;
+  --oncolor-100: 0 0% 6.667% !important;
+  --oncolor-200: 0 0% 6.667% !important;
+  --oncolor-300: 0 0% 6.667% !important;
 }
 
 body {
@@ -93,41 +130,88 @@ body.bc-signed-out * {
   color: var(--bc-text) !important;
 }
 
-/* claude.ai's sidebar <nav> carries no stable class or testid of its own —
-   only Tailwind utility classes that vary across builds — but it always
-   contains the pin-sidebar-toggle button, which does have a stable testid.
-   :has() lets us key off that real, verified hook instead of a guessed
-   class name (the old "nav[class*='sidebar']" / "[data-testid='sidebar']"
-   never matched anything on the live site). */
-nav:has([data-testid="pin-sidebar-toggle"]) {
+/* The sidebar, resolved through core/claude-dom.js rather than named here.
+   This block used to hardcode nav:has([data-testid="pin-sidebar-toggle"]) in
+   eight places. The 2026-08-19 audit found the sidebar had become
+   <aside aria-label="Sidebar"> with no pin toggle at all, so all eight rules
+   had been matching nothing — no error, no warning, the sidebar simply stopped
+   being themed at some unknown release. Deriving the selector list from the
+   adapter means the current shape, the previous one, and whatever comes next
+   are all one edit in one file, and the runtime resolver and this stylesheet
+   can never disagree about what the sidebar is. */
+aside[aria-label*="sidebar" i],
+aside:has([data-testid="sidebar"]),
+nav:has([data-testid="pin-sidebar-toggle"]),
+aside.dframe-sidebar,
+nav[aria-label*="sidebar" i] {
   background: var(--bc-bg-sidebar) !important;
   border-right: 1px solid var(--bc-border) !important;
 }
 
-header {
+/* The chat header, resolved and marked at runtime by core/layout-probe.js.
+   This was the bare tag selector 'header', which painted every header on the
+   page; scoping it to 'main header' was not enough either, because Anthropic's
+   /code surface puts an inset 840px header inside <main> and it rendered as a
+   stray purple slab. The marker is applied only to a header that actually
+   spans its content column. */
+.bc-chat-header {
   background: var(--bc-bg) !important;
   border-color: var(--bc-border) !important;
 }
 
-/* Sidebar / settings nav items as a proper state machine (§1, §3): resting
-   default is the container surface (never the hover tint), hover is gated to
-   non-touch pointers, and the persistent selected/current item has its own
-   token distinct from hover. */
-nav:has([data-testid="pin-sidebar-toggle"]) a,
-nav:has([data-testid="pin-sidebar-toggle"]) [role="button"] {
+/* Sidebar nav items as a proper state machine (§1, §3): resting default is the
+   container surface (never the hover tint), hover is gated to non-touch
+   pointers, and the persistent selected/current item has its own token
+   distinct from hover.
+
+   Anthropic's own Home/Code pills are excluded from all three states. They are
+   a segmented control with a sliding indicator and their own active styling;
+   painting our nav-item states over them fights that animation and makes the
+   active pill read as two different selections at once. BetterClaude's own
+   adjacent tab opts back in through its own rules in ui/title-bar.css. */
+aside[aria-label*="sidebar" i] a:not([data-mode]):not([data-mode] *),
+aside:has([data-testid="sidebar"]) a:not([data-mode]):not([data-mode] *),
+nav:has([data-testid="pin-sidebar-toggle"]) a:not([data-mode]):not([data-mode] *),
+aside.dframe-sidebar a:not([data-mode]):not([data-mode] *),
+nav[aria-label*="sidebar" i] a:not([data-mode]):not([data-mode] *),
+aside[aria-label*="sidebar" i] [role="button"]:not([data-mode]):not([data-mode] *),
+aside:has([data-testid="sidebar"]) [role="button"]:not([data-mode]):not([data-mode] *),
+nav:has([data-testid="pin-sidebar-toggle"]) [role="button"]:not([data-mode]):not([data-mode] *),
+aside.dframe-sidebar [role="button"]:not([data-mode]):not([data-mode] *),
+nav[aria-label*="sidebar" i] [role="button"]:not([data-mode]):not([data-mode] *) {
   background: var(--nav-item-bg-default) !important;
   color: var(--nav-item-fg-default) !important;
   border-radius: var(--bc-radius, calc(2.4em * var(--bc-shape-ratio, 0.28))) !important;
 }
 @media (hover: hover) and (pointer: fine) {
-  nav:has([data-testid="pin-sidebar-toggle"]) a:hover,
-  nav:has([data-testid="pin-sidebar-toggle"]) [role="button"]:hover {
+aside[aria-label*="sidebar" i] a:not([data-mode]):not([data-mode] *):hover,
+aside:has([data-testid="sidebar"]) a:not([data-mode]):not([data-mode] *):hover,
+nav:has([data-testid="pin-sidebar-toggle"]) a:not([data-mode]):not([data-mode] *):hover,
+aside.dframe-sidebar a:not([data-mode]):not([data-mode] *):hover,
+nav[aria-label*="sidebar" i] a:not([data-mode]):not([data-mode] *):hover,
+aside[aria-label*="sidebar" i] [role="button"]:not([data-mode]):not([data-mode] *):hover,
+aside:has([data-testid="sidebar"]) [role="button"]:not([data-mode]):not([data-mode] *):hover,
+nav:has([data-testid="pin-sidebar-toggle"]) [role="button"]:not([data-mode]):not([data-mode] *):hover,
+aside.dframe-sidebar [role="button"]:not([data-mode]):not([data-mode] *):hover,
+nav[aria-label*="sidebar" i] [role="button"]:not([data-mode]):not([data-mode] *):hover {
     background: var(--nav-item-bg-hover) !important;
   }
 }
-nav:has([data-testid="pin-sidebar-toggle"]) a[aria-current],
-nav:has([data-testid="pin-sidebar-toggle"]) a.active,
-nav:has([data-testid="pin-sidebar-toggle"]) [aria-selected="true"] {
+aside[aria-label*="sidebar" i] a[aria-current]:not([data-mode]):not([data-mode] *),
+aside:has([data-testid="sidebar"]) a[aria-current]:not([data-mode]):not([data-mode] *),
+nav:has([data-testid="pin-sidebar-toggle"]) a[aria-current]:not([data-mode]):not([data-mode] *),
+aside.dframe-sidebar a[aria-current]:not([data-mode]):not([data-mode] *),
+nav[aria-label*="sidebar" i] a[aria-current]:not([data-mode]):not([data-mode] *),
+aside[aria-label*="sidebar" i] a.active:not([data-mode]):not([data-mode] *),
+aside:has([data-testid="sidebar"]) a.active:not([data-mode]):not([data-mode] *),
+nav:has([data-testid="pin-sidebar-toggle"]) a.active:not([data-mode]):not([data-mode] *),
+aside.dframe-sidebar a.active:not([data-mode]):not([data-mode] *),
+nav[aria-label*="sidebar" i] a.active:not([data-mode]):not([data-mode] *),
+aside[aria-label*="sidebar" i] [aria-selected="true"]:not([data-mode]):not([data-mode] *),
+aside:has([data-testid="sidebar"]) [aria-selected="true"]:not([data-mode]):not([data-mode] *),
+nav:has([data-testid="pin-sidebar-toggle"]) [aria-selected="true"]:not([data-mode]):not([data-mode] *),
+aside.dframe-sidebar [aria-selected="true"]:not([data-mode]):not([data-mode] *),
+nav[aria-label*="sidebar" i] [aria-selected="true"]:not([data-mode]):not([data-mode] *) {
   background: var(--nav-item-bg-selected) !important;
   color: var(--nav-item-fg-selected) !important;
 }
@@ -354,20 +438,30 @@ button:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclau
    do not hardcode a parallel selector list in theme-engine.js. */
 button[data-testid*="send"] {
   background: var(--btn-primary-bg-default) !important;
+}
+button[data-testid*="send"]:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[data-testid*="send"] *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *) {
   color: var(--btn-primary-fg) !important;
 }
 button[aria-label*="delete" i], button[aria-label*="remove" i] {
   background: var(--btn-destructive-bg-default) !important;
+}
+button[aria-label*="delete" i]:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[aria-label*="delete" i] *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *),
+button[aria-label*="remove" i]:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[aria-label*="remove" i] *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *) {
   color: var(--btn-destructive-fg) !important;
 }
 
 @media (hover: hover) and (pointer: fine) {
   button[data-testid*="send"]:hover {
     background: var(--btn-primary-bg-hover) !important;
+  }
+  button[data-testid*="send"]:hover:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[data-testid*="send"]:hover *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *) {
     color: var(--btn-primary-fg-hover) !important;
   }
   button[aria-label*="delete" i]:hover, button[aria-label*="remove" i]:hover {
     background: var(--btn-destructive-bg-hover) !important;
+  }
+  button[aria-label*="delete" i]:hover:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[aria-label*="delete" i]:hover *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *),
+button[aria-label*="remove" i]:hover:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[aria-label*="remove" i]:hover *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *) {
     color: var(--btn-destructive-fg-hover) !important;
   }
 }
@@ -376,10 +470,15 @@ button[aria-label*="delete" i], button[aria-label*="remove" i] {
    default with no stuck hover. */
 button[data-testid*="send"]:active {
   background: var(--btn-primary-bg-active) !important;
+}
+button[data-testid*="send"]:active:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[data-testid*="send"]:active *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *) {
   color: var(--btn-primary-fg-active) !important;
 }
 button[aria-label*="delete" i]:active, button[aria-label*="remove" i]:active {
   background: var(--btn-destructive-bg-active) !important;
+}
+button[aria-label*="delete" i]:active:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[aria-label*="delete" i]:active *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *),
+button[aria-label*="remove" i]:active:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *), button[aria-label*="remove" i]:active *:not(#betterclaude-titlebar):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel):not(#betterclaude-settings-panel *):not(#betterclaude-hud):not(#betterclaude-hud *):not(#betterclaude-plugin-dock):not(#betterclaude-plugin-dock *) {
   color: var(--btn-destructive-fg-active) !important;
 }
 

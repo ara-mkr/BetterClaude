@@ -157,19 +157,117 @@ function lighten(hex, amount) {
 // composer — every other native-background surface in claude.ai's own
 // Tailwind-based UI has the identical latent bug (a native surface that
 // tracks claude.ai's own dark/light mode, painted independently of
-// BetterClaude's --bc-* text color). Flipping claude.ai's own `dark` class
-// and `color-scheme` to match the theme's luminance makes its `dark:`
-// variants track the theme instead of whatever mode claude.ai booted in.
-// Threshold matches scripts/regen-themes.js's isDark determination so the
-// two never disagree about what "dark" means for the same --bc-bg.
+// BetterClaude's --bc-* text color).
+//
+// WHAT ACTUALLY DRIVES claude.ai's COLOR MODE (measured, not assumed)
+//
+// This used to toggle a `dark` class on <html> and stop there. A live probe
+// of the shipped site (2026-08-19, build 2e4d689a34) settled what that was
+// worth: claude.ai's stylesheets contain ZERO `.dark` class selectors and 41
+// `[data-mode=...]` ones. The class toggle was a no-op against every rule on
+// the page, so the "systemic fix" above never actually fired — which is the
+// whole reason a LIGHT BetterClaude theme rendered as its near-black text
+// forced on top of claude.ai's still-dark native surfaces. Unreadable, and
+// the single largest source of "the theme doesn't apply properly".
+//
+// The real switch is the `data-mode` attribute, and it is NOT only on <html>:
+// the probe found it re-declared on descendants too (`div.dframe-root.cds-root
+// [data-mode="dark"]` wraps the whole app frame). A rule written as
+// `[data-mode="dark"] .dframe-sidebar` matches off the NEAREST such ancestor,
+// so flipping <html> alone leaves every one of those subtrees in the old mode.
+// Every mode-carrying element has to move together.
+//
+// The one thing that must NOT move: claude.ai reuses `data-mode` for its
+// Home/Code segmented control (`button.df-pill[data-mode="cowork"|"code"]`) —
+// same attribute, entirely unrelated meaning. Rewriting those would retarget
+// its navigation pills. Hence MODE_VALUES: only elements whose current value
+// is literally "light" or "dark" are ever touched.
 const DARK_LUMINANCE_THRESHOLD = 0.4;
 
-// Captured once, the first time BetterClaude ever touches <html>, so the
+// The only two values that mean "color mode". Anything else carrying
+// data-mode (the cowork/code nav pills) is a different feature wearing the
+// same attribute name and is left strictly alone.
+const MODE_VALUES = new Set(["light", "dark"]);
+const MODE_SELECTOR = '[data-mode="light"],[data-mode="dark"]';
+
+// Captured once, the first time BetterClaude ever touches the page, so the
 // master kill-switch can restore claude.ai's own original state exactly
 // rather than guessing a default. Module-level (not per-ThemeEngine-instance)
 // because <html> is a single shared DOM node regardless of how many
 // ThemeEngine instances exist.
 let _originalColorModeState = null;
+
+// The mode we last applied, remembered so the observer below can re-assert it
+// without needing the theme CSS again. null means "BetterClaude isn't managing
+// the mode right now" (never applied, or restored by the kill-switch).
+let _managedIsDark = null;
+let _modeObserver = null;
+
+function modeCarryingElements() {
+  const out = [document.documentElement];
+  // Descendants that re-declare the mode for their own subtree. Only ever
+  // light/dark — the selector itself excludes the nav pills by value.
+  document.querySelectorAll(MODE_SELECTOR).forEach((el) => {
+    if (el !== document.documentElement) out.push(el);
+  });
+  return out;
+}
+
+function writeMode(isDark) {
+  const value = isDark ? "dark" : "light";
+  modeCarryingElements().forEach((el) => {
+    // Never invent the attribute on an element that didn't have it; only
+    // <html> is written unconditionally, because that's the documented root.
+    if (el === document.documentElement || MODE_VALUES.has(el.getAttribute("data-mode"))) {
+      if (el.getAttribute("data-mode") !== value) el.setAttribute("data-mode", value);
+    }
+  });
+  document.documentElement.style.colorScheme = value;
+  // Kept purely as a belt-and-braces hook for any future claude.ai build that
+  // reintroduces a class-based switch, and because BetterClaude's own
+  // stylesheets are free to key off it. Costs one classList write.
+  document.documentElement.classList.toggle("dark", isDark);
+}
+
+// claude.ai is React and re-renders its app frame on navigation; a re-render
+// rebuilds `div.dframe-root` with Anthropic's own data-mode baked back in, and
+// without this the page would silently drift back to its boot mode mid-session
+// — the same class of bug as the Code pill needing re-mounting. Rather than
+// fight React for ownership, re-assert on mutation, exactly like core/code-tab.js.
+function ensureModeObserver() {
+  if (_modeObserver || typeof MutationObserver !== "function") return;
+  let queued = false;
+  _modeObserver = new MutationObserver((records) => {
+    if (_managedIsDark === null || queued) return;
+    // Only care about data-mode actually disagreeing with us — otherwise every
+    // unrelated DOM mutation on a busy page would schedule a write.
+    const wanted = _managedIsDark ? "dark" : "light";
+    const stale = records.some((r) => {
+      if (r.type === "attributes") {
+        const v = r.target.getAttribute("data-mode");
+        return MODE_VALUES.has(v) && v !== wanted;
+      }
+      return Array.from(r.addedNodes).some(
+        (n) => n.nodeType === 1 && (MODE_VALUES.has(n.getAttribute && n.getAttribute("data-mode")) ||
+          (n.querySelector && n.querySelector(MODE_SELECTOR)))
+      );
+    });
+    if (!stale) return;
+    queued = true;
+    // Coalesce a mutation burst into one write, and stay out of the mutation
+    // callback itself so our own attribute writes can't re-enter this handler.
+    Promise.resolve().then(() => {
+      queued = false;
+      if (_managedIsDark !== null) writeMode(_managedIsDark);
+    });
+  });
+  _modeObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-mode"],
+    subtree: true,
+    childList: true,
+  });
+}
 
 function syncClaudeColorMode(isDark) {
   if (typeof document === "undefined") return;
@@ -178,21 +276,45 @@ function syncClaudeColorMode(isDark) {
     _originalColorModeState = {
       colorScheme: root.style.colorScheme || "",
       hadDarkClass: root.classList.contains("dark"),
+      // The site's own boot mode, so the kill-switch restores what Anthropic
+      // shipped rather than assuming "dark".
+      dataMode: root.getAttribute("data-mode"),
     };
   }
-  root.style.colorScheme = isDark ? "dark" : "light";
-  root.classList.toggle("dark", isDark);
+  _managedIsDark = isDark;
+  writeMode(isDark);
+  ensureModeObserver();
 }
 
-// Restores claude.ai's own <html> color-mode state exactly as it was before
+// Restores claude.ai's own color-mode state exactly as it was before
 // BetterClaude ever touched it. Called from the master kill-switch teardown
 // path (electron/preload.js applyThemeState's disabled branch) so disabling
 // BetterClaude reverts claude.ai to stock, not just to "light".
 function restoreClaudeColorMode() {
   if (typeof document === "undefined" || _originalColorModeState === null) return;
   const root = document.documentElement;
+  // Stop re-asserting FIRST — otherwise the observer sees the restore as drift
+  // and immediately undoes it.
+  _managedIsDark = null;
+  if (_modeObserver) {
+    _modeObserver.disconnect();
+    _modeObserver = null;
+  }
   root.style.colorScheme = _originalColorModeState.colorScheme;
   root.classList.toggle("dark", _originalColorModeState.hadDarkClass);
+  const original = _originalColorModeState.dataMode;
+  if (original === null) root.removeAttribute("data-mode");
+  else {
+    // Put every mode-carrying element back, not just <html> — the same set
+    // syncClaudeColorMode moved. claude.ai keeps them in lockstep itself, so
+    // the boot value of <html> is the correct value for all of them.
+    root.setAttribute("data-mode", original);
+    if (MODE_VALUES.has(original)) {
+      document.querySelectorAll(MODE_SELECTOR).forEach((el) => {
+        if (el !== root) el.setAttribute("data-mode", original);
+      });
+    }
+  }
 }
 
 // Single source of truth for "what isDark means for this CSS's --bc-bg",
@@ -593,6 +715,40 @@ class ThemeEngine {
     const isDark = tokens.relativeLuminance(bg) < DARK_LUMINANCE_THRESHOLD;
     document.documentElement.style.setProperty("--btn-primary-fg-hover", tokens.pickButtonFg(lighten(color, 0.18)).color);
     document.documentElement.style.setProperty("--btn-primary-fg-active", tokens.pickButtonFg(tokens.shade(color, isDark ? 0.14 : -0.14)).color);
+
+    // claude.ai's OWN accent tokens (the bridge built by
+    // tokens.buildClaudeTokenBridge) are baked into the theme stylesheet from
+    // that theme's SHIPPED accent, exactly like --bc-link and --btn-primary-fg
+    // above — so they go stale the instant the user picks a custom accent, and
+    // stale here means every native accent-filled surface in claude.ai keeps
+    // the old color while BetterClaude's own chrome moves to the new one. Same
+    // staleness class, same fix: recompute and set inline on :root, which beats
+    // the stylesheet's declaration.
+    //
+    // --oncolor-* is the label color that sits ON those filled surfaces, so it
+    // is recomputed from the SAME contrast pick as --btn-primary-fg. Leaving it
+    // behind is the invisible-label bug in claude.ai's own buttons rather than
+    // ours, which is harder to notice and identically bad.
+    const accentBridge = {
+      "--accent-pro-000": isDark ? lighten(color, 0.22) : tokens.shade(color, -0.12),
+      "--accent-pro-100": color,
+      "--accent-pro-200": tokens.shade(color, isDark ? -0.1 : -0.2),
+      "--accent-pro-900": tokens.shade(color, -0.55),
+      "--oncolor-100": tokens.pickButtonFg(color).color,
+      "--oncolor-200": tokens.pickButtonFg(color).color,
+      "--oncolor-300": tokens.pickButtonFg(color).color,
+    };
+    Object.entries(accentBridge).forEach(([name, value]) => {
+      const triple = tokens.hslTriple(value);
+      // An unparseable accent leaves claude.ai's own token in place (correct,
+      // just untinted); writing an invalid triple would paint that surface
+      // transparent, so a bad value must never reach the page.
+      // "important" priority for the same reason the generated bridge carries
+      // it (see tokens.buildClaudeTokenBridge): claude.ai declares these same
+      // tokens under its own [data-mode] rules, and without the flag this
+      // override loses the specificity tie-break and does nothing.
+      if (triple) document.documentElement.style.setProperty(name, triple, "important");
+    });
   }
 
   setCustomCSS(code) {

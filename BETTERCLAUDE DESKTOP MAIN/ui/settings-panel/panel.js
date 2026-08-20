@@ -46,6 +46,8 @@ const fileWatcherSection = require("./sections/file-watcher");
 const clipboardBridgeSection = require("./sections/clipboard-bridge");
 const analyticsSection = require("./sections/analytics");
 const teamSyncSection = require("./sections/team-sync");
+const claudeCodeSection = require("./sections/claude-code");
+const personalitySection = require("./sections/personality");
 
 const PANEL_ID = "betterclaude-settings-panel";
 
@@ -94,6 +96,7 @@ const SECTIONS = [
   "Command Palette",
   "Profiles",
   "Automations",
+  "Personality",
   "Playful",
   "Usage Analytics",
   "Plugins",
@@ -102,6 +105,7 @@ const SECTIONS = [
   "Prompt Library",
   "File Watcher",
   "Clipboard Bridge",
+  "Claude Code",
   "Keyboard Shortcuts",
 ];
 
@@ -232,6 +236,7 @@ class SettingsPanel {
       "Command Palette": () => this._renderCommandPalette(),
       "Profiles": () => this._renderProfiles(),
       "Automations": () => this._renderAutomations(),
+      "Personality": () => this._renderPersonality(),
       "Playful": () => this._renderPlayful(),
       "Usage Analytics": () => this._renderAnalytics(),
       "Plugins": () => this._renderPlugins(),
@@ -240,6 +245,7 @@ class SettingsPanel {
       "Prompt Library": () => this._renderPromptLibrary(),
       "File Watcher": () => this._renderFileWatcher(),
       "Clipboard Bridge": () => this._renderClipboardBridge(),
+      "Claude Code": () => this._renderClaudeCode(),
       "Keyboard Shortcuts": () => this._renderShortcuts(),
     };
     (renderers[this.activeSection] || (() => {}))();
@@ -1649,6 +1655,8 @@ Object.assign(
   clipboardBridgeSection,
   analyticsSection,
   teamSyncSection,
+  claudeCodeSection,
+  personalitySection,
 );
 
 module.exports = { SettingsPanel, PANEL_ID, THEME_LABELS, SECTIONS };

@@ -112,6 +112,116 @@ const lighten = (hex, amount) => shade(hex, Math.abs(amount));
 const darken = (hex, amount) => shade(hex, -Math.abs(amount));
 
 /* ------------------------------------------------------------------ *
+ * claude.ai design-token bridge (§4.1 "the theme applies fully")
+ * ------------------------------------------------------------------ */
+
+// claude.ai paints its own surfaces from its own design tokens, and those
+// tokens are HSL COMPONENT TRIPLES, not colors: a live probe of the shipped
+// site (2026-08-19, build 2e4d689a34) read `--bg-100: 0 0% 8.2353%` and
+// `--text-500: 48 4.5872% 57.2549%` off <html>, consumed as `hsl(var(--bg-100))`
+// by its utility classes. Overriding them is what makes a BetterClaude theme
+// reach surfaces the scaffold's own selectors never name — the difference
+// between "the parts we painted are themed" and "the app is themed".
+//
+// Emitted in this exact space-separated `H S% L%` form on purpose: writing a
+// hex or an `hsl(...)` here would make every `hsl(var(--bg-100))` in
+// claude.ai's stylesheet resolve to garbage and paint the app transparent.
+function hslTriple(value) {
+  const rgb = parseColor(value);
+  if (!rgb) return null;
+  const { h, s, l } = rgbToHsl(rgb);
+  const round = (n) => Math.round(n * 1000) / 1000;
+  return `${round(h)} ${round(s * 100)}% ${round(l * 100)}%`;
+}
+
+// Linear blend between two hex colors, t in [0,1] (0 = a, 1 = b). Used to
+// derive the intermediate steps of claude.ai's token ramps from the two
+// endpoints a BetterClaude palette actually defines (text and text-muted),
+// rather than inventing a third color that matches neither.
+function mixHex(a, b, t) {
+  const ca = parseColor(a), cb = parseColor(b);
+  if (!ca || !cb) return a;
+  return toHex({
+    r: ca.r + (cb.r - ca.r) * t,
+    g: ca.g + (cb.g - ca.g) * t,
+    b: ca.b + (cb.b - ca.b) * t,
+  });
+}
+
+/**
+ * Build the --bg / --text / --border / --danger / --accent-pro / --oncolor
+ * overrides that retint claude.ai's own UI to a BetterClaude palette.
+ *
+ * Every mapping below is chosen to preserve the token's MEANING on the live
+ * site, which is why the ramps aren't uniform:
+ *   - bg-000 reads LIGHTER than bg-100 in dark mode (12.3% vs 8.2%), so it is
+ *     the raised/elevated surface, not a darker one. It maps to bg-elevated.
+ *   - bg-200..500 descend away from the page surface; they are derived by
+ *     pushing --bc-bg away from the text color, so the ramp runs the correct
+ *     direction on light themes too instead of being hardcoded "darker".
+ *   - border-* is TEXT-polarity, not border-polarity: live dark mode ships
+ *     `52.5 11.7647% 86.6667%` — near-white — because claude.ai renders these
+ *     at low alpha over the surface. Mapping them to --bc-border (a dark value
+ *     on a dark theme) would erase every divider in the app, so they map to
+ *     --bc-text and keep the "ink at low alpha" semantic the site relies on.
+ *   - oncolor-* is the label color that sits ON a filled accent/danger button,
+ *     so it takes the same contrast-checked pick as --btn-primary-fg rather
+ *     than a hardcoded white.
+ *
+ * Any token whose source color can't be parsed is simply omitted: a missing
+ * override leaves claude.ai's own value in place (correct, just untinted),
+ * whereas emitting an invalid triple would paint that surface transparent.
+ */
+function buildClaudeTokenBridge({ bg, bgElevated, bgSidebar, text, textMuted, border, accent, danger, onAccent, isDark }) {
+  const away = isDark ? darken : lighten;
+  const pairs = [
+    ["--bg-000", bgElevated],
+    ["--bg-100", bg],
+    ["--bg-200", bgSidebar],
+    ["--bg-300", away(bg, 0.06)],
+    ["--bg-400", away(bg, 0.1)],
+    ["--bg-500", away(bg, 0.14)],
+    ["--text-000", text],
+    ["--text-100", text],
+    ["--text-200", mixHex(text, textMuted, 0.45)],
+    ["--text-300", mixHex(text, textMuted, 0.65)],
+    ["--text-400", textMuted],
+    ["--text-500", textMuted],
+    ["--border-100", text],
+    ["--border-200", text],
+    ["--border-300", text],
+    ["--border-400", text],
+    ["--accent-pro-000", isDark ? lighten(accent, 0.22) : darken(accent, 0.12)],
+    ["--accent-pro-100", accent],
+    ["--accent-pro-200", isDark ? darken(accent, 0.1) : darken(accent, 0.2)],
+    ["--accent-pro-900", darken(accent, 0.55)],
+    ["--danger-000", isDark ? lighten(danger, 0.22) : darken(danger, 0.12)],
+    ["--danger-100", danger],
+    ["--danger-200", darken(danger, 0.1)],
+    ["--danger-900", darken(danger, 0.55)],
+    ["--oncolor-100", onAccent],
+    ["--oncolor-200", onAccent],
+    ["--oncolor-300", onAccent],
+  ];
+  return pairs
+    .map(([name, value]) => {
+      const triple = hslTriple(value);
+      // !important, and it is load-bearing rather than habit. claude.ai
+      // declares these same tokens under `[data-mode="light"]` /
+      // `[data-mode="dark"]` — specificity (0,1,0), identical to :root, and
+      // its stylesheet is appended after ours. Without !important every one of
+      // these overrides loses the tie-break and the whole bridge is inert: it
+      // measured as having NO effect at all on the live page, with claude.ai's
+      // own values still winning on every token. Custom properties honour
+      // !important in the cascade, which makes this independent of selector
+      // specificity and of who is appended last.
+      return triple ? `  ${name}: ${triple} !important;` : null;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+/* ------------------------------------------------------------------ *
  * WCAG contrast (§4.1 background/scrim, §5.2.4 auditor check)
  * ------------------------------------------------------------------ */
 
@@ -598,6 +708,37 @@ function deriveAccessibleColor(colorHex, referenceHex, passes) {
 // with native light chrome under forced light theme text — a ~1:1 contrast
 // button on every dark theme. Add a new painted selector here and BOTH files
 // stay correct automatically; do not hardcode a parallel list anywhere else.
+// Expand a painted-button family's attribute selectors into a selector list
+// that covers the button AND everything inside it.
+//
+// The descendants are not optional. The scaffold forces `color: var(--bc-text)`
+// onto `body *` so no leaf node can escape the theme, and that rule beats
+// INHERITANCE from the button's own color — so a button whose label sits in a
+// child <span> (which is most of claude.ai's: icon + text) painted its
+// background with the accent and then let the page's ordinary text color land
+// on the label anyway. Measured live on claude.ai's /code route: the send
+// button rendered its label at 2.62:1 on its own accent fill, an unreadable
+// control produced entirely by our own stylesheet. Only the button element was
+// ever targeted, so nothing in the audit's palette math could have caught it —
+// the tokens were right and the selector was too narrow.
+//
+// OWN_CHROME_EXCLUDE is carried on every selector this builds, and it is there
+// for SPECIFICITY, not for the exclusion. The blanket text rule is
+// `body *` + that exclusion chain — four :not(#id) pairs, i.e. specificity
+// (8,0,1) — while a bare `button[data-testid*="send"]` is (0,1,1). Both are
+// !important, so the blanket rule simply outranked it and the painted-button
+// foreground never applied AT ALL, not even to the button element itself.
+// Appending the same exclusion chain here makes the two rules equal on
+// specificity, and these rules are emitted after the blanket one, so source
+// order decides in their favour. (It also genuinely excludes BetterClaude's
+// own chrome, which is correct anyway — the title bar owns its own colors.)
+function paintedButtonSelector(attrs, suffix = "") {
+  return attrs
+    .map((attr) =>
+      `button${attr}${suffix}${OWN_CHROME_EXCLUDE}, button${attr}${suffix} *${OWN_CHROME_EXCLUDE}`)
+    .join(",\n");
+}
+
 const SCAFFOLD_PAINTED_BUTTON_ATTRS = {
   primary: ['[data-testid*="send"]'],
   destructive: ['[aria-label*="delete" i]', '[aria-label*="remove" i]'],
@@ -837,17 +978,16 @@ function buildScaffoldCSS(vars = {}, opts = {}) {
      against the theme's SHIPPED --bc-accent at generation time (pickButtonFg
      above), replacing a hardcoded #ffffff that failed WCAG AA on 19/20
      bundled themes (as low as 1.07:1 on high-contrast's #ffff00 accent).
-     KNOWN GAP: this is a baked value, not a live CSS expression — a user's
-     runtime accent override (ThemeEngine.setAccentColor writes --bc-accent as
-     an inline :root style in core/theme-engine.js, which this project does
-     not touch) will NOT cause this to recompute, and would re-create the
-     exact same stale-white-text bug at runtime. contrast-color()/
-     color-contrast() would let the browser recompute this against the LIVE
-     --bc-accent with no JS at all, but neither is reliably available at this
-     project's stated Chrome 120+ target (contrast-color() only reached
-     stable at Chrome 147). setAccentColor must be taught to recompute
-     --btn-primary-fg/--btn-destructive-fg itself, the same way it already
-     recomputes --bc-focus-ring/--bc-border-focus on every accent change. */
+     This is a baked value, not a live CSS expression, so a runtime accent
+     override would leave it stale — that gap is closed in
+     ThemeEngine.setAccentColor, which recomputes --btn-primary-fg (and its
+     hover/active variants, and the bridged --oncolor-* tokens) from the new
+     accent on every change, the same way it already recomputes
+     --bc-focus-ring/--bc-border-focus. --btn-destructive-fg deliberately
+     needs no recompute: it derives from --bc-danger, which the accent picker
+     never touches. contrast-color() would let the browser do all of this with
+     no JS, but it only reached stable in Chrome 147, past this project's
+     Chrome 120+ target. */
   --btn-primary-fg: ${btnPrimaryFg.color};
   --btn-primary-fg-hover: ${pickButtonFg(accentHover).color};
   --btn-primary-fg-active: ${pickButtonFg(shade(accent, isDark ? 0.14 : -0.14)).color};
@@ -874,6 +1014,18 @@ function buildScaffoldCSS(vars = {}, opts = {}) {
 
   --bc-focus-ring: ${ring};
   --bc-border-focus: ${ring};
+
+  /* claude.ai's OWN design tokens, retinted to this palette (see
+     buildClaudeTokenBridge above for what each one means and why the ramps
+     aren't uniform). This is what makes the theme reach surfaces the
+     selectors below never name: claude.ai paints its chrome from these, so
+     overriding them themes the app natively instead of fighting it with
+     another !important rule per element. Emitted as space-separated
+     H S% L% triples because that is how the site consumes them, via
+     hsl(var(--bg-100)) — no backticks anywhere in this comment on purpose:
+     it sits inside a template literal, where one stray backtick silently
+     ends the string and breaks the entire module. */
+${buildClaudeTokenBridge({ bg, bgElevated, bgSidebar, text, textMuted: textMutedAccessible, border, accent, danger, onAccent: btnPrimaryFg.color, isDark })}
 }
 
 body {
@@ -1169,20 +1321,28 @@ button${OWN_CHROME_EXCLUDE} {
    do not hardcode a parallel selector list in theme-engine.js. */
 button${SCAFFOLD_PAINTED_BUTTON_ATTRS.primary.join(", button")} {
   background: var(--btn-primary-bg-default) !important;
+}
+${paintedButtonSelector(SCAFFOLD_PAINTED_BUTTON_ATTRS.primary)} {
   color: var(--btn-primary-fg) !important;
 }
 button${SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive.join(", button")} {
   background: var(--btn-destructive-bg-default) !important;
+}
+${paintedButtonSelector(SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive)} {
   color: var(--btn-destructive-fg) !important;
 }
 
 @media (hover: hover) and (pointer: fine) {
   button${SCAFFOLD_PAINTED_BUTTON_ATTRS.primary.join(":hover, button")}:hover {
     background: var(--btn-primary-bg-hover) !important;
+  }
+  ${paintedButtonSelector(SCAFFOLD_PAINTED_BUTTON_ATTRS.primary, ":hover")} {
     color: var(--btn-primary-fg-hover) !important;
   }
   button${SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive.join(":hover, button")}:hover {
     background: var(--btn-destructive-bg-hover) !important;
+  }
+  ${paintedButtonSelector(SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive, ":hover")} {
     color: var(--btn-destructive-fg-hover) !important;
   }
 }
@@ -1191,10 +1351,14 @@ button${SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive.join(", button")} {
    default with no stuck hover. */
 button${SCAFFOLD_PAINTED_BUTTON_ATTRS.primary.join(":active, button")}:active {
   background: var(--btn-primary-bg-active) !important;
+}
+${paintedButtonSelector(SCAFFOLD_PAINTED_BUTTON_ATTRS.primary, ":active")} {
   color: var(--btn-primary-fg-active) !important;
 }
 button${SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive.join(":active, button")}:active {
   background: var(--btn-destructive-bg-active) !important;
+}
+${paintedButtonSelector(SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive, ":active")} {
   color: var(--btn-destructive-fg-active) !important;
 }
 
@@ -1297,4 +1461,7 @@ module.exports = {
   pickComposerPlaceholder,
   buildScaffoldCSS,
   extractThemeVars,
+  hslTriple,
+  mixHex,
+  buildClaudeTokenBridge,
 };

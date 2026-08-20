@@ -670,6 +670,58 @@ ${lines.join("\n")}`);
       }
       var lighten = (hex, amount) => shade(hex, Math.abs(amount));
       var darken = (hex, amount) => shade(hex, -Math.abs(amount));
+      function hslTriple(value) {
+        const rgb = parseColor(value);
+        if (!rgb) return null;
+        const { h, s, l } = rgbToHsl(rgb);
+        const round = (n) => Math.round(n * 1e3) / 1e3;
+        return `${round(h)} ${round(s * 100)}% ${round(l * 100)}%`;
+      }
+      function mixHex(a, b, t) {
+        const ca = parseColor(a), cb = parseColor(b);
+        if (!ca || !cb) return a;
+        return toHex({
+          r: ca.r + (cb.r - ca.r) * t,
+          g: ca.g + (cb.g - ca.g) * t,
+          b: ca.b + (cb.b - ca.b) * t
+        });
+      }
+      function buildClaudeTokenBridge({ bg, bgElevated, bgSidebar, text, textMuted, border, accent, danger, onAccent, isDark }) {
+        const away = isDark ? darken : lighten;
+        const pairs = [
+          ["--bg-000", bgElevated],
+          ["--bg-100", bg],
+          ["--bg-200", bgSidebar],
+          ["--bg-300", away(bg, 0.06)],
+          ["--bg-400", away(bg, 0.1)],
+          ["--bg-500", away(bg, 0.14)],
+          ["--text-000", text],
+          ["--text-100", text],
+          ["--text-200", mixHex(text, textMuted, 0.45)],
+          ["--text-300", mixHex(text, textMuted, 0.65)],
+          ["--text-400", textMuted],
+          ["--text-500", textMuted],
+          ["--border-100", text],
+          ["--border-200", text],
+          ["--border-300", text],
+          ["--border-400", text],
+          ["--accent-pro-000", isDark ? lighten(accent, 0.22) : darken(accent, 0.12)],
+          ["--accent-pro-100", accent],
+          ["--accent-pro-200", isDark ? darken(accent, 0.1) : darken(accent, 0.2)],
+          ["--accent-pro-900", darken(accent, 0.55)],
+          ["--danger-000", isDark ? lighten(danger, 0.22) : darken(danger, 0.12)],
+          ["--danger-100", danger],
+          ["--danger-200", darken(danger, 0.1)],
+          ["--danger-900", darken(danger, 0.55)],
+          ["--oncolor-100", onAccent],
+          ["--oncolor-200", onAccent],
+          ["--oncolor-300", onAccent]
+        ];
+        return pairs.map(([name, value]) => {
+          const triple = hslTriple(value);
+          return triple ? `  ${name}: ${triple} !important;` : null;
+        }).filter(Boolean).join("\n");
+      }
       function relativeLuminance(value) {
         const rgb = parseColor(value);
         if (!rgb) return NaN;
@@ -953,6 +1005,9 @@ ${lines.join("\n")}`);
         }
         return referenceHex;
       }
+      function paintedButtonSelector(attrs, suffix = "") {
+        return attrs.map((attr) => `button${attr}${suffix}${OWN_CHROME_EXCLUDE}, button${attr}${suffix} *${OWN_CHROME_EXCLUDE}`).join(",\n");
+      }
       var SCAFFOLD_PAINTED_BUTTON_ATTRS = {
         primary: ['[data-testid*="send"]'],
         destructive: ['[aria-label*="delete" i]', '[aria-label*="remove" i]']
@@ -1053,17 +1108,16 @@ ${lines.join("\n")}`);
      against the theme's SHIPPED --bc-accent at generation time (pickButtonFg
      above), replacing a hardcoded #ffffff that failed WCAG AA on 19/20
      bundled themes (as low as 1.07:1 on high-contrast's #ffff00 accent).
-     KNOWN GAP: this is a baked value, not a live CSS expression \u2014 a user's
-     runtime accent override (ThemeEngine.setAccentColor writes --bc-accent as
-     an inline :root style in core/theme-engine.js, which this project does
-     not touch) will NOT cause this to recompute, and would re-create the
-     exact same stale-white-text bug at runtime. contrast-color()/
-     color-contrast() would let the browser recompute this against the LIVE
-     --bc-accent with no JS at all, but neither is reliably available at this
-     project's stated Chrome 120+ target (contrast-color() only reached
-     stable at Chrome 147). setAccentColor must be taught to recompute
-     --btn-primary-fg/--btn-destructive-fg itself, the same way it already
-     recomputes --bc-focus-ring/--bc-border-focus on every accent change. */
+     This is a baked value, not a live CSS expression, so a runtime accent
+     override would leave it stale \u2014 that gap is closed in
+     ThemeEngine.setAccentColor, which recomputes --btn-primary-fg (and its
+     hover/active variants, and the bridged --oncolor-* tokens) from the new
+     accent on every change, the same way it already recomputes
+     --bc-focus-ring/--bc-border-focus. --btn-destructive-fg deliberately
+     needs no recompute: it derives from --bc-danger, which the accent picker
+     never touches. contrast-color() would let the browser do all of this with
+     no JS, but it only reached stable in Chrome 147, past this project's
+     Chrome 120+ target. */
   --btn-primary-fg: ${btnPrimaryFg.color};
   --btn-primary-fg-hover: ${pickButtonFg(accentHover).color};
   --btn-primary-fg-active: ${pickButtonFg(shade(accent, isDark ? 0.14 : -0.14)).color};
@@ -1090,6 +1144,18 @@ ${lines.join("\n")}`);
 
   --bc-focus-ring: ${ring};
   --bc-border-focus: ${ring};
+
+  /* claude.ai's OWN design tokens, retinted to this palette (see
+     buildClaudeTokenBridge above for what each one means and why the ramps
+     aren't uniform). This is what makes the theme reach surfaces the
+     selectors below never name: claude.ai paints its chrome from these, so
+     overriding them themes the app natively instead of fighting it with
+     another !important rule per element. Emitted as space-separated
+     H S% L% triples because that is how the site consumes them, via
+     hsl(var(--bg-100)) \u2014 no backticks anywhere in this comment on purpose:
+     it sits inside a template literal, where one stray backtick silently
+     ends the string and breaks the entire module. */
+${buildClaudeTokenBridge({ bg, bgElevated, bgSidebar, text, textMuted: textMutedAccessible, border, accent, danger, onAccent: btnPrimaryFg.color, isDark })}
 }
 
 body {
@@ -1385,20 +1451,28 @@ button${OWN_CHROME_EXCLUDE} {
    do not hardcode a parallel selector list in theme-engine.js. */
 button${SCAFFOLD_PAINTED_BUTTON_ATTRS.primary.join(", button")} {
   background: var(--btn-primary-bg-default) !important;
+}
+${paintedButtonSelector(SCAFFOLD_PAINTED_BUTTON_ATTRS.primary)} {
   color: var(--btn-primary-fg) !important;
 }
 button${SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive.join(", button")} {
   background: var(--btn-destructive-bg-default) !important;
+}
+${paintedButtonSelector(SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive)} {
   color: var(--btn-destructive-fg) !important;
 }
 
 @media (hover: hover) and (pointer: fine) {
   button${SCAFFOLD_PAINTED_BUTTON_ATTRS.primary.join(":hover, button")}:hover {
     background: var(--btn-primary-bg-hover) !important;
+  }
+  ${paintedButtonSelector(SCAFFOLD_PAINTED_BUTTON_ATTRS.primary, ":hover")} {
     color: var(--btn-primary-fg-hover) !important;
   }
   button${SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive.join(":hover, button")}:hover {
     background: var(--btn-destructive-bg-hover) !important;
+  }
+  ${paintedButtonSelector(SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive, ":hover")} {
     color: var(--btn-destructive-fg-hover) !important;
   }
 }
@@ -1407,10 +1481,14 @@ button${SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive.join(", button")} {
    default with no stuck hover. */
 button${SCAFFOLD_PAINTED_BUTTON_ATTRS.primary.join(":active, button")}:active {
   background: var(--btn-primary-bg-active) !important;
+}
+${paintedButtonSelector(SCAFFOLD_PAINTED_BUTTON_ATTRS.primary, ":active")} {
   color: var(--btn-primary-fg-active) !important;
 }
 button${SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive.join(":active, button")}:active {
   background: var(--btn-destructive-bg-active) !important;
+}
+${paintedButtonSelector(SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive, ":active")} {
   color: var(--btn-destructive-fg-active) !important;
 }
 
@@ -1495,7 +1573,10 @@ a { color: var(--bc-link) !important; }
         pickComposerFg,
         pickComposerPlaceholder,
         buildScaffoldCSS,
-        extractThemeVars
+        extractThemeVars,
+        hslTriple,
+        mixHex,
+        buildClaudeTokenBridge
       };
     }
   });
@@ -1756,24 +1837,93 @@ ${animate ? `
         return `#${(r << 16 | g << 8 | b).toString(16).padStart(6, "0")}`;
       }
       var DARK_LUMINANCE_THRESHOLD = 0.4;
+      var MODE_VALUES = /* @__PURE__ */ new Set(["light", "dark"]);
+      var MODE_SELECTOR = '[data-mode="light"],[data-mode="dark"]';
       var _originalColorModeState = null;
+      var _managedIsDark = null;
+      var _modeObserver = null;
+      function modeCarryingElements() {
+        const out = [document.documentElement];
+        document.querySelectorAll(MODE_SELECTOR).forEach((el) => {
+          if (el !== document.documentElement) out.push(el);
+        });
+        return out;
+      }
+      function writeMode(isDark) {
+        const value = isDark ? "dark" : "light";
+        modeCarryingElements().forEach((el) => {
+          if (el === document.documentElement || MODE_VALUES.has(el.getAttribute("data-mode"))) {
+            if (el.getAttribute("data-mode") !== value) el.setAttribute("data-mode", value);
+          }
+        });
+        document.documentElement.style.colorScheme = value;
+        document.documentElement.classList.toggle("dark", isDark);
+      }
+      function ensureModeObserver() {
+        if (_modeObserver || typeof MutationObserver !== "function") return;
+        let queued = false;
+        _modeObserver = new MutationObserver((records) => {
+          if (_managedIsDark === null || queued) return;
+          const wanted = _managedIsDark ? "dark" : "light";
+          const stale = records.some((r) => {
+            if (r.type === "attributes") {
+              const v = r.target.getAttribute("data-mode");
+              return MODE_VALUES.has(v) && v !== wanted;
+            }
+            return Array.from(r.addedNodes).some(
+              (n) => n.nodeType === 1 && (MODE_VALUES.has(n.getAttribute && n.getAttribute("data-mode")) || n.querySelector && n.querySelector(MODE_SELECTOR))
+            );
+          });
+          if (!stale) return;
+          queued = true;
+          Promise.resolve().then(() => {
+            queued = false;
+            if (_managedIsDark !== null) writeMode(_managedIsDark);
+          });
+        });
+        _modeObserver.observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: ["data-mode"],
+          subtree: true,
+          childList: true
+        });
+      }
       function syncClaudeColorMode(isDark) {
         if (typeof document === "undefined") return;
         const root = document.documentElement;
         if (_originalColorModeState === null) {
           _originalColorModeState = {
             colorScheme: root.style.colorScheme || "",
-            hadDarkClass: root.classList.contains("dark")
+            hadDarkClass: root.classList.contains("dark"),
+            // The site's own boot mode, so the kill-switch restores what Anthropic
+            // shipped rather than assuming "dark".
+            dataMode: root.getAttribute("data-mode")
           };
         }
-        root.style.colorScheme = isDark ? "dark" : "light";
-        root.classList.toggle("dark", isDark);
+        _managedIsDark = isDark;
+        writeMode(isDark);
+        ensureModeObserver();
       }
       function restoreClaudeColorMode() {
         if (typeof document === "undefined" || _originalColorModeState === null) return;
         const root = document.documentElement;
+        _managedIsDark = null;
+        if (_modeObserver) {
+          _modeObserver.disconnect();
+          _modeObserver = null;
+        }
         root.style.colorScheme = _originalColorModeState.colorScheme;
         root.classList.toggle("dark", _originalColorModeState.hadDarkClass);
+        const original = _originalColorModeState.dataMode;
+        if (original === null) root.removeAttribute("data-mode");
+        else {
+          root.setAttribute("data-mode", original);
+          if (MODE_VALUES.has(original)) {
+            document.querySelectorAll(MODE_SELECTOR).forEach((el) => {
+              if (el !== root) el.setAttribute("data-mode", original);
+            });
+          }
+        }
       }
       function syncClaudeColorModeFromThemeCSS(css) {
         const bg = extractThemeVars(css)["--bc-bg"];
@@ -2055,6 +2205,19 @@ ${hideRules}
           const isDark = tokens.relativeLuminance(bg) < DARK_LUMINANCE_THRESHOLD;
           document.documentElement.style.setProperty("--btn-primary-fg-hover", tokens.pickButtonFg(lighten(color, 0.18)).color);
           document.documentElement.style.setProperty("--btn-primary-fg-active", tokens.pickButtonFg(tokens.shade(color, isDark ? 0.14 : -0.14)).color);
+          const accentBridge = {
+            "--accent-pro-000": isDark ? lighten(color, 0.22) : tokens.shade(color, -0.12),
+            "--accent-pro-100": color,
+            "--accent-pro-200": tokens.shade(color, isDark ? -0.1 : -0.2),
+            "--accent-pro-900": tokens.shade(color, -0.55),
+            "--oncolor-100": tokens.pickButtonFg(color).color,
+            "--oncolor-200": tokens.pickButtonFg(color).color,
+            "--oncolor-300": tokens.pickButtonFg(color).color
+          };
+          Object.entries(accentBridge).forEach(([name, value]) => {
+            const triple = tokens.hslTriple(value);
+            if (triple) document.documentElement.style.setProperty(name, triple, "important");
+          });
         }
         setCustomCSS(code) {
           if (!this.settings) return;
@@ -2914,6 +3077,17 @@ ${text}` : text;
         // read from Claude Code's own config — these are BetterClaude's own three
         // preferences for the window it draws around the CLI.
         codeWindow: {
+          // Whether the CLI pill appears next to Anthropic's own Home / Code
+          // segmented control (core/code-tab.js). On by default — it is the entry
+          // point to the embedded terminal, and a feature nobody can find is a
+          // feature nobody has.
+          //
+          // Turning it off removes only the PILL, never the pane: the tray item, the
+          // app menu, the Cmd-Shift-K accelerator and `--code` all still open it.
+          // That is deliberate. A user switching this off is saying "stop putting a
+          // third pill in Anthropic's nav", not "take the terminal away", and a
+          // toggle that silently disabled four unrelated affordances would be a trap.
+          tabEnabled: true,
           // Directory the last session was started in, so reopening lands back in
           // the project the user was working on rather than at $HOME every time.
           // Re-validated with statSync before use (a stored folder can be renamed or

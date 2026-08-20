@@ -711,12 +711,12 @@ ipcMain.on("buddy:set-interactive", (_e, interactive) => {
 });
 
 // A plain click (mousedown/up with no drag distance in between) on the
-// buddy — the Dock icon is hidden, so this and the tray are the only ways
-// back into the main window.
+// buddy: one more way back into the main window, alongside the Dock icon and
+// the tray. (An older comment here claimed the Dock icon was hidden. It never
+// was — nothing in this app calls app.dock.hide() — and that belief is what
+// let the Dock-click path stay broken for so long without being questioned.)
 ipcMain.on("buddy:open-main", () => {
-  if (!mainWindow || mainWindow.isDestroyed()) { createWindow(); return; }
-  mainWindow.show();
-  mainWindow.focus();
+  revealMainWindow();
 });
 
 // Reported by the claude.ai preload, which is the only place that can see the
@@ -1033,6 +1033,52 @@ function setCodeViewSuspended(suspended) {
   }
 }
 
+
+/**
+ * The ONE way to bring the main window back, used by every affordance that
+ * can be asked to do so: the macOS Dock icon (`activate`), the tray menu, a
+ * click on the buddy, the global accelerators, and openCodeWindow below.
+ *
+ * Each of those used to do its own thing, and the differences were the bug.
+ * Two failure modes, both of which stranded the user with a running app they
+ * could not get back to:
+ *
+ *   1. `show()` does NOT restore a MINIMIZED window on macOS — `restore()`
+ *      does. `app.on("activate")` called only `show()`, so the sequence
+ *      "minimise the window, then click the Dock icon" left the window
+ *      minimised with no feedback whatsoever. The Dock icon appeared dead,
+ *      and the tray and the buddy were genuinely the only remaining ways in.
+ *      That is exactly the reported symptom.
+ *   2. `activate` guarded with `getAllWindows().length === 0` before falling
+ *      through to `mainWindow.show()`. The buddy overlay is a real
+ *      BrowserWindow, so with the buddy enabled that count is never 0 — a
+ *      destroyed or not-yet-created mainWindow took the `else` branch and
+ *      threw a TypeError inside the event handler instead of reopening.
+ *
+ * Both are fixed by construction here: existence is checked on the window
+ * itself rather than inferred from a window count, and restore-then-show-then
+ * -focus is the single ordering everyone gets.
+ */
+function revealMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return mainWindow;
+  }
+  // macOS only, and normally a no-op: nothing in BetterClaude hides the Dock
+  // icon today, but if any future accessory-mode path ever does, a window with
+  // no Dock icon and no way to raise it is unrecoverable. Cheap insurance.
+  if (process.platform === "darwin" && app.dock && !app.dock.isVisible()) app.dock.show();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  // Raise the whole app, not just the window. A hidden app (Cmd-H, or our own
+  // close-to-tray path) keeps its windows "visible" as far as show() is
+  // concerned, so without this the window can be re-shown behind whatever the
+  // user is looking at and still read as "nothing happened".
+  if (process.platform === "darwin") app.focus({ steal: true });
+  return mainWindow;
+}
+
 /**
  * The single entry point every launch affordance (tray, menu, accelerator,
  * --code, the in-page pill) goes through. Focuses the existing session rather
@@ -1040,9 +1086,7 @@ function setCodeViewSuspended(suspended) {
  */
 function openCodeWindow(requestedCwd) {
   if (!mainWindow || mainWindow.isDestroyed()) return null;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  revealMainWindow();
 
   const firstRun = !codeView;
   setCodeViewShown(true);
@@ -1385,9 +1429,8 @@ function buildTray() {
         {
           label: mainWindow && mainWindow.isVisible() ? "Hide" : "Show",
           click: () => {
-            if (!mainWindow) return;
-            if (mainWindow.isVisible()) mainWindow.hide();
-            else mainWindow.show();
+            if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) mainWindow.hide();
+            else revealMainWindow();
           },
         },
         {
@@ -1625,13 +1668,13 @@ ipcMain.handle("appearance:select-theme", (_e, themeId) => {
   return broadcastSettings();
 });
 
-// Called before any manual cosmetic write. It snapshots the current preset
-// once, then later writes retain the user's deliberately-custom look.
-ipcMain.handle("appearance:begin-custom", () => {
-  beginCustomAppearance();
-  return broadcastSettings();
-});
-
+// NOTE: there is deliberately no standalone "appearance:begin-custom" channel.
+// One existed, went unused by every renderer, and was strictly worse than the
+// transaction below: calling it as a separate round-trip is precisely the
+// begin-then-write race that combining the two into one handler exists to
+// prevent. Snapshotting is a step of a cosmetic write, not something a caller
+// should be able to do on its own.
+//
 // One IPC transaction prevents a late cosmetic write from racing a preset
 // selection and silently re-layering itself on top of that pristine preset.
 ipcMain.handle("appearance:set-cosmetic", (_e, keyPath, value) => {
@@ -1772,10 +1815,11 @@ function registerPromptShortcuts() {
     if (!p.shortcut) return;
     try {
       globalShortcut.register(p.shortcut, () => {
-        if (!mainWindow) return;
-        mainWindow.show();
-        mainWindow.focus();
-        mainWindow.webContents.send("betterclaude:trigger-prompt", p.id);
+        // Global accelerator: the window may well be minimised or the app
+        // hidden when this fires, which is precisely the case a bare show()
+        // does not handle. Same reveal path as everything else.
+        const win = revealMainWindow();
+        if (win) win.webContents.send("betterclaude:trigger-prompt", p.id);
       });
     } catch (_err) {
       // Invalid/unavailable accelerator (e.g. already claimed by the OS) —
@@ -2368,6 +2412,15 @@ function startDevAutoReload() {
 }
 
 app.whenReady().then(() => {
+  // Give the Dock the real BetterClaude mark. Packaged builds get this from
+  // build/icon.icns via electron-builder, but an unpackaged `npm start` runs
+  // out of node_modules/electron and would otherwise sit in the Dock as the
+  // generic Electron atom — indistinguishable from any other dev Electron app
+  // on the machine, which is its own "I can't find my window" problem.
+  if (process.platform === "darwin" && app.dock) {
+    const dockIcon = nativeImage.createFromPath(APP_ICON_PATH);
+    if (!dockIcon.isEmpty()) app.dock.setIcon(dockIcon);
+  }
   seedBuiltinPlugins();
   // Before any window opens, so the first paint already uses the current
   // scaffold rather than flashing a stale custom theme (see the function's
@@ -2438,9 +2491,10 @@ app.whenReady().then(() => {
     );
   });
 
+  // Dock-icon click / Cmd-Tab back into the app. See revealMainWindow for why
+  // this must not be a bare show(), and must not gate on a window count.
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    else mainWindow.show();
+    revealMainWindow();
   });
 });
 

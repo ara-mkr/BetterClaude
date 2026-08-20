@@ -455,6 +455,17 @@ const DEFAULT_SETTINGS = {
   // read from Claude Code's own config — these are BetterClaude's own three
   // preferences for the window it draws around the CLI.
   codeWindow: {
+    // Whether the CLI pill appears next to Anthropic's own Home / Code
+    // segmented control (core/code-tab.js). On by default — it is the entry
+    // point to the embedded terminal, and a feature nobody can find is a
+    // feature nobody has.
+    //
+    // Turning it off removes only the PILL, never the pane: the tray item, the
+    // app menu, the Cmd-Shift-K accelerator and `--code` all still open it.
+    // That is deliberate. A user switching this off is saying "stop putting a
+    // third pill in Anthropic's nav", not "take the terminal away", and a
+    // toggle that silently disabled four unrelated affordances would be a trap.
+    tabEnabled: true,
     // Directory the last session was started in, so reopening lands back in
     // the project the user was working on rather than at $HOME every time.
     // Re-validated with statSync before use (a stored folder can be renamed or

@@ -4,7 +4,7 @@
  * SettingsPanel.prototype by panel.js.
  */
 
-const { el, field, toggleField } = require("../dom-helpers");
+const { el, field, rangeField, toggleField } = require("../dom-helpers");
 
 module.exports = {
   _renderPlayful() {
@@ -20,12 +20,31 @@ module.exports = {
     wrap.appendChild(toggleField(
       "Play Snake while Claude is working",
       playful.snakeWhileWaiting === true,
-      (v) => this._set("playful.snakeWhileWaiting", v),
+      (v) => { this._set("playful.snakeWhileWaiting", v); this.renderSection(); },
     ));
     wrap.appendChild(el("p", {
       class: "bc-hint",
       text: "A small Snake board pops up in the corner whenever Claude is generating a response, and disappears on its own once the answer lands. Its ✕ dismisses that one wait — it comes back the next time Claude is thinking.",
     }));
+    // playful.snakeDelayMs was read by electron/preload.js's wait handler but
+    // had no control anywhere, so the grace period was permanently whatever
+    // the schema default happened to be. It matters: without a delay the board
+    // flashes up on every fast reply, which is the main reason people turn the
+    // whole feature off.
+    if (playful.snakeWhileWaiting === true) {
+      wrap.appendChild(rangeField("Wait before it appears", {
+        min: 0,
+        max: 10000,
+        step: 500,
+        value: Number(playful.snakeDelayMs) || 0,
+        format: (v) => (v === 0 ? "instantly" : `${(v / 1000).toFixed(1)}s`),
+        onInput: (v) => this._set("playful.snakeDelayMs", v),
+      }));
+      wrap.appendChild(el("p", {
+        class: "bc-hint",
+        text: "How long Claude has to be working before the board shows up, so quick answers never trigger it.",
+      }));
+    }
 
     wrap.appendChild(el("h2", { text: "Loading-screen tips", class: "bc-ae-subhead" }));
     wrap.appendChild(el("p", {

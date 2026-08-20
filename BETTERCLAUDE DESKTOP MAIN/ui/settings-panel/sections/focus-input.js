@@ -106,7 +106,12 @@ module.exports = {
 
     const renderValueControl = () => {
       valueContainer.innerHTML = "";
-      const target = COMMAND_TARGETS.find((t) => t.path === targetSelect.value);
+      // Fall back to the first target rather than trusting the select to
+      // always hold a known path. An unmatched value here used to throw on
+      // `target.type`, and a throw inside a render method takes the ENTIRE
+      // Command Palette section down to a blank pane — a whole settings page
+      // lost to one bad string.
+      const target = COMMAND_TARGETS.find((t) => t.path === targetSelect.value) || COMMAND_TARGETS[0];
       let valueSelect;
       if (target.type === "boolean") {
         valueSelect = el("select", {}, [el("option", { value: "true", text: "On" }), el("option", { value: "false", text: "Off" })]);
@@ -131,7 +136,7 @@ module.exports = {
       class: "bc-btn",
       text: "Add command",
       onclick: () => {
-        const target = COMMAND_TARGETS.find((t) => t.path === targetSelect.value);
+        const target = COMMAND_TARGETS.find((t) => t.path === targetSelect.value) || COMMAND_TARGETS[0];
         const rawValue = valueContainer._select.value;
         const value = target.type === "boolean" ? rawValue === "true" : rawValue;
         const label = labelInput.value.trim() || `${target.label}: ${rawValue}`;

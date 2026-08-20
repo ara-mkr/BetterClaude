@@ -472,12 +472,34 @@ async function bootstrap() {
   // toggles it and the measurement that tells main.js where claude.ai's own
   // content area currently is, so the pane lands beside the sidebar rather than
   // on top of it.
-  codeTab = mountCodeTab({
-    titleBarHeight: TITLE_BAR_HEIGHT,
-    onActivate: () => ipcRenderer.invoke("code-tab:show").catch(() => {}),
-    onDeactivate: () => ipcRenderer.invoke("code-tab:hide").catch(() => {}),
-    onLayout: (rect) => ipcRenderer.send("code-tab:layout", rect),
-  });
+  // Settings -> the CLI pill can be switched off (codeWindow.tabEnabled). Only
+  // the pill is gated: the tray item, app menu, Cmd-Shift-K and `--code` keep
+  // working either way, so turning this off declutters Anthropic's nav without
+  // taking the terminal away. See core/settings-schema.js for the reasoning.
+  function syncCodeTabEnabled() {
+    const enabled = !(settings.codeWindow && settings.codeWindow.tabEnabled === false);
+    if (enabled && !codeTab) {
+      codeTab = mountCodeTab({
+        titleBarHeight: TITLE_BAR_HEIGHT,
+        onActivate: () => ipcRenderer.invoke("code-tab:show").catch(() => {}),
+        onDeactivate: () => ipcRenderer.invoke("code-tab:hide").catch(() => {}),
+        onLayout: (rect) => ipcRenderer.send("code-tab:layout", rect),
+      });
+      // The pane can already be open (tray/menu/accelerator, or a claude.ai
+      // reload that the pane outlived), so adopt main.js's truth rather than
+      // assuming a freshly mounted pill means a closed pane.
+      ipcRenderer.invoke("code-tab:get-state").then(({ shown }) => {
+        if (codeTab && shown) codeTab.setActive(true);
+      }).catch(() => {});
+    } else if (!enabled && codeTab) {
+      // Unmount removes the pill only. Deliberately does NOT hide an open
+      // pane: the user asked for the control to go away, not for their running
+      // terminal session to be closed out from under them.
+      codeTab.unmount();
+      codeTab = null;
+    }
+  }
+  syncCodeTabEnabled();
   // Something other than the pill can open the pane (tray, menu, the Settings
   // accelerator, `--code`), so the pill's state follows main.js rather than
   // main.js following the pill.
@@ -827,6 +849,7 @@ async function bootstrap() {
     applyThemeState();
     applyScheduledTheme();
     applyPluginState();
+    syncCodeTabEnabled();
     syncZenModeWithFocusPlugin();
     syncDigestTimer();
     refreshAchievements();
@@ -1235,6 +1258,18 @@ async function bootstrap() {
     clipboardBridgeStatus = status;
     clipboardBridgeStatusHandlers.forEach((cb) => cb(status));
   });
+  // The line above is the ONLY thing that ever moved this cache off its
+  // hardcoded "idle" seed, and a claude.ai reload gives this preload a fresh
+  // realm while the bridge keeps running untouched in the main process. So a
+  // running, or failed, bridge read as "idle" in Settings until the next
+  // broadcast happened to fire — which for a bridge sitting in a steady state
+  // is never. Ask main.js for the truth at bootstrap instead of assuming it,
+  // the same reconciliation the embedded Code pane does for its own state.
+  ipcRenderer.invoke("clipboardBridge:get-status").then((status) => {
+    if (!status) return;
+    clipboardBridgeStatus = status;
+    clipboardBridgeStatusHandlers.forEach((cb) => cb(status));
+  }).catch(() => {});
   ipcRenderer.on("betterclaude:clipboard-synced", (_e, { deviceName }) => {
     notify(`Clipboard synced from ${deviceName || "another device"}.`, { category: "plugin" });
   });
@@ -1387,6 +1422,9 @@ async function bootstrap() {
     },
 
     // --- Clipboard Bridge bridge ---
+    // Cached locally and kept fresh by the broadcast above. See the
+    // bootstrap-time reconciliation next to that listener for why the cache
+    // alone is not enough.
     getClipboardBridgeStatus: () => clipboardBridgeStatus,
     onClipboardBridgeStatus: (cb) => clipboardBridgeStatusHandlers.push(cb),
     pushClipboardNow: () => ipcRenderer.invoke("clipboardBridge:push-now"),
