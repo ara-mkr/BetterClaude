@@ -43,6 +43,29 @@ module.exports = {
         + "last sync shows up here as a conflict for you to resolve.",
     }));
 
+    if (this.host.checkSessionBundlePresence) {
+      const bundleRow = el("div", { class: "bc-hint", text: "Checking for a shared session bundle…" });
+      wrap.appendChild(bundleRow);
+      this.host.checkSessionBundlePresence().then(({ files }) => {
+        bundleRow.innerHTML = "";
+        if (!files || files.length === 0) {
+          bundleRow.remove();
+          return;
+        }
+        bundleRow.appendChild(el("span", {
+          text: files.length === 1
+            ? `📦 Shared bundle available: ${files[0]}`
+            : `📦 ${files.length} shared bundles available in this project`,
+        }));
+        bundleRow.appendChild(document.createTextNode(" — "));
+        bundleRow.appendChild(el("button", {
+          class: "bc-btn bc-btn-secondary",
+          text: "Open in Code window",
+          onclick: () => this.host.openSessionBundlesPanel(),
+        }));
+      }).catch(() => bundleRow.remove());
+    }
+
     wrap.appendChild(toggleField("Enable Team Sync", ts.enabled, (v) => this._set("teamSync.enabled", v)));
     wrap.appendChild(textField("Repo URL", ts.repoUrl, (v) => this._set("teamSync.repoUrl", v.trim()), { placeholder: "https://github.com/your-team/betterclaude-shared.git" }));
     wrap.appendChild(textField("Branch", ts.branch, (v) => this._set("teamSync.branch", v.trim() || "main")));

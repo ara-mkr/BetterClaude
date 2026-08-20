@@ -1468,6 +1468,14 @@ async function bootstrap() {
     keepLocalTeamSyncFile: (relPath) => ipcRenderer.invoke("teamSync:keep-local", relPath),
     openTeamSyncFolder: () => ipcRenderer.invoke("teamSync:open-folder"),
 
+    // Session Bundle (Team Sync 2.0) presence indicator only — the actual
+    // export/import UI lives in the Code window's own settings panel (see
+    // ui/settings-panel/sections/session-bundle.js), because that is the one
+    // place the xterm.js viewer it reuses is already loaded. This bridge just
+    // gets the user there.
+    checkSessionBundlePresence: () => ipcRenderer.invoke("sessionBundle:check-presence"),
+    openSessionBundlesPanel: () => ipcRenderer.invoke("sessionBundle:open-panel"),
+
     // --- Customize Everything bridge methods ---
     playSoundPreview: (type) => soundEngine.play(type),
     previewConfetti: () => celebrate(),
@@ -1513,7 +1521,16 @@ async function bootstrap() {
     },
   };
 
-  const settingsPanel = new SettingsPanel(panelHost);
+  // "Session Bundles" is excluded here on purpose: its read-only transcript
+  // viewer needs window.BetterClaudeXterm, a global only the Code window's
+  // own page script loads (see ui/code-window/terminal.js's
+  // mount-transcript-viewer bridge), and this window's panelHost below has
+  // no listSessionBundleSessions/exportSessionBundle/etc. — only the two
+  // indicator methods Team Sync's "shared bundle available" row needs. The
+  // full section lives in electron/code-preload.js's CODE_WINDOW_SECTIONS.
+  const settingsPanel = new SettingsPanel(panelHost, {
+    sections: SECTIONS.filter((s) => s !== "Session Bundles"),
+  });
 
   // --- Title bar ---
   // Inlined as a data URI (not a file:// src) since claude.ai's CSP img-src

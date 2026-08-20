@@ -540,6 +540,23 @@
 .bc-plugin-info { display: flex; flex-direction: column; gap: 2px; }
 .bc-plugin-version { font-size: 11px; opacity: 0.6; }
 
+/* --- Session Bundles (Team Sync 2.0) --- */
+.bc-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--bc-border, #2c2347);
+}
+.bc-tag-included { color: #7fd6a0; border-color: #7fd6a0; }
+.bc-tag-redacted { color: #e8cf7d; border-color: #e8cf7d; }
+.bc-tag-excluded { color: var(--bc-text-muted, #9a91b8); }
+.bc-danger-text { color: var(--bc-danger, #ef4444); }
+.bc-sb-viewer { height: 260px; }
+
 /* --- Keyboard focus rings (§1.1): always visible, contrast-enforced, and
    independent of the accent so they never vanish on a low-contrast accent.
    Previously the entire settings panel had NO focus-visible styling. --- */

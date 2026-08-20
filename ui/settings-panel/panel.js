@@ -20,6 +20,10 @@
  *   host.getClipboardBridgeStatus() / host.onClipboardBridgeStatus(cb) / host.pushClipboardNow() / host.testClipboardBridgeConnection()
  *   host.openAnalyticsDashboard()
  *   host.syncTeamNow() / host.getTeamSyncDiff(relPath) / host.applyTeamSyncFile(relPath) / host.keepLocalTeamSyncFile(relPath) / host.openTeamSyncFolder()
+ *   host.checkSessionBundlePresence() / host.openSessionBundlesPanel() — Team Sync section's bundle indicator
+ *   host.listSessionBundleSessions() / host.scanSessionBundle(sessionIds) / host.exportSessionBundle(opts) — Session Bundles export
+ *   host.importOpenBundle() / host.readBundleSession(opts) / host.readBundleDiff(bundlePath) / host.pickResumeFolder() / host.resumeSessionBundle(opts) — Session Bundles import
+ *   host.mountTranscriptViewer(container, messages) -> { destroy } — read-only xterm view of a bundled session, Code window only
  *   host.getAppInfo() -> Promise<{version, isPackaged, githubUrl, releasesUrl}>
  *   host.getUpdateStatus() / host.onUpdateStatus(cb)
  *   host.checkForUpdates() / host.downloadUpdate() / host.installUpdate() / host.openReleasesPage()
@@ -46,6 +50,7 @@ const fileWatcherSection = require("./sections/file-watcher");
 const clipboardBridgeSection = require("./sections/clipboard-bridge");
 const analyticsSection = require("./sections/analytics");
 const teamSyncSection = require("./sections/team-sync");
+const sessionBundleSection = require("./sections/session-bundle");
 const claudeCodeSection = require("./sections/claude-code");
 const personalitySection = require("./sections/personality");
 
@@ -99,6 +104,7 @@ const SECTIONS = [
   "Usage Analytics",
   "Plugins",
   "Team Sync",
+  "Session Bundles",
   "Skill Marketplace",
   "Prompt Library",
   "File Watcher",
@@ -237,6 +243,7 @@ class SettingsPanel {
       "Usage Analytics": () => this._renderAnalytics(),
       "Plugins": () => this._renderPlugins(),
       "Team Sync": () => this._renderTeamSync(),
+      "Session Bundles": () => this._renderSessionBundle(),
       "Skill Marketplace": () => this._renderSkillMarketplace(),
       "Prompt Library": () => this._renderPromptLibrary(),
       "File Watcher": () => this._renderFileWatcher(),
@@ -1651,6 +1658,7 @@ Object.assign(
   clipboardBridgeSection,
   analyticsSection,
   teamSyncSection,
+  sessionBundleSection,
   claudeCodeSection,
   personalitySection,
 );

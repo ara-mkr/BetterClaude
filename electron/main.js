@@ -24,6 +24,7 @@ const { pickLoadingTip } = require("../core/motion-fx");
 const { deriveChannelId, encryptText, decryptText } = require("../core/clipboard-bridge");
 const analyticsDb = require("./analytics-db");
 const teamSync = require("./team-sync");
+const sessionBundle = require("./session-bundle");
 
 // Single source of truth for the repo that backs the update feed and every
 // "view on GitHub" affordance. Must stay in lockstep with package.json's
@@ -1916,6 +1917,206 @@ ipcMain.handle("teamSync:get-diff", async (_e, relPath) => {
 });
 
 ipcMain.handle("teamSync:open-folder", () => shell.openPath(getTeamSyncDir()));
+
+// --- IPC: Session Bundle export/import (Team Sync 2.0) ---
+//
+// Lives in electron/session-bundle.js (fs/child_process/adm-zip, same split as
+// team-sync.js). This app never spawns or authenticates against claude.ai for
+// any of it — every read here is a local file the real `claude` CLI already
+// wrote to `~/.claude/projects/`, or `git`'s own stdout.
+//
+// "The repo" for these handlers is the last folder a Code session was opened
+// in (store's codeWindow.lastCwd, the same value resolveCodeCwd() falls back
+// to) — there is no other notion of "the current project" in this app, since
+// Team Sync's own repoUrl points at a *shared plugin/theme* repo, not the
+// user's project.
+function sessionBundleCwd() {
+  return store.get("codeWindow.lastCwd") || os.homedir();
+}
+
+function sessionBundleClaudePath() {
+  try {
+    return locateClaude(store.get("codeWindow.claudePath") || undefined);
+  } catch {
+    return null;
+  }
+}
+
+function slugifyForFilename(text) {
+  const slug = String(text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-+|-+$)/g, "")
+    .slice(0, 60);
+  return slug || "session-bundle";
+}
+
+ipcMain.handle("sessionBundle:list-sessions", () => {
+  const cwd = sessionBundleCwd();
+  return { cwd, sessions: sessionBundle.listSessionsForCwd(cwd) };
+});
+
+ipcMain.handle("sessionBundle:scan", (_e, sessionIds) => {
+  const cwd = sessionBundleCwd();
+  const all = sessionBundle.listSessionsForCwd(cwd);
+  const targets = all.filter((s) => (sessionIds || []).includes(s.sessionId));
+  return sessionBundle.scanSessions(targets);
+});
+
+ipcMain.handle("sessionBundle:export", async (_e, { projectName, decisions, includeDiff }) => {
+  const cwd = sessionBundleCwd();
+  const all = sessionBundle.listSessionsForCwd(cwd);
+  const decisionMap = decisions || {};
+  const sessions = all.map((s) => ({
+    sessionId: s.sessionId,
+    filePath: s.filePath,
+    messageCount: s.messageCount,
+    firstTimestamp: s.firstTimestamp,
+    lastTimestamp: s.lastTimestamp,
+    action: decisionMap[s.sessionId] || "include",
+  }));
+
+  const defaultName = `${slugifyForFilename(projectName || path.basename(cwd))}.bcbundle`;
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: "Export Session Bundle",
+    defaultPath: defaultName,
+    filters: [{ name: "BetterClaude Session Bundle", extensions: ["bcbundle"] }],
+  });
+  if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+
+  try {
+    const manifest = await sessionBundle.exportSessionBundle({
+      cwd,
+      projectName: projectName || path.basename(cwd),
+      sessions,
+      includeDiff: !!includeDiff,
+      author: os.userInfo().username,
+      binaryPath: sessionBundleClaudePath(),
+      destPath: result.filePath,
+    });
+    return { ok: true, path: result.filePath, manifest };
+  } catch (err) {
+    if (err instanceof sessionBundle.SecretsFoundError) {
+      return { ok: false, blocked: true, sessionId: err.sessionId, findings: err.findings };
+    }
+    return { ok: false, error: err.message };
+  }
+});
+
+// Non-recursive on purpose: a bundle is meant to sit at the project root next
+// to where someone would `git add` it, not be discovered several directories
+// down.
+ipcMain.handle("sessionBundle:check-presence", () => {
+  const cwd = sessionBundleCwd();
+  try {
+    const files = fs.readdirSync(cwd).filter((f) => f.toLowerCase().endsWith(".bcbundle"));
+    return { cwd, files };
+  } catch {
+    return { cwd, files: [] };
+  }
+});
+
+ipcMain.handle("sessionBundle:import-open", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Import Session Bundle",
+    filters: [{ name: "BetterClaude Session Bundle", extensions: ["bcbundle"] }],
+    properties: ["openFile"],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  const bundlePath = result.filePaths[0];
+  const manifest = sessionBundle.readBundleManifest(bundlePath);
+  return { bundlePath, manifest };
+});
+
+ipcMain.handle("sessionBundle:import-open-path", (_e, bundlePath) => {
+  const manifest = sessionBundle.readBundleManifest(bundlePath);
+  return { bundlePath, manifest };
+});
+
+ipcMain.handle("sessionBundle:import-read-session", (_e, { bundlePath, sessionId }) =>
+  sessionBundle.readBundleSessionMessages(bundlePath, sessionId)
+);
+
+ipcMain.handle("sessionBundle:import-read-diff", (_e, bundlePath) => sessionBundle.readBundleDiff(bundlePath));
+
+// A plain folder picker, unlike code:pick-folder which also opens/restarts the
+// Code session as a side effect — "resume from here" needs the path first, so
+// it can pass it straight to sessionBundle:resume instead of opening a session
+// in the old folder and then a second one in the new folder.
+ipcMain.handle("sessionBundle:pick-folder", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Resume Session In Folder",
+    defaultPath: sessionBundleCwd(),
+    buttonLabel: "Resume Here",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+  return result.filePaths[0];
+});
+
+/**
+ * Waits for a live pty and its first output chunk (a timing signal only —
+ * the chunk's *content* is never inspected, same compliance rule as the rest
+ * of this file), then writes the resume context as if the user had typed it.
+ * The extra delay after that first chunk gives the CLI's own startup screen
+ * time to finish painting before anything is typed into it.
+ */
+function scheduleResumeInjection(text) {
+  const attempt = () => {
+    if (!codeSession) return false;
+    codeSession.once("data", () => {
+      setTimeout(() => {
+        if (codeSession) codeSession.write(text);
+      }, 1500);
+    });
+    return true;
+  };
+  if (attempt()) return;
+  const interval = setInterval(() => {
+    if (attempt()) clearInterval(interval);
+  }, 300);
+  setTimeout(() => clearInterval(interval), 15000);
+}
+
+// "Resume from here": opens a NEW local session in the target folder and
+// types the bundle's transcript in as its first input, exactly like a user
+// pasting it in — it never re-attaches to, replays into, or otherwise
+// reopens the original session (which may not even exist on this machine).
+ipcMain.handle("sessionBundle:resume", async (_e, { bundlePath, sessionId, targetCwd }) => {
+  const messages = sessionBundle.readBundleSessionMessages(bundlePath, sessionId);
+  const text = sessionBundle.formatMessagesAsPlainText(messages);
+  const cwd = targetCwd && fs.existsSync(targetCwd) ? targetCwd : resolveCodeCwd();
+  const prompt =
+    "The following is context from a shared Claude Code session bundle (a fresh session, not the " +
+    `original one). Please review it, then continue from here.\n\n${text}\n`;
+
+  const hadSession = !!codeView;
+  openCodeWindow(cwd);
+  if (hadSession) {
+    codeView.webContents.send("code:restarting", { cwd });
+    startCodeSession({
+      cwd,
+      cols: codeLastTerm.cols || CODE_DEFAULT_COLS,
+      rows: codeLastTerm.rows || CODE_DEFAULT_ROWS,
+    });
+  }
+  scheduleResumeInjection(prompt);
+  return { ok: true, cwd };
+});
+
+// Opens the Code window (if needed) and jumps its own settings panel straight
+// to Session Bundles — how the Team Sync section's "shared bundle available"
+// indicator gets a user from the main window to the actual export/import UI,
+// which lives in the Code window because that is where the xterm.js viewer
+// it reuses is already loaded (see ui/settings-panel/sections/session-bundle.js).
+ipcMain.handle("sessionBundle:open-panel", () => {
+  const cwd = sessionBundleCwd();
+  openCodeWindow(cwd);
+  if (codeView && !codeView.webContents.isDestroyed()) {
+    codeView.webContents.send("code:goto-settings-section", "Session Bundles");
+  }
+  return true;
+});
 
 // --- IPC: Skill Marketplace ---
 // "Install" only ever downloads SKILL.md + assets into a local folder —

@@ -318,4 +318,76 @@
     api.ready(size.cols, size.rows);
     term.focus();
   });
+
+  // --- Session Bundle transcript viewer bridge ---
+  //
+  // ui/settings-panel/sections/session-bundle.js runs in the preload/isolated
+  // world (same shared document, but contextIsolation gives it its own JS
+  // globals) and has no access to Terminal/FitAddon, which are main-world
+  // globals this page's own <script src="xterm.bundle.js"> tag set. A
+  // CustomEvent on the shared document is the handoff: the preload side
+  // dispatches one carrying the DOM node it already appended (DOM nodes,
+  // unlike JS classes, are the same object across worlds) plus the parsed
+  // transcript data; this listener builds a second, read-only Terminal into
+  // that node using the classes only this side has. Nothing here reads or
+  // writes the live `claude` child — a completely separate Terminal instance,
+  // never wired to `api`.
+  const transcriptViewers = new Map();
+
+  function formatTranscriptMessage(message) {
+    const content = message && message.message && message.message.content;
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      return content
+        .filter((block) => block && block.type === "text" && typeof block.text === "string")
+        .map((block) => block.text)
+        .join("\n");
+    }
+    return "";
+  }
+
+  document.addEventListener("betterclaude:mount-transcript-viewer", (e) => {
+    const { requestId, container, messages } = (e && e.detail) || {};
+    if (!requestId || !container) return;
+
+    const viewerTerm = new Terminal({
+      convertEol: true,
+      disableStdin: true,
+      cursorBlink: false,
+      scrollback: 5000,
+      fontFamily: cssVar("--bc-code-font", "SFMono-Regular, Menlo, Consolas, monospace"),
+      fontSize: 13,
+      theme: themeFromCSSVars(),
+    });
+    const viewerFit = new FitAddon();
+    viewerTerm.loadAddon(viewerFit);
+    viewerTerm.open(container);
+
+    (Array.isArray(messages) ? messages : []).forEach((m) => {
+      if (m.type !== "user" && m.type !== "assistant") return;
+      const text = formatTranscriptMessage(m).trim();
+      if (!text) return;
+      const label = m.type === "user" ? "\x1b[1;36mUser\x1b[0m" : "\x1b[1;35mClaude\x1b[0m";
+      viewerTerm.writeln(`${label}:`);
+      text.split("\n").forEach((line) => viewerTerm.writeln(line));
+      viewerTerm.writeln("");
+    });
+
+    try {
+      viewerFit.fit();
+    } catch {
+      // Container may not have a measurable layout yet — the terminal still
+      // renders at its default size, just not perfectly fitted.
+    }
+
+    transcriptViewers.set(requestId, viewerTerm);
+  });
+
+  document.addEventListener("betterclaude:unmount-transcript-viewer", (e) => {
+    const { requestId } = (e && e.detail) || {};
+    const viewerTerm = transcriptViewers.get(requestId);
+    if (!viewerTerm) return;
+    viewerTerm.dispose();
+    transcriptViewers.delete(requestId);
+  });
 })();

@@ -65,6 +65,11 @@ const CODE_WINDOW_SECTIONS = [
   "Appearance Editor",
   "Custom CSS",
   "Fonts",
+  // Session Bundles (Team Sync 2.0) lives only here, not in the main
+  // window's full-surface Settings home — its read-only transcript viewer
+  // reuses window.BetterClaudeXterm, the xterm.js bundle only this window
+  // loads (see ui/code-window/terminal.js's mount-transcript-viewer bridge).
+  "Session Bundles",
 ];
 
 // --- The pty bridge (page world) ---
@@ -289,6 +294,36 @@ async function bootstrap() {
     downloadUpdate: () => ipcRenderer.invoke("updater:download"),
     installUpdate: () => ipcRenderer.invoke("updater:install"),
     openReleasesPage: () => ipcRenderer.invoke("updater:open-releases"),
+
+    // --- Session Bundles (Team Sync 2.0) ---
+    // All plain ipcRenderer.invoke passthroughs to electron/session-bundle.js
+    // (via electron/main.js's sessionBundle:* handlers) except
+    // mountTranscriptViewer, which has no IPC channel at all — it hands the
+    // parsed transcript to the PAGE-world script (ui/code-window/terminal.js)
+    // over a CustomEvent, because that is where the xterm.js classes live
+    // under contextIsolation. See the comment on that bridge for why.
+    listSessionBundleSessions: () => ipcRenderer.invoke("sessionBundle:list-sessions"),
+    scanSessionBundle: (sessionIds) => ipcRenderer.invoke("sessionBundle:scan", sessionIds),
+    exportSessionBundle: (opts) => ipcRenderer.invoke("sessionBundle:export", opts),
+    importOpenBundle: () => ipcRenderer.invoke("sessionBundle:import-open"),
+    readBundleSession: ({ bundlePath, sessionId }) =>
+      ipcRenderer.invoke("sessionBundle:import-read-session", { bundlePath, sessionId }),
+    readBundleDiff: (bundlePath) => ipcRenderer.invoke("sessionBundle:import-read-diff", bundlePath),
+    pickResumeFolder: () => ipcRenderer.invoke("sessionBundle:pick-folder"),
+    resumeSessionBundle: (opts) => ipcRenderer.invoke("sessionBundle:resume", opts),
+    mountTranscriptViewer: (container, messages) => {
+      const requestId = `sb-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      document.dispatchEvent(new CustomEvent("betterclaude:mount-transcript-viewer", {
+        detail: { requestId, container, messages: JSON.parse(JSON.stringify(messages || [])) },
+      }));
+      return {
+        destroy: () => {
+          document.dispatchEvent(new CustomEvent("betterclaude:unmount-transcript-viewer", {
+            detail: { requestId },
+          }));
+        },
+      };
+    },
   };
 
   const settingsPanel = new SettingsPanel(panelHost, { sections: CODE_WINDOW_SECTIONS });
@@ -349,6 +384,15 @@ async function bootstrap() {
   // Same accelerator the main window uses for Settings, so the shortcut means
   // the same thing in whichever window has focus.
   ipcRenderer.on("betterclaude:toggle-settings", () => settingsPanel.toggle());
+
+  // How the main window's Team Sync "shared bundle available" indicator gets
+  // a user here: electron/main.js's sessionBundle:open-panel handler reveals
+  // this window, then sends this so the panel opens straight to the section
+  // that actually does something with it, rather than landing on Appearance.
+  ipcRenderer.on("code:goto-settings-section", (_e, sectionName) => {
+    settingsPanel.open();
+    settingsPanel.openSection(sectionName);
+  });
 }
 
 bootstrap().catch((err) => console.error("[BetterClaude] code-window preload failed", err));
