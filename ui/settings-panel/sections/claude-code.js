@@ -29,7 +29,7 @@ module.exports = {
     ));
     wrap.appendChild(el("p", {
       class: "bc-hint",
-      text: "Adds a CLI pill next to Claude's own Home and Code tabs. Turning it off only hides the pill — the tray item, the app menu and ⌘⇧K still open the terminal.",
+      text: "Adds a CLI pill next to Claude's own Home and Code tabs. Turning it off only hides the pill — the terminal icon in BetterClaude's own title bar, the tray item, the app menu and ⌘⇧K still open the terminal.",
     }));
 
     wrap.appendChild(rangeField("Terminal font size", {

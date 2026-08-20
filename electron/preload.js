@@ -458,6 +458,14 @@ async function bootstrap() {
   // would TDZ-fault — same reason updateBanner and pluginLoader are declared
   // this way further up.
   let codeTab = null;
+  // Set once the title bar mounts (near the end of bootstrap); the state
+  // syncing below runs before that, so this starts null and every updater
+  // checks for it rather than assuming it exists.
+  let titleBarHandle = null;
+  // Mirrors main.js's codeViewShown independent of the pill: the title bar's
+  // own Code button has to work even when codeWindow.tabEnabled is off and
+  // codeTab is null, the same way the tray/menu/accelerator already do.
+  let codeShown = false;
   // Watches for claude.ai's OWN "refresh to update" prompt. Purely
   // observational — see core/claude-reload.js for why detection is not what
   // recovery depends on.
@@ -513,9 +521,10 @@ async function bootstrap() {
   // content area currently is, so the pane lands beside the sidebar rather than
   // on top of it.
   // Settings -> the CLI pill can be switched off (codeWindow.tabEnabled). Only
-  // the pill is gated: the tray item, app menu, Cmd-Shift-K and `--code` keep
-  // working either way, so turning this off declutters Anthropic's nav without
-  // taking the terminal away. See core/settings-schema.js for the reasoning.
+  // the pill is gated: the title bar's own Code button, the tray item, app
+  // menu, Cmd-Shift-K and `--code` keep working either way, so turning this
+  // off declutters Anthropic's nav without taking the terminal away. See
+  // core/settings-schema.js for the reasoning.
   function syncCodeTabEnabled() {
     const enabled = !(settings.codeWindow && settings.codeWindow.tabEnabled === false);
     if (enabled && !codeTab) {
@@ -545,14 +554,18 @@ async function bootstrap() {
   // accelerator, `--code`), so the pill's state follows main.js rather than
   // main.js following the pill.
   ipcRenderer.on("code-tab:state", (_e, { shown }) => {
+    codeShown = shown;
     if (codeTab && codeTab.isActive() !== shown) codeTab.setActive(shown);
+    if (titleBarHandle) titleBarHandle.setCodeActive(shown);
   });
   // A claude.ai reload gives this preload a fresh realm with no memory of the
   // pane, which outlived the reload in its own webContents. Ask main.js what
   // the truth is rather than assuming the pane is closed — assuming would leave
   // the pill reading "off" while the terminal is plainly visible.
   ipcRenderer.invoke("code-tab:get-state").then(({ shown }) => {
+    codeShown = shown;
     if (codeTab && shown) codeTab.setActive(true);
+    if (titleBarHandle) titleBarHandle.setCodeActive(shown);
   }).catch(() => {});
 
   // The embedded pane is a native view composited above this page, so it also
@@ -1579,15 +1592,27 @@ async function bootstrap() {
   // policy doesn't allow file:// resources into the page.
   const logoSrc = "data:image/png;base64," + fs.readFileSync(path.join(__dirname, "../assets/logo-mark.png")).toString("base64");
 
-  mountTitleBar({
+  titleBarHandle = mountTitleBar({
     minimize: () => ipcRenderer.invoke("window:minimize"),
     maximizeToggle: () => ipcRenderer.invoke("window:maximize-toggle"),
     close: () => ipcRenderer.invoke("window:close"),
     toggleAlwaysOnTop: () => ipcRenderer.invoke("window:toggle-always-on-top"),
     isAlwaysOnTop: () => ipcRenderer.invoke("window:is-always-on-top"),
     openSettings: () => settingsPanel.toggle(),
+    // Native chrome, always available — unlike the claude.ai-injected CLI
+    // pill (core/code-tab.js), which lives inside Anthropic's own DOM and can
+    // be missed by real pointer clicks when their page re-renders or layers
+    // something over it. This button never has that problem: it's our own
+    // webContents. Deliberately NOT gated on codeWindow.tabEnabled — that
+    // setting's whole point is decluttering Anthropic's nav, not removing the
+    // terminal, and this button isn't in Anthropic's nav.
+    onToggleCode: () => ipcRenderer.invoke(codeShown ? "code-tab:hide" : "code-tab:show").catch(() => {}),
     logoSrc,
   });
+  // codeShown may already be true by the time the title bar mounts (its own
+  // get-state fetch above can resolve first) — reflect that on first paint
+  // instead of waiting for the next state change to correct it.
+  titleBarHandle.setCodeActive(codeShown);
 
   // --- Menu / accelerator bridges from main.js ---
   ipcRenderer.on("betterclaude:toggle-settings", () => settingsPanel.toggle());

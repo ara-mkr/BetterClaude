@@ -251,23 +251,55 @@
     api.restart(size.cols || 100, size.rows || 30);
   }
 
-  async function showResumePicker() {
+  // Two-tab sessions picker: "Local" (this folder's own transcripts, via
+  // sessionBundle) and "Cloud" (`claude agents --json --all` — every active
+  // session the CLI itself currently knows about, interactive or background,
+  // in any folder). The "Local"/"Cloud" entries at the top of each list act
+  // as the tab switcher — they just re-render the overlay with the other
+  // list, reusing the same primitives the exit/error overlays already use
+  // rather than adding a second picker UI.
+  async function showLocalSessionsPicker() {
     const sessions = await api.listSessions();
-    if (!sessions.length) {
-      showOverlay("No saved Claude Code sessions were found for this folder.", [
-        { label: "Start a new session", primary: true, onClick: restart },
-        { label: "Back", onClick: hideOverlay },
-      ]);
-      return;
-    }
-    showOverlay("Resume a local Claude Code session", sessions.slice(0, 12).map((session) => ({
+    const header = sessions.length
+      ? "Resume a local Claude Code session"
+      : "No saved local sessions were found for this folder.";
+    const items = sessions.slice(0, 10).map((session) => ({
       label: `${session.lastTimestamp ? new Date(session.lastTimestamp).toLocaleString() : session.sessionId.slice(0, 8)} · ${session.messageCount || 0} messages`,
       onClick: async () => {
         const size = syncSize() || lastSize;
         const started = await api.resumeSession(session.sessionId, size.cols || 100, size.rows || 30);
-        if (!started) showOverlay("That saved session is no longer available for this folder.", [{ label: "Back", primary: true, onClick: showResumePicker }]);
+        if (!started) showOverlay("That saved session is no longer available for this folder.", [{ label: "Back", primary: true, onClick: showLocalSessionsPicker }]);
       },
-    })));
+    }));
+    showOverlay(header, [
+      { label: "Local", primary: true, onClick: showLocalSessionsPicker },
+      { label: "Cloud", onClick: showAgentSessionsPicker },
+      ...items,
+      { label: "Start a new session", onClick: restart },
+      { label: "Back", onClick: hideOverlay },
+    ]);
+  }
+
+  async function showAgentSessionsPicker() {
+    const sessions = await api.listAgentSessions();
+    const header = sessions.length
+      ? "Active Claude Code sessions"
+      : "No other active sessions were found.";
+    const items = sessions.slice(0, 10).map((session) => ({
+      label: `${session.name || session.sessionId.slice(0, 8)} — ${session.cwd} (${session.kind === "interactive" ? "local" : "background"})`,
+      onClick: async () => {
+        const size = syncSize() || lastSize;
+        const started = await api.attachAgentSession(session.sessionId, session.cwd, size.cols || 100, size.rows || 30);
+        if (!started) showOverlay("That session is no longer available.", [{ label: "Back", primary: true, onClick: showAgentSessionsPicker }]);
+      },
+    }));
+    showOverlay(header, [
+      { label: "Local", onClick: showLocalSessionsPicker },
+      { label: "Cloud", primary: true, onClick: showAgentSessionsPicker },
+      ...items,
+      { label: "Start a new session", onClick: restart },
+      { label: "Back", onClick: hideOverlay },
+    ]);
   }
 
   api.onStarted(({ cwd }) => {
@@ -320,7 +352,7 @@
   });
 
   folderBtn.addEventListener("click", () => api.pickFolder());
-  resumeBtn.addEventListener("click", () => showResumePicker().catch(() => {
+  resumeBtn.addEventListener("click", () => showLocalSessionsPicker().catch(() => {
     showOverlay("Could not load saved Claude Code sessions.", [{ label: "Back", primary: true, onClick: hideOverlay }]);
   }));
 

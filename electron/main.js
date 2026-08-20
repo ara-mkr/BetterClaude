@@ -18,7 +18,7 @@ const { extractThemeVars } = require("../core/tokens");
 const { attachWindowState, getInitialBounds } = require("./window-state");
 const { BUDDY_CANVAS, BUDDY_HIT_BOX, getBuddy, resolveActiveBuddy } = require("../core/buddies");
 const { titleBarOptions, TITLE_BAR_HEIGHT } = require("./window-chrome");
-const { ClaudeNotFoundError, ClaudeSession, PtySpawnError, locateClaude } = require("./claude-cli");
+const { ClaudeNotFoundError, ClaudeSession, PtySpawnError, listAgentSessions, locateClaude } = require("./claude-cli");
 const { autoUpdater } = require("electron-updater");
 const { pickLoadingTip } = require("../core/motion-fx");
 const { deriveChannelId, encryptText, decryptText } = require("../core/clipboard-bridge");
@@ -1203,6 +1203,36 @@ ipcMain.handle("code:resume-session", (e, sessionId, cols, rows) => {
   const cwd = resolveCodeCwd();
   const known = sessionBundle.listSessionsForCwd(cwd).some((session) => session.sessionId === sessionId);
   if (!known) return false;
+  const target = codeView && codeView.webContents;
+  if (target && !target.isDestroyed()) target.send("code:restarting", { cwd });
+  startCodeSession({ cwd, cols, rows, args: ["--resume", sessionId] });
+  return true;
+});
+
+// The "Cloud" side of the sessions picker: every active session `claude
+// agents --json` currently knows about (interactive, running somewhere on
+// this machine, or dispatched background/cloud), not just this pane's own
+// cwd. Best-effort — resolves to [] rather than surfacing an error, since
+// this is supplementary data for a picker, not something the terminal itself
+// depends on.
+ipcMain.handle("code:list-agent-sessions", async (e) => {
+  if (!isCodeSender(e.sender)) return [];
+  try {
+    const binaryPath = locateClaude(store.get("codeWindow.claudePath") || undefined);
+    const sessions = await listAgentSessions(binaryPath);
+    return sessions.map(({ sessionId, name, cwd, kind, startedAt }) => ({ sessionId, name, cwd, kind, startedAt }));
+  } catch {
+    return [];
+  }
+});
+
+// Attaching to an agent-listed session, local or cloud. Unlike
+// code:resume-session, the id isn't cross-checked against this cwd's
+// sessionBundle transcripts — it just came straight from `claude agents
+// --json`, which is its own source of truth, and the session may legitimately
+// live in a different folder than the one this pane is currently running in.
+ipcMain.handle("code:attach-agent-session", (e, sessionId, cwd, cols, rows) => {
+  if (!isCodeSender(e.sender) || typeof sessionId !== "string" || typeof cwd !== "string") return false;
   const target = codeView && codeView.webContents;
   if (target && !target.isDestroyed()) target.send("code:restarting", { cwd });
   startCodeSession({ cwd, cols, rows, args: ["--resume", sessionId] });

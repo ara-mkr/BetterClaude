@@ -135,6 +135,8 @@ contextBridge.exposeInMainWorld("betterClaudeCode", {
   pickFolder: () => ipcRenderer.invoke("code:pick-folder"),
   listSessions: () => ipcRenderer.invoke("code:list-sessions"),
   resumeSession: (sessionId, cols, rows) => ipcRenderer.invoke("code:resume-session", sessionId, cols, rows),
+  listAgentSessions: () => ipcRenderer.invoke("code:list-agent-sessions"),
+  attachAgentSession: (sessionId, cwd, cols, rows) => ipcRenderer.invoke("code:attach-agent-session", sessionId, cwd, cols, rows),
   closeWindow: () => ipcRenderer.invoke("code:window-close"),
 
   // main -> renderer.

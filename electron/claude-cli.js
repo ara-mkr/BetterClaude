@@ -26,6 +26,7 @@ const { accessSync, constants, statSync } = require("fs");
 const os = require("os");
 const path = require("path");
 const { EventEmitter } = require("events");
+const { execFile } = require("child_process");
 
 const IS_WINDOWS = process.platform === "win32";
 
@@ -261,10 +262,45 @@ class ClaudeSession extends EventEmitter {
   }
 }
 
+/**
+ * Lists the user's active Claude Code sessions — both interactive (running in
+ * a real terminal somewhere on this machine) and background/cloud (dispatched
+ * with `--bg`/`--cloud`) — via `claude agents --json --all`.
+ *
+ * One-shot and non-interactive, unlike everything else in this file: this is
+ * metadata about what sessions exist, not a pty to attach to, so a plain
+ * child process is the right tool rather than node-pty.
+ *
+ * Compliance posture unchanged from the rest of this file: this asks the
+ * already-authenticated `claude` binary for its own session list, the same
+ * way `--resume`'s interactive picker or `claude doctor` would. Nothing here
+ * reads Claude Code's config, credentials, or keychain directly, and a
+ * failure (binary missing, malformed output, timeout) resolves to an empty
+ * list rather than throwing — this is supplementary data for a picker, never
+ * something the primary spawn path depends on.
+ */
+function listAgentSessions(binaryPath) {
+  return new Promise((resolve) => {
+    execFile(binaryPath, ["agents", "--json", "--all"], { timeout: 8000 }, (error, stdout) => {
+      if (error) {
+        resolve([]);
+        return;
+      }
+      try {
+        const parsed = JSON.parse(stdout);
+        resolve(Array.isArray(parsed) ? parsed : []);
+      } catch {
+        resolve([]);
+      }
+    });
+  });
+}
+
 module.exports = {
   ClaudeNotFoundError,
   ClaudeSession,
   DOCS_URL,
   PtySpawnError,
+  listAgentSessions,
   locateClaude,
 };

@@ -3427,7 +3427,8 @@ body.bc-zen-mode #betterclaude-plugin-dock {
         BOLT: `<svg ${ATTRS}><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg>`,
         BOOK: `<svg ${ATTRS}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`,
         UPLOAD: `<svg ${ATTRS}><path d="M12 16V4"/><path d="M6 9l6-6 6 6"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>`,
-        FLIP_H: `<svg ${ATTRS}><path d="M12 3v18"/><path d="M17 8l3 4-3 4"/><path d="M7 8l-3 4 3 4"/></svg>`
+        FLIP_H: `<svg ${ATTRS}><path d="M12 3v18"/><path d="M17 8l3 4-3 4"/><path d="M7 8l-3 4 3 4"/></svg>`,
+        TERMINAL: `<svg ${ATTRS}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>`
       };
     }
   });
