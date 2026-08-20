@@ -1,0 +1,36 @@
+name: Windows release build
+
+# node-pty is a native module; node-gyp can't cross-compile it from macOS to
+# Windows, so the .exe has to come from an actual Windows runner. This job
+# builds it on windows-latest and attaches it to the GitHub release for the
+# tag that triggered the push (the release itself is created separately, e.g.
+# via `gh release create`) rather than trying to build a Windows installer
+# locally on a Mac.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - run: npm run build:win
+
+      - name: Attach Windows installer to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: dist/*.exe
+          fail_on_unmatched_files: true
