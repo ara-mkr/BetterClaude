@@ -2,7 +2,7 @@
 
 A BetterDiscord-style enhancement suite for Claude. Themes, plugins, and a pile of productivity tools layered on top of the Claude app you already use, without touching Anthropic's code or your login.
 
-There are two ways to run it: a full Electron desktop app, or a terminal wrapper around your Claude Code CLI. Pick the one that matches how you already work.
+An Electron desktop app that loads the real claude.ai and injects a layer of UI and settings on top of it. Turning it off in Settings reverts you to stock claude.ai instantly, no uninstall needed.
 
 ![BetterClaude desktop app, home screen](.github/readme-assets/hero-home.png)
 
@@ -10,18 +10,15 @@ MIT licensed. Not affiliated with or endorsed by Anthropic.
 
 ## Contents
 
-- [Desktop app](#desktop-app)
+- [Productivity modules](#productivity-modules)
 - [Themes](#themes)
 - [Plugins](#plugins)
 - [Buddies](#buddies)
 - [The little stuff](#the-little-stuff)
-- [Also in this repo](#also-in-this-repo)
 - [Building it yourself](#building-it-yourself)
 - [Contributing](#contributing)
 
-## Desktop app
-
-`BETTERCLAUDE DESKTOP MAIN/` is the main product: an Electron shell that loads the real claude.ai and injects a layer of UI and settings on top of it. Turning it off in Settings reverts you to stock claude.ai instantly, no uninstall needed.
+## Productivity modules
 
 Nine productivity modules, each toggleable on its own:
 
@@ -39,7 +36,7 @@ Nine productivity modules, each toggleable on its own:
 
 ![The real Claude Code CLI running inside a BetterClaude-owned window](.github/readme-assets/claude-code-window.png)
 
-Full detail on every module, including exactly what's stored where and what each toggle does under the hood, is in the [desktop app README](BETTERCLAUDE%20DESKTOP%20MAIN/README.md).
+Full detail on every module, including exactly what's stored where and what each toggle does under the hood, is in [docs/DESKTOP-APP.md](docs/DESKTOP-APP.md).
 
 ## Themes
 
@@ -67,11 +64,11 @@ Nine plugins ship in the box, each a plain `*.claudeplugin.js` file you can read
 
 ![Plugin list in Settings, showing all nine built-in plugins with toggle switches](.github/readme-assets/plugins.png)
 
-The plugin loader also picks up your own custom `*.claudeplugin.js` files (Electron build only, since it needs a real filesystem to read from). "Open Plugins Folder" in Settings takes you straight there.
+The plugin loader also picks up your own custom `*.claudeplugin.js` files. "Open Plugins Folder" in Settings takes you straight there.
 
 ## Buddies
 
-Small animated companions that live in the corner of the app while you work: Astronaut, Detective, Scuba Diver, and Spartan. Each has its own typing, thinking, running, and flying animation depending on what's happening in the conversation.
+Small animated companions that live in the corner of the app while you work: Astronaut, Detective, Scuba Diver, and Spartan (`buddies/`). Each has its own typing, thinking, running, and flying animation depending on what's happening in the conversation.
 
 <img src=".github/readme-assets/buddy-astronaut.png" alt="The Astronaut buddy, an animated pixel-art companion" width="240" />
 
@@ -85,20 +82,9 @@ Things that don't need their own section but are worth knowing about:
 - **A weather widget**, if you want one more thing in the corner of your screen.
 - **A built-in diff viewer** for anything that needs a side-by-side comparison.
 
-## Also in this repo
-
-The desktop app is the main event, but the same `core/` and `ui/` source is reused in one other place:
-
-**[`BETTERCLAUDE OFFICIAL/`](BETTERCLAUDE%20OFFICIAL/README.md)** is `betterclaude`, a terminal UI that wraps the Claude Code CLI you already have installed. Same category of program as `lazygit` or `k9s`: it finds the real `claude` on your PATH, spawns it in a pseudo-terminal, and draws its own chrome around that session. Multi-pane sessions, per-pane history, themeable colors. It does not log in, does not touch credential files, and never calls the API directly; all it does is spawn the binary you're already authenticated with.
-
-That folder has its own README with the details specific to that build.
-
 ## Building it yourself
 
-### Desktop app
-
 ```bash
-cd "BETTERCLAUDE DESKTOP MAIN"
 npm install
 npm run dev      # build the core bundle and launch Electron in dev mode
 ```
@@ -111,19 +97,7 @@ npm run build:win    # Windows, x64 NSIS installer
 npm run build:all    # everything above
 ```
 
-Output lands in `dist/`. These builds are unsigned (no Apple Developer ID or Windows code-signing cert configured yet), so macOS will show a Gatekeeper warning and Windows will show a SmartScreen prompt on first launch. Full detail on signing, auto-update, and every setting is in that folder's own README.
-
-### Terminal UI
-
-```bash
-cd "BETTERCLAUDE OFFICIAL"
-npm install
-npm run build
-npm link          # installs the `betterclaude` and `bcx` commands globally
-betterclaude
-```
-
-Requires Node 20+ and a working `claude` login already set up.
+Output lands in `dist/`. These builds are unsigned (no Apple Developer ID or Windows code-signing cert configured yet), so macOS will show a Gatekeeper warning and Windows will show a SmartScreen prompt on first launch. Full detail on signing and auto-update is in [docs/DESKTOP-APP.md](docs/DESKTOP-APP.md).
 
 ## Contributing
 
