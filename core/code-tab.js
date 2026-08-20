@@ -91,7 +91,30 @@ let railAllowance = 0;
  * since a pane that is too wide is recoverable and a pane positioned off-screen
  * is not.
  */
-function measureContentArea({ titleBarHeight = 0 } = {}) {
+function measureContentArea({ titleBarHeight = 0, sidebarOnRight = false } = {}) {
+  const top = Math.round(titleBarHeight);
+
+  // Mirror image of the left-sidebar case below: the sidebar sits at the
+  // window's right edge instead, so the content area runs from x:0 up to
+  // wherever the sidebar's own left edge currently is, rather than from the
+  // content pane's left edge out to the window's right edge. Anchored off the
+  // sidebar itself (not contentPane) because contentPane's own box no longer
+  // moves when the sidebar resizes in this configuration — it is the
+  // fixed-width flex item taking up the leftover space, so its edges track
+  // the window, not the sidebar.
+  if (sidebarOnRight) {
+    const sidebar = resolveTarget("sidebar");
+    const sidebarBox = sidebar ? boxOf(sidebar.element) : null;
+    const right = sidebarBox ? Math.round(sidebarBox.left) : window.innerWidth;
+    return {
+      x: 0,
+      y: top,
+      width: Math.max(0, right),
+      height: Math.max(0, Math.round(window.innerHeight - top)),
+      anchoredTo: sidebarBox ? "sidebar" : "window",
+    };
+  }
+
   const pane = resolveTarget("contentPane");
   const paneBox = pane ? boxOf(pane.element) : null;
 
@@ -113,7 +136,6 @@ function measureContentArea({ titleBarHeight = 0 } = {}) {
   }
 
   left = Math.max(0, left, railAllowance);
-  const top = Math.round(titleBarHeight);
   return {
     x: left,
     y: top,
@@ -147,14 +169,20 @@ function createPill({ onActivate }) {
 /**
  * @param {Function} onActivate      User asked for the embedded Code pane.
  * @param {Function} onDeactivate    User asked for claude.ai back.
- * @param {Function} onLayout        Called with measureContentArea()'s result.
- * @param {number}   titleBarHeight  Height of BetterClaude's own title bar.
+ * @param {Function} onLayout          Called with measureContentArea()'s result.
+ * @param {number}   titleBarHeight    Height of BetterClaude's own title bar.
+ * @param {Function} [getSidebarOnRight] Returns whether the "Sidebar position"
+ *   setting currently reads "right". Read fresh on every sync rather than
+ *   captured once, since the user can flip the setting while the pane is
+ *   mounted (or open).
  */
-function mountCodeTab({ onActivate, onDeactivate, onLayout, titleBarHeight = 0 } = {}) {
+function mountCodeTab({ onActivate, onDeactivate, onLayout, titleBarHeight = 0, getSidebarOnRight = () => false } = {}) {
   let active = false;
   let pill = null;
   let resizeObserver = null;
   let observedPane = null;
+  let sidebarResizeObserver = null;
+  let observedSidebar = null;
 
   // Publishing the same geometry repeatedly is free on this side but makes the
   // host re-apply view bounds on every mutation burst, so only changes go out.
@@ -173,7 +201,7 @@ function mountCodeTab({ onActivate, onDeactivate, onLayout, titleBarHeight = 0 }
     // which publishes before the host shows anything, so the first frame still
     // lands with current geometry rather than stale bounds.
     if (!active) return;
-    const rect = measureContentArea({ titleBarHeight });
+    const rect = measureContentArea({ titleBarHeight, sidebarOnRight: getSidebarOnRight() });
     const signature = `${rect.x}:${rect.y}:${rect.width}:${rect.height}`;
     if (signature === lastPublished) return;
     lastPublished = signature;
@@ -197,12 +225,28 @@ function mountCodeTab({ onActivate, onDeactivate, onLayout, titleBarHeight = 0 }
     if (typeof ResizeObserver !== "function") return;
     const pane = resolveTarget("contentPane");
     const el = pane ? pane.element : null;
-    if (el === observedPane) return;
-    if (resizeObserver) resizeObserver.disconnect();
-    observedPane = el;
-    if (!el) return;
-    resizeObserver = new ResizeObserver(() => publishLayout());
-    resizeObserver.observe(el);
+    if (el !== observedPane) {
+      if (resizeObserver) resizeObserver.disconnect();
+      observedPane = el;
+      resizeObserver = null;
+      if (el) {
+        resizeObserver = new ResizeObserver(() => publishLayout());
+        resizeObserver.observe(el);
+      }
+    }
+
+    // With the sidebar on the right, contentPane's own box stays put as the
+    // sidebar resizes (see measureContentArea's comment above) — the sidebar
+    // element itself is what needs watching there.
+    const sidebar = getSidebarOnRight() ? resolveTarget("sidebar") : null;
+    const sidebarEl = sidebar ? sidebar.element : null;
+    if (sidebarEl === observedSidebar) return;
+    if (sidebarResizeObserver) sidebarResizeObserver.disconnect();
+    observedSidebar = sidebarEl;
+    sidebarResizeObserver = null;
+    if (!sidebarEl) return;
+    sidebarResizeObserver = new ResizeObserver(() => publishLayout());
+    sidebarResizeObserver.observe(sidebarEl);
   }
 
   /**
@@ -298,6 +342,7 @@ function mountCodeTab({ onActivate, onDeactivate, onLayout, titleBarHeight = 0 }
       document.removeEventListener("click", onDocumentClick, { capture: true });
       window.removeEventListener("resize", publishLayout);
       if (resizeObserver) resizeObserver.disconnect();
+      if (sidebarResizeObserver) sidebarResizeObserver.disconnect();
       if (pill && pill.parentElement) pill.parentElement.removeChild(pill);
       pill = null;
     },

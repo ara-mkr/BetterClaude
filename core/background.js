@@ -32,7 +32,20 @@ const BG_STYLE_ID = "betterclaude-background";
 
 // The main chat pane. Kept narrow on purpose so the background never bleeds
 // into the sidebar/header/overlays.
-const MAIN_PANE = 'main, [data-testid="conversation"], [role="main"]';
+//
+// `main` itself is just the outer shell — claude.ai's own DOM audit
+// (core/claude-dom.js contentPane, "main .dframe-pane-primary") found the
+// actual visible content column is a nested child of <main> that paints its
+// OWN opaque background (retinted from our theme via the --bg-100 token
+// bridge in core/tokens.js). That child renders as a normal in-flow
+// descendant, which paints AFTER our ::before layer (z-index: -2) even
+// though the layer sits behind <main>'s own box background — so scoping to
+// bare `main` put the image directly behind an opaque div and it never
+// showed up. Scoping to the real pane instead puts our ::before behind
+// THAT element's background in the paint order, where it's actually
+// visible. `main` is kept as a last-resort fallback for older/unknown
+// builds where the pane-primary class doesn't exist.
+const MAIN_PANE = 'main .dframe-pane-primary, main [class*="pane-primary" i], [data-testid="conversation"], [role="main"], main';
 
 function fitToBackgroundProps(fit, position) {
   switch (fit) {

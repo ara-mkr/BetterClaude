@@ -11,9 +11,49 @@
  * live DOM with the page, so calling document.* here really does mutate
  * what's on screen — no contextBridge round-trip is needed for that part.
  */
-const { ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer } = require("electron");
 
-const { ThemeEngine, resolveScheduledTheme, ensureStyleTag, restoreClaudeColorMode } = require("../core/theme-engine");
+/**
+ * Reverse-engineered from the real Claude.app's own preload (its app.asar,
+ * inspected on-disk — never anything running on Anthropic's servers): claude.ai
+ * decides whether it's inside the official desktop app by checking for
+ * window.desktopBootFeatures / window.claudeAppBindings, which that app's
+ * preload exposes via contextBridge. BetterClaude exposed neither, so
+ * claude.ai treated it as a plain browser tab and hid desktop-only surfaces —
+ * concretely, local CLI session history under the Code tab, which the real
+ * app gates on desktopBootFeatures.coworkLocalSessionProjects.status ===
+ * "supported". This block reproduces just enough of that contract for
+ * claude.ai's own check to pass; it does not touch Claude Code's config,
+ * credentials, or any Anthropic-server behavior.
+ *
+ * Best-effort and unofficial: Anthropic can change or remove this contract in
+ * any Claude.app update without notice, and this would silently stop
+ * unlocking anything (not break — claude.ai already tolerates a browser tab
+ * lacking these globals, since that's every non-desktop user).
+ */
+const desktopFeaturesArg = process.argv.find((a) => a.startsWith("--desktop-features="));
+if (desktopFeaturesArg) {
+  try {
+    contextBridge.exposeInMainWorld(
+      "desktopBootFeatures",
+      JSON.parse(desktopFeaturesArg.slice("--desktop-features=".length))
+    );
+  } catch {
+    // Malformed flag (shouldn't happen — we control the value in main.js) —
+    // leave window.desktopBootFeatures unset rather than crash the preload.
+  }
+}
+
+contextBridge.exposeInMainWorld("claudeAppBindings", {
+  registerBinding: (channel, listener) => {
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
+  unregisterBinding: (channel) => ipcRenderer.removeAllListeners(channel),
+  listMcpServers: () => ipcRenderer.invoke("list-mcp-servers"),
+});
+
+const { ThemeEngine, resolveScheduledTheme, ensureStyleTag, restoreClaudeColorMode, applySidebarPositionOffset } = require("../core/theme-engine");
 const { PluginLoader } = require("../core/plugin-loader");
 const { buildExtrasCSS, applyColorBlindSafeVars } = require("../core/extras-css");
 const { InteractionFX } = require("../core/interaction-fx");
@@ -481,6 +521,7 @@ async function bootstrap() {
     if (enabled && !codeTab) {
       codeTab = mountCodeTab({
         titleBarHeight: TITLE_BAR_HEIGHT,
+        getSidebarOnRight: () => !!(settings.layout && settings.layout.sidebarPosition === "right"),
         onActivate: () => ipcRenderer.invoke("code-tab:show").catch(() => {}),
         onDeactivate: () => ipcRenderer.invoke("code-tab:hide").catch(() => {}),
         onLayout: (rect) => ipcRenderer.send("code-tab:layout", rect),
@@ -570,6 +611,7 @@ async function bootstrap() {
     // all, and that is precisely when a new Anthropic build first lands.
     layoutProbe.checkSoon();
     topStripGuard.checkSoon();
+    applySidebarPositionOffset(settings);
     // Idempotent and cheap: two DOM reads and an early return in the common
     // case. This is what makes the Code tab self-healing — claude.ai is React,
     // and a re-render that rebuilds the pill container drops our child, which

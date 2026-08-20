@@ -1592,7 +1592,7 @@ a { color: var(--bc-link) !important; }
         BOUNDS
       } = require_tokens();
       var BG_STYLE_ID = "betterclaude-background";
-      var MAIN_PANE = 'main, [data-testid="conversation"], [role="main"]';
+      var MAIN_PANE = 'main .dframe-pane-primary, main [class*="pane-primary" i], [data-testid="conversation"], [role="main"], main';
       function fitToBackgroundProps(fit, position) {
         switch (fit) {
           case "contain":
@@ -1742,7 +1742,7 @@ ${animate ? `
   var require_theme_engine = __commonJS({
     "core/theme-engine.js"(exports, module) {
       var tokens = require_tokens();
-      var { cssSelectorList } = require_claude_dom();
+      var { cssSelectorList, resolveTarget, boxOf } = require_claude_dom();
       var {
         buildScaffoldCSS,
         extractThemeVars,
@@ -1925,6 +1925,30 @@ ${animate ? `
           }
         }
       }
+      var SIDEBAR_FLIP_ATTR = "data-bc-sidebar-flip";
+      function applySidebarPositionOffset(settings, doc = typeof document !== "undefined" ? document : null) {
+        if (!doc) return;
+        const inner = doc.querySelector("main .dframe-content-inner");
+        if (!inner) return;
+        const wantRight = !!(settings && settings.layout && settings.layout.sidebarPosition === "right");
+        if (!wantRight) {
+          if (inner.hasAttribute(SIDEBAR_FLIP_ATTR)) {
+            inner.style.removeProperty("padding-left");
+            inner.style.removeProperty("padding-right");
+            inner.removeAttribute(SIDEBAR_FLIP_ATTR);
+          }
+          return;
+        }
+        const sidebar = resolveTarget("sidebar");
+        const sidebarBox = sidebar ? boxOf(sidebar.element) : null;
+        const width = sidebarBox ? Math.round(sidebarBox.width) : 0;
+        if (!width) return;
+        const offset = `${width + 8}px`;
+        if (inner.getAttribute(SIDEBAR_FLIP_ATTR) === offset) return;
+        inner.setAttribute(SIDEBAR_FLIP_ATTR, offset);
+        inner.style.setProperty("padding-left", "0px", "important");
+        inner.style.setProperty("padding-right", offset, "important");
+      }
       function syncClaudeColorModeFromThemeCSS(css) {
         const bg = extractThemeVars(css)["--bc-bg"];
         if (!bg) return;
@@ -2084,7 +2108,16 @@ ${SELECTORS.sidebar} {
 }
 ` : ""}
 ${layout.sidebarPosition === "right" ? `
-${SELECTORS.sidebar} { order: 2 !important; }
+/* The sidebar is claude.ai's own <aside>, positioned absolutely against the
+   window rather than laid out as a flex sibling of <main> (confirmed live:
+   both are position:absolute, so a flex "order" property \u2014 the previous
+   approach here \u2014 has no formatting context to act on and silently does
+   nothing). Flipping which edge it's anchored to is what actually moves it;
+   the content column's own left-padding offset is un-done reactively in
+   applySidebarPositionOffset() below, since that value is set inline by
+   Anthropic's own JS based on the sidebar's live width and a static number
+   here would drift the moment the sidebar is resized, collapsed, or peeked. */
+${SELECTORS.sidebar} { left: auto !important; right: 0 !important; }
 /* Sidebar (and its account-switcher footer) moved to the right edge, so the
    left edge is plain main-pane again \u2014 undo #bc-companion's default
    sidebar-width offset (ui/overlays.css), which would otherwise land it in
@@ -2251,7 +2284,10 @@ ${hideRules}
         // claude.ai's own color-mode sync (§4.1 systemic fix) — restoreClaudeColorMode
         // must be called from the master kill-switch teardown path.
         syncClaudeColorMode,
-        restoreClaudeColorMode
+        restoreClaudeColorMode,
+        // Reactive half of layout.sidebarPosition — see the doc comment above its
+        // definition for why this can't be done as static CSS alone.
+        applySidebarPositionOffset
       };
     }
   });
@@ -8466,7 +8502,20 @@ ${content}
       var PILL_LABEL = "CLI";
       var FLOATING_CLASS = "bc-code-tab-floating";
       var railAllowance = 0;
-      function measureContentArea({ titleBarHeight = 0 } = {}) {
+      function measureContentArea({ titleBarHeight = 0, sidebarOnRight = false } = {}) {
+        const top = Math.round(titleBarHeight);
+        if (sidebarOnRight) {
+          const sidebar = resolveTarget("sidebar");
+          const sidebarBox = sidebar ? boxOf(sidebar.element) : null;
+          const right = sidebarBox ? Math.round(sidebarBox.left) : window.innerWidth;
+          return {
+            x: 0,
+            y: top,
+            width: Math.max(0, right),
+            height: Math.max(0, Math.round(window.innerHeight - top)),
+            anchoredTo: sidebarBox ? "sidebar" : "window"
+          };
+        }
         const pane = resolveTarget("contentPane");
         const paneBox = pane ? boxOf(pane.element) : null;
         let left;
@@ -8483,7 +8532,6 @@ ${content}
           if (toggleBox) railAllowance = Math.round(toggleBox.right) + 8;
         }
         left = Math.max(0, left, railAllowance);
-        const top = Math.round(titleBarHeight);
         return {
           x: left,
           y: top,
@@ -8507,16 +8555,18 @@ ${content}
         });
         return btn;
       }
-      function mountCodeTab({ onActivate, onDeactivate, onLayout, titleBarHeight = 0 } = {}) {
+      function mountCodeTab({ onActivate, onDeactivate, onLayout, titleBarHeight = 0, getSidebarOnRight = () => false } = {}) {
         let active = false;
         let pill = null;
         let resizeObserver = null;
         let observedPane = null;
+        let sidebarResizeObserver = null;
+        let observedSidebar = null;
         let lastPublished = "";
         function publishLayout() {
           if (!onLayout) return;
           if (!active) return;
-          const rect = measureContentArea({ titleBarHeight });
+          const rect = measureContentArea({ titleBarHeight, sidebarOnRight: getSidebarOnRight() });
           const signature = `${rect.x}:${rect.y}:${rect.width}:${rect.height}`;
           if (signature === lastPublished) return;
           lastPublished = signature;
@@ -8526,12 +8576,24 @@ ${content}
           if (typeof ResizeObserver !== "function") return;
           const pane = resolveTarget("contentPane");
           const el = pane ? pane.element : null;
-          if (el === observedPane) return;
-          if (resizeObserver) resizeObserver.disconnect();
-          observedPane = el;
-          if (!el) return;
-          resizeObserver = new ResizeObserver(() => publishLayout());
-          resizeObserver.observe(el);
+          if (el !== observedPane) {
+            if (resizeObserver) resizeObserver.disconnect();
+            observedPane = el;
+            resizeObserver = null;
+            if (el) {
+              resizeObserver = new ResizeObserver(() => publishLayout());
+              resizeObserver.observe(el);
+            }
+          }
+          const sidebar = getSidebarOnRight() ? resolveTarget("sidebar") : null;
+          const sidebarEl = sidebar ? sidebar.element : null;
+          if (sidebarEl === observedSidebar) return;
+          if (sidebarResizeObserver) sidebarResizeObserver.disconnect();
+          observedSidebar = sidebarEl;
+          sidebarResizeObserver = null;
+          if (!sidebarEl) return;
+          sidebarResizeObserver = new ResizeObserver(() => publishLayout());
+          sidebarResizeObserver.observe(sidebarEl);
         }
         function sync() {
           if (!pill) pill = createPill({ onActivate: () => setActive(!active) });
@@ -8583,6 +8645,7 @@ ${content}
             document.removeEventListener("click", onDocumentClick, { capture: true });
             window.removeEventListener("resize", publishLayout);
             if (resizeObserver) resizeObserver.disconnect();
+            if (sidebarResizeObserver) sidebarResizeObserver.disconnect();
             if (pill && pill.parentElement) pill.parentElement.removeChild(pill);
             pill = null;
           }

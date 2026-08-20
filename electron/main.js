@@ -1221,6 +1221,13 @@ ipcMain.on("code-tab:layout", (e, rect) => {
 
 ipcMain.handle("code:pick-folder", () => openCodeWindowInFolder());
 
+// claude.ai's own desktop bridge (window.claudeAppBindings, see preload.js)
+// calls this channel on boot to list connected MCP servers. BetterClaude
+// doesn't manage any, so an empty list is the honest answer — the point of
+// this handler existing at all is just to stop ipcRenderer.invoke from
+// rejecting with "No handler registered", which the page may not expect.
+ipcMain.handle("list-mcp-servers", async () => []);
+
 // Window controls the Code pane may ask for.
 //
 // These existed because the pane used to be its own BrowserWindow wearing the
@@ -1337,6 +1344,17 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false,
       partition: "persist:betterclaude",
+      // claude.ai's own frontend decides "is this the real desktop app" by
+      // checking window.desktopBootFeatures, which the official Claude.app
+      // populates from this exact --desktop-features= argv flag (reverse
+      // engineered from its app.asar — see preload.js for the matching
+      // parse side). Without it, claude.ai treats BetterClaude as a plain
+      // browser tab and hides desktop-only surfaces like local CLI session
+      // history under the Code tab. Only the one flag we actually need is
+      // set; unset flags just read as unsupported, same as before this.
+      additionalArguments: [
+        `--desktop-features=${JSON.stringify({ coworkLocalSessionProjects: { status: "supported" } })}`,
+      ],
     },
   });
 

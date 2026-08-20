@@ -4,7 +4,7 @@
  */
 
 const tokens = require("./tokens");
-const { cssSelectorList } = require("./claude-dom");
+const { cssSelectorList, resolveTarget, boxOf } = require("./claude-dom");
 const {
   buildScaffoldCSS,
   extractThemeVars,
@@ -317,6 +317,53 @@ function restoreClaudeColorMode() {
   }
 }
 
+// Marks the content column once we've overridden its padding, so a later call
+// can tell "already flipped, and to what value" from "never touched" without
+// re-reading paddingLeft — which is exactly the property we've overwritten,
+// so reading it back would just measure our own last write instead of
+// Anthropic's current one.
+const SIDEBAR_FLIP_ATTR = "data-bc-sidebar-flip";
+
+/**
+ * Reactive half of the sidebarPosition:"right" setting (the static half is
+ * the CSS block in buildBaseCSS below). Anthropic's own content column sets
+ * its left padding via inline style, sized to the sidebar's live width —
+ * there's no fixed number to bake into a stylesheet, and the value changes
+ * on resize, collapse, and hover-peek. So this mirrors it instead: on every
+ * call, measure the sidebar's actual current width and write the equivalent
+ * offset onto padding-right, zeroing padding-left.
+ *
+ * Cheap to call on every mutation burst (idempotent, one dataset comparison
+ * in the common no-change case) — same contract as core/code-tab.js's sync(),
+ * intended to be called from the same host-side mutation-observer handler.
+ */
+function applySidebarPositionOffset(settings, doc = (typeof document !== "undefined" ? document : null)) {
+  if (!doc) return;
+  const inner = doc.querySelector("main .dframe-content-inner");
+  if (!inner) return;
+  const wantRight = !!(settings && settings.layout && settings.layout.sidebarPosition === "right");
+
+  if (!wantRight) {
+    if (inner.hasAttribute(SIDEBAR_FLIP_ATTR)) {
+      inner.style.removeProperty("padding-left");
+      inner.style.removeProperty("padding-right");
+      inner.removeAttribute(SIDEBAR_FLIP_ATTR);
+    }
+    return;
+  }
+
+  const sidebar = resolveTarget("sidebar");
+  const sidebarBox = sidebar ? boxOf(sidebar.element) : null;
+  const width = sidebarBox ? Math.round(sidebarBox.width) : 0;
+  if (!width) return; // sidebar collapsed/rail-only/not resolved: nothing to reserve yet
+
+  const offset = `${width + 8}px`;
+  if (inner.getAttribute(SIDEBAR_FLIP_ATTR) === offset) return;
+  inner.setAttribute(SIDEBAR_FLIP_ATTR, offset);
+  inner.style.setProperty("padding-left", "0px", "important");
+  inner.style.setProperty("padding-right", offset, "important");
+}
+
 // Single source of truth for "what isDark means for this CSS's --bc-bg",
 // shared by applySettings and setTheme so they can't drift on the threshold
 // or on how isDark is derived from a theme's palette.
@@ -550,7 +597,16 @@ ${SELECTORS.sidebar} {
 }
 ` : ""}
 ${layout.sidebarPosition === "right" ? `
-${SELECTORS.sidebar} { order: 2 !important; }
+/* The sidebar is claude.ai's own <aside>, positioned absolutely against the
+   window rather than laid out as a flex sibling of <main> (confirmed live:
+   both are position:absolute, so a flex "order" property — the previous
+   approach here — has no formatting context to act on and silently does
+   nothing). Flipping which edge it's anchored to is what actually moves it;
+   the content column's own left-padding offset is un-done reactively in
+   applySidebarPositionOffset() below, since that value is set inline by
+   Anthropic's own JS based on the sidebar's live width and a static number
+   here would drift the moment the sidebar is resized, collapsed, or peeked. */
+${SELECTORS.sidebar} { left: auto !important; right: 0 !important; }
 /* Sidebar (and its account-switcher footer) moved to the right edge, so the
    left edge is plain main-pane again — undo #bc-companion's default
    sidebar-width offset (ui/overlays.css), which would otherwise land it in
@@ -792,4 +848,7 @@ module.exports = {
   // must be called from the master kill-switch teardown path.
   syncClaudeColorMode,
   restoreClaudeColorMode,
+  // Reactive half of layout.sidebarPosition — see the doc comment above its
+  // definition for why this can't be done as static CSS alone.
+  applySidebarPositionOffset,
 };
