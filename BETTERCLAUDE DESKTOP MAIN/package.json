@@ -1,7 +1,7 @@
 {
   "name": "betterclaude",
   "productName": "BetterClaude",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A BetterDiscord-style enhancement suite for Claude AI (Electron desktop app)",
   "main": "electron/main.js",
   "private": true,
