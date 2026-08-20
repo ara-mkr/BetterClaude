@@ -17,10 +17,11 @@
 
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
 
 // xterm's own stylesheet (cursor, selection, viewport geometry). Imported here
 // so esbuild emits it as build/xterm.bundle.css next to the JS, keeping the two
 // halves of the dependency versioned together.
 import "@xterm/xterm/css/xterm.css";
 
-export { Terminal, FitAddon };
+export { Terminal, FitAddon, WebglAddon };

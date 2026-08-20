@@ -161,6 +161,18 @@ function mountCodeTab({ onActivate, onDeactivate, onLayout, titleBarHeight = 0 }
   let lastPublished = "";
   function publishLayout() {
     if (!onLayout) return;
+    // Nothing consumes these bounds while the pane is hidden — the host only
+    // applies them to a visible view — and measuring is the expensive half of
+    // this module (two getBoundingClientRect calls plus a document-wide
+    // attribute-substring scan, each a forced synchronous layout). Since sync()
+    // runs on claude.ai's mutation firehose, doing that work for a closed pane
+    // was pure cost on every keystroke and every streamed token, for every user
+    // whether or not they ever open the terminal.
+    //
+    // Correctness is preserved by setActive(): turning the pane on calls sync(),
+    // which publishes before the host shows anything, so the first frame still
+    // lands with current geometry rather than stale bounds.
+    if (!active) return;
     const rect = measureContentArea({ titleBarHeight });
     const signature = `${rect.x}:${rect.y}:${rect.width}:${rect.height}`;
     if (signature === lastPublished) return;

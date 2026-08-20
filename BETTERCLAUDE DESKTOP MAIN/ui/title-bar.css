@@ -585,6 +585,28 @@ body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-center {
   box-shadow: 0 0 7px color-mix(in srgb, var(--bc-accent, #6c63ff) 75%, transparent);
 }
 
+/* While OUR pane owns the content area, Anthropic's segmented control must not
+   still look selected.
+   Their selection is not a style on the pill — it is a separate absolutely
+   positioned element that slides between them (div.df-pill-indicator, inline
+   `transform: translateX(...)`, also identifiable by its data-at attribute).
+   Clicking our pill deliberately does not navigate claude.ai, so their
+   indicator stays parked under Home or Code and the row reads as two selected
+   tabs at once, which is exactly what it looked like.
+   Hidden with opacity rather than display/visibility so their own slide
+   transition is untouched and the indicator fades back the instant the class
+   comes off (core/code-tab.js toggles body.bc-code-tab-active in setActive) —
+   nothing about their state machine is modified, so their navigation still
+   behaves exactly as it would without us. Two hooks because the class name is
+   Anthropic's own and the audit's rule is to prefer data-* attributes: either
+   one alone is enough to find it.
+   pointer-events stays untouched: their pills remain fully clickable, which is
+   how the user switches back. */
+body.bc-code-tab-active [data-segmented] > .df-pill-indicator,
+body.bc-code-tab-active [data-segmented] > [data-at] {
+  opacity: 0;
+}
+
 /* Fallback position: the adapter could not resolve Anthropic's pill container,
    so core/code-tab.js parked the pill on <body> instead of dropping it. A
    control in a slightly odd place is a far better failure than a feature that

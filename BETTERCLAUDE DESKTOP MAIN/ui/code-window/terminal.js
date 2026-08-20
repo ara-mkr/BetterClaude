@@ -16,7 +16,7 @@
 (async function () {
   "use strict";
 
-  const { Terminal, FitAddon } = window.BetterClaudeXterm;
+  const { Terminal, FitAddon, WebglAddon } = window.BetterClaudeXterm;
   const api = window.betterClaudeCode;
 
   // Settings come over IPC, so they aren't available at parse time. Awaited
@@ -131,6 +131,37 @@
 
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
+
+  // GPU renderer, with a real fallback.
+  //
+  // xterm's default is the DOM renderer, which builds one element per styled
+  // run per row and rebuilds them as the screen changes. That is fine for a
+  // shell prompt and poor for a full-screen TUI — which is exactly what the
+  // `claude` CLI is: it repaints large regions continuously, and on the DOM
+  // renderer that is the sluggish, visibly-tearing terminal this pane had.
+  // The WebGL renderer draws the same buffer into a single canvas from a glyph
+  // atlas instead.
+  //
+  // Wrapped because it is genuinely optional: WebGL context creation can fail
+  // (blocklisted GPU, a machine with no working GL, too many live contexts),
+  // and the addon also emits `onContextLoss` when the driver takes the context
+  // away at runtime. Either way the correct move is to drop back to the DOM
+  // renderer and keep a working terminal, never to leave the user with a blank
+  // pane — so the failure path disposes the addon and simply carries on.
+  let webglAddon = null;
+  if (typeof WebglAddon === "function") {
+    try {
+      webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        try { webglAddon.dispose(); } catch (_err) { /* already gone */ }
+        webglAddon = null;
+      });
+      term.loadAddon(webglAddon);
+    } catch (_err) {
+      // No GPU path available — the DOM renderer stays in place.
+      webglAddon = null;
+    }
+  }
   term.open(host);
 
   // --- Input: the user's own keystrokes, forwarded verbatim ---
@@ -148,7 +179,21 @@
     // resize the terminal to NaN columns.
     const proposed = fitAddon.proposeDimensions();
     if (!proposed || !proposed.cols || !proposed.rows) return null;
-    fitAddon.fit();
+    // Only fit when the grid would actually change.
+    //
+    // fit() is not a cheap no-op on an unchanged size: it re-runs the terminal's
+    // layout and repaints the buffer. This ran on EVERY ResizeObserver callback,
+    // and that observer fires for any change to the host box — including
+    // sub-pixel ones that round to the same cols/rows, and every bounds push
+    // from the embedded pane's host. The result was a terminal that repainted
+    // continuously while nothing about it had changed, which is the visible
+    // flicker and a large part of the sluggishness.
+    // The guard below the fit already existed for exactly this reason, but it
+    // only protected the pty (a SIGWINCH makes the CLI redraw); the far more
+    // frequent local repaint was left unguarded.
+    if (proposed.cols !== term.cols || proposed.rows !== term.rows) {
+      fitAddon.fit();
+    }
     const size = { cols: term.cols, rows: term.rows };
     // Only tell the child when the size actually changed. A resize is a SIGWINCH
     // to the CLI, which makes it redraw; firing one per resize *event* makes a
@@ -163,7 +208,14 @@
   // ResizeObserver rather than window.onresize: it also catches the layout
   // change when the settings panel opens/closes and when the status strip
   // reflows, neither of which fires a window resize event.
-  const observer = new ResizeObserver(() => syncSize());
+  // Coalesced to one run per frame: a window drag or a sidebar collapse
+  // delivers a burst of resize callbacks, and there is no reason to measure
+  // more than once per painted frame.
+  let sizeFrame = 0;
+  const observer = new ResizeObserver(() => {
+    if (sizeFrame) return;
+    sizeFrame = requestAnimationFrame(() => { sizeFrame = 0; syncSize(); });
+  });
   observer.observe(host);
 
   // --- Session state / overlay ---

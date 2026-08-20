@@ -1,7 +1,7 @@
 {
   "name": "betterclaude",
   "productName": "BetterClaude",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "A BetterDiscord-style enhancement suite for Claude AI (Electron desktop app)",
   "main": "electron/main.js",
   "private": true,
@@ -37,6 +37,7 @@
     "@codemirror/lang-css": "^6.3.0",
     "@codemirror/theme-one-dark": "^6.1.2",
     "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^5.5.0",
     "adm-zip": "^0.5.18",
     "chokidar": "^3.6.0",

@@ -8515,6 +8515,7 @@ ${content}
         let lastPublished = "";
         function publishLayout() {
           if (!onLayout) return;
+          if (!active) return;
           const rect = measureContentArea({ titleBarHeight });
           const signature = `${rect.x}:${rect.y}:${rect.width}:${rect.height}`;
           if (signature === lastPublished) return;

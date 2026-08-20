@@ -719,7 +719,35 @@ async function bootstrap() {
   // BetterClaude surface mounts as a sibling of that root, and
   // syncContextualChrome() mutates some of them — observing body would
   // re-trigger this handler in an unbounded self-feeding loop.
-  const chromeObserver = new MutationObserver(() => syncContextualChrome());
+  // Coalesced to one run per animation frame.
+  //
+  // This observer watches claude.ai's root with { childList: true, subtree:
+  // true }, and it used to call syncContextualChrome() straight from the
+  // callback — once per mutation record batch, unthrottled. On a React app
+  // that streams responses (and with BetterClaude's own cursor-trail FX adding
+  // and removing nodes continuously) that fires many times per frame, and the
+  // work behind it is not cheap: syncContextualChrome -> codeTab.sync() ->
+  // measureContentArea(), which does two getBoundingClientRect() calls plus a
+  // document-wide `button[aria-label*="open sidebar" i]` substring scan. Every
+  // one of those is a forced synchronous layout. That is the jank, and the
+  // embedded pane visibly stuttered because its bounds were being recomputed
+  // and re-pushed in the middle of it.
+  //
+  // rAF rather than a timeout because the only consumer of this work is
+  // geometry that gets painted: coalescing to the frame boundary is both the
+  // cheapest correct cadence and keeps the pane in step with the page instead
+  // of trailing it by an arbitrary debounce. Direct callers (route change,
+  // reinject, bootstrap) still run syncContextualChrome() immediately — only
+  // the mutation firehose is throttled.
+  let chromeSyncFrame = 0;
+  function scheduleContextualChrome() {
+    if (chromeSyncFrame) return;
+    chromeSyncFrame = requestAnimationFrame(() => {
+      chromeSyncFrame = 0;
+      syncContextualChrome();
+    });
+  }
+  const chromeObserver = new MutationObserver(scheduleContextualChrome);
 
   // Resolved through core/layout-probe.js rather than by naming ids here. The
   // chain this replaced was `getElementById("root") || getElementById("__next")
