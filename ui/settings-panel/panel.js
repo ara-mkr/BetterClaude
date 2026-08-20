@@ -255,7 +255,22 @@ class SettingsPanel {
   }
 
   _set(keyPath, value) {
-    this.host.setSetting(keyPath, value);
+    // Keep the panel's local snapshot in sync immediately. A number of
+    // appearance controls intentionally re-render their section after a
+    // change (background editor, theme favorites, etc.); relying solely on
+    // the asynchronous settings-changed IPC event made those renders paint
+    // the old value and made controls appear to do nothing.
+    const parts = String(keyPath).split(".");
+    let cursor = this.settings;
+    for (let i = 0; i < parts.length - 1; i += 1) {
+      if (!cursor[parts[i]] || typeof cursor[parts[i]] !== "object") cursor[parts[i]] = {};
+      cursor = cursor[parts[i]];
+    }
+    if (parts.length) cursor[parts[parts.length - 1]] = value;
+    return this.host.setSetting(keyPath, value).then((updated) => {
+      if (updated) this.settings = updated;
+      return updated;
+    });
   }
 
   _renderAppearance() {

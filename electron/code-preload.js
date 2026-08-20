@@ -23,7 +23,7 @@
  * verbatim. Nothing here parses terminal output.
  */
 
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, clipboard } = require("electron");
 const path = require("path");
 const fs = require("fs");
 
@@ -48,14 +48,20 @@ const IS_EMBEDDED = process.argv.includes("--bc-embedded");
 // do nothing here: Layout (claude.ai's sidebar/composer), Focus & Reading,
 // Widgets, Buddies, Plugins, Skill Marketplace, Prompt Library, File Watcher,
 // Clipboard Bridge, Team Sync, Analytics, Command Palette, Automations.
-// Offering them would be worse than omitting them. The five kept are the ones
-// that genuinely restyle THIS window, because they all write --bc-* variables:
+// Offering them would be worse than omitting them. The six kept are the ones
+// that are actually about THIS window — five restyle it via --bc-* variables,
+// and the sixth configures the terminal/CLI settings themselves:
 //
 //   Appearance         accent colour, settings import/export, updates, version
 //   Themes             preset picker — the headline "restyle this window" path
 //   Appearance Editor  per-element colour overrides
 //   Custom CSS         raw CSS, which applies to this document too
 //   Fonts              --bc-code-font drives the terminal's own font family
+//   Claude Code        terminal font SIZE, claude binary path override, CLI tab
+//                       toggle — codeWindow.* settings that exist only for this
+//                       pane. Omitting it left them reachable only from the
+//                       main window, which meant leaving the terminal just to
+//                       nudge its own font size.
 //
 // Everything omitted here is still reachable in the main window, which is the
 // full-surface Settings home. Flagged for review in the report.
@@ -65,6 +71,7 @@ const CODE_WINDOW_SECTIONS = [
   "Appearance Editor",
   "Custom CSS",
   "Fonts",
+  "Claude Code",
   // Session Bundles (Team Sync 2.0) lives only here, not in the main
   // window's full-surface Settings home — its read-only transcript viewer
   // reuses window.BetterClaudeXterm, the xterm.js bundle only this window
@@ -118,7 +125,16 @@ contextBridge.exposeInMainWorld("betterClaudeCode", {
   // main.js writes to it.
   write: (data) => ipcRenderer.send("code:input", String(data)),
   resize: (cols, rows) => ipcRenderer.send("code:resize", { cols, rows }),
+  // Clipboard integration for the right-click copy/paste convention in
+  // ui/code-window/terminal.js. `clipboard` is one of the Electron modules
+  // available directly in a preload (no IPC round-trip needed), and this reads
+  // and writes only plain text — never anything from the pty's own scrollback
+  // beyond what xterm's own getSelection() already handed the page.
+  copyText: (text) => clipboard.writeText(String(text)),
+  pasteText: () => clipboard.readText(),
   pickFolder: () => ipcRenderer.invoke("code:pick-folder"),
+  listSessions: () => ipcRenderer.invoke("code:list-sessions"),
+  resumeSession: (sessionId, cols, rows) => ipcRenderer.invoke("code:resume-session", sessionId, cols, rows),
   closeWindow: () => ipcRenderer.invoke("code:window-close"),
 
   // main -> renderer.

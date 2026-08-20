@@ -1928,7 +1928,8 @@ ${animate ? `
       var SIDEBAR_FLIP_ATTR = "data-bc-sidebar-flip";
       function applySidebarPositionOffset(settings, doc = typeof document !== "undefined" ? document : null) {
         if (!doc) return;
-        const inner = doc.querySelector("main .dframe-content-inner");
+        const contentPane = resolveTarget("contentPane");
+        const inner = doc.querySelector("main .dframe-content-inner") || contentPane && contentPane.element;
         if (!inner) return;
         const wantRight = !!(settings && settings.layout && settings.layout.sidebarPosition === "right");
         if (!wantRight) {

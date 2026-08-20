@@ -73,7 +73,8 @@ body {
   flex: 1 1 auto;
 }
 
-#bc-code-folder-btn {
+#bc-code-folder-btn,
+#bc-code-resume-btn {
   flex: 0 0 auto;
   font: inherit;
   color: var(--bc-text-muted, #a99bd1);
@@ -84,12 +85,14 @@ body {
   cursor: pointer;
 }
 
-#bc-code-folder-btn:hover {
+#bc-code-folder-btn:hover,
+#bc-code-resume-btn:hover {
   color: var(--bc-text, #ece7fb);
   border-color: var(--bc-accent, #6059e6);
 }
 
-#bc-code-folder-btn:focus-visible {
+#bc-code-folder-btn:focus-visible,
+#bc-code-resume-btn:focus-visible {
   outline: 2px solid var(--bc-focus-ring, var(--bc-accent, #6059e6));
   outline-offset: 1px;
 }

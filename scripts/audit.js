@@ -33,6 +33,13 @@ const { buildBackgroundCSS, backgroundContrast } = require("../core/background")
 
 const ROOT = path.join(__dirname, "..");
 const THEMES_DIR = path.join(ROOT, "themes");
+// The extension may live inside a monorepo checkout or be absent entirely in
+// desktop-only clones. Audit its parity when it is available, but never make
+// the desktop audit fail merely because a sibling checkout is not present.
+const EXTENSION_DIR = [
+  path.join(ROOT, "BetterClaudeExtension"),
+  path.join(ROOT, "..", "BetterClaudeExtension"),
+].find((candidate) => fs.existsSync(candidate));
 
 const results = [];
 function record(section, name, pass, evidence) {
@@ -504,8 +511,12 @@ function auditCustomAppearanceState() {
   "preset reset handler clears override layers");
   record("custom appearance", "theme cards use the reset-safe selection path", /host\.selectTheme\(id\)/.test(panel),
     "theme card delegates to selectTheme");
-  const extensionContent = stripJsComments(fs.readFileSync(path.join(ROOT, "..", "BetterClaudeExtension", "content", "content-script.js"), "utf8"));
-  const extensionWorker = stripJsComments(fs.readFileSync(path.join(ROOT, "..", "BetterClaudeExtension", "background", "service-worker.js"), "utf8"));
+  if (!EXTENSION_DIR) {
+    note("custom appearance", "extension uses the same atomic Custom/preset paths", "UNVERIFIED-HERE — BetterClaudeExtension checkout not present");
+    return;
+  }
+  const extensionContent = stripJsComments(fs.readFileSync(path.join(EXTENSION_DIR, "content", "content-script.js"), "utf8"));
+  const extensionWorker = stripJsComments(fs.readFileSync(path.join(EXTENSION_DIR, "background", "service-worker.js"), "utf8"));
   record("custom appearance", "extension uses the same atomic Custom/preset paths", /appearance:set-cosmetic/.test(extensionContent)
     && /appearance:select-theme/.test(extensionContent) && /appearance:set-cosmetic/.test(extensionWorker)
     && /appearance:select-theme/.test(extensionWorker) && /enqueueAppearance/.test(extensionWorker)

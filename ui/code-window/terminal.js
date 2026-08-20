@@ -29,6 +29,7 @@
   const host = document.getElementById("bc-code-term");
   const cwdLabel = document.getElementById("bc-code-cwd");
   const folderBtn = document.getElementById("bc-code-folder-btn");
+  const resumeBtn = document.getElementById("bc-code-resume-btn");
   const overlay = document.getElementById("bc-code-overlay");
   const overlayMsg = overlay.querySelector(".bc-code-overlay-msg");
   const overlayActions = overlay.querySelector(".bc-code-overlay-actions");
@@ -250,6 +251,25 @@
     api.restart(size.cols || 100, size.rows || 30);
   }
 
+  async function showResumePicker() {
+    const sessions = await api.listSessions();
+    if (!sessions.length) {
+      showOverlay("No saved Claude Code sessions were found for this folder.", [
+        { label: "Start a new session", primary: true, onClick: restart },
+        { label: "Back", onClick: hideOverlay },
+      ]);
+      return;
+    }
+    showOverlay("Resume a local Claude Code session", sessions.slice(0, 12).map((session) => ({
+      label: `${session.lastTimestamp ? new Date(session.lastTimestamp).toLocaleString() : session.sessionId.slice(0, 8)} · ${session.messageCount || 0} messages`,
+      onClick: async () => {
+        const size = syncSize() || lastSize;
+        const started = await api.resumeSession(session.sessionId, size.cols || 100, size.rows || 30);
+        if (!started) showOverlay("That saved session is no longer available for this folder.", [{ label: "Back", primary: true, onClick: showResumePicker }]);
+      },
+    })));
+  }
+
   api.onStarted(({ cwd }) => {
     setState("running");
     cwdLabel.textContent = cwd;
@@ -300,6 +320,9 @@
   });
 
   folderBtn.addEventListener("click", () => api.pickFolder());
+  resumeBtn.addEventListener("click", () => showResumePicker().catch(() => {
+    showOverlay("Could not load saved Claude Code sessions.", [{ label: "Back", primary: true, onClick: hideOverlay }]);
+  }));
 
   // Clicking anywhere in the terminal area should put focus back in the CLI —
   // after using the settings panel, the natural next action is to keep typing.
@@ -307,6 +330,28 @@
     // Don't steal focus from the overlay's own buttons.
     if (overlay.dataset.visible === "true") return;
     if (e.button === 0) term.focus();
+  });
+
+  // Right-click copy/paste, the convention most terminal emulators use (PuTTY,
+  // most Linux terminals): a selection means "copy that", no selection means
+  // "paste". Chosen over a floating context menu to avoid adding another
+  // popover with its own positioning/z-index surface in a window that already
+  // has one (the settings panel). term.paste() (not api.write()) so a paste
+  // still goes through xterm's own bracketed-paste-mode wrapping when the
+  // running CLI has that mode enabled.
+  host.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (overlay.dataset.visible === "true") return;
+    const selection = term.getSelection();
+    if (selection) {
+      api.copyText(selection);
+      term.clearSelection();
+    } else {
+      Promise.resolve(api.pasteText()).then((text) => {
+        if (text) term.paste(text);
+      });
+    }
+    term.focus();
   });
 
   // First paint: report the measured size so the main process can spawn the pty

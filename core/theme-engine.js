@@ -339,7 +339,12 @@ const SIDEBAR_FLIP_ATTR = "data-bc-sidebar-flip";
  */
 function applySidebarPositionOffset(settings, doc = (typeof document !== "undefined" ? document : null)) {
   if (!doc) return;
-  const inner = doc.querySelector("main .dframe-content-inner");
+  // `dframe-content-inner` is an implementation detail that has already
+  // changed in Claude's live shell. Prefer it where present, then fall back to
+  // the DOM adapter's current primary-content target so a recognized sidebar
+  // can still move even after that inner wrapper is renamed.
+  const contentPane = resolveTarget("contentPane");
+  const inner = doc.querySelector("main .dframe-content-inner") || (contentPane && contentPane.element);
   if (!inner) return;
   const wantRight = !!(settings && settings.layout && settings.layout.sidebarPosition === "right");
 

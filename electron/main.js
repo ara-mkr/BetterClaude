@@ -852,7 +852,7 @@ function disposeCodeSession() {
  * thrown here: a missing CLI is a normal, recoverable, user-facing situation
  * ("install Claude Code first"), not a main-process fault.
  */
-function startCodeSession({ cwd, cols, rows }) {
+function startCodeSession({ cwd, cols, rows, args = [] }) {
   disposeCodeSession();
   const target = codeView && codeView.webContents;
   if (!target || target.isDestroyed()) return;
@@ -869,19 +869,17 @@ function startCodeSession({ cwd, cols, rows }) {
   }
 
   try {
-    const finalCols = Number.isFinite(cols)
-      ? cols
-      : Number.isFinite(codeLastTerm.cols)
-        ? codeLastTerm.cols
-        : CODE_DEFAULT_COLS;
-    const finalRows = Number.isFinite(rows)
-      ? rows
-      : Number.isFinite(codeLastTerm.rows)
-        ? codeLastTerm.rows
-        : CODE_DEFAULT_ROWS;
+    // Keep all spawn paths (initial launch, restart and resume) bounded even
+    // when a renderer sends malformed terminal dimensions.
+    const normalizeDimension = (value, fallback) => Number.isFinite(value)
+      ? Math.max(1, Math.min(1000, Math.floor(value)))
+      : fallback;
+    const finalCols = normalizeDimension(cols, normalizeDimension(codeLastTerm.cols, CODE_DEFAULT_COLS));
+    const finalRows = normalizeDimension(rows, normalizeDimension(codeLastTerm.rows, CODE_DEFAULT_ROWS));
 
     codeSession = new ClaudeSession({
       binaryPath,
+      args,
       cwd,
       cols: finalCols,
       rows: finalRows,
@@ -970,11 +968,21 @@ function layoutCodeView() {
   const { width, height } = mainWindow.getContentBounds();
   const x = Math.max(0, Math.min(codeViewBounds.x, width));
   const y = Math.max(0, Math.min(codeViewBounds.y, height));
+  // Prefer the renderer's measured content rectangle. This matters when the
+  // sidebar is docked on the right (the old width-from-window calculation
+  // covered the sidebar and made its controls unreachable). Keep the
+  // remainder fallback for the initial frame, before the first measurement.
+  const measuredWidth = Number.isFinite(codeViewBounds.width) && codeViewBounds.width > 0
+    ? Math.min(codeViewBounds.width, width - x)
+    : width - x;
+  const measuredHeight = Number.isFinite(codeViewBounds.height) && codeViewBounds.height > 0
+    ? Math.min(codeViewBounds.height, height - y)
+    : height - y;
   codeView.setBounds({
     x,
     y,
-    width: Math.max(0, width - x),
-    height: Math.max(0, height - y),
+    width: Math.max(0, measuredWidth),
+    height: Math.max(0, measuredHeight),
   });
 }
 
@@ -1177,6 +1185,30 @@ ipcMain.on("code:restart", (e, { cols, rows }) => {
   startCodeSession({ cwd: resolveCodeCwd(), cols, rows });
 });
 
+// Local CLI transcript metadata is enough to offer a safe resume picker. The
+// transcript itself remains owned by Claude Code; BetterClaude only passes the
+// selected ID back to the already-installed CLI as `claude --resume <id>`.
+ipcMain.handle("code:list-sessions", (e) => {
+  if (!isCodeSender(e.sender)) return [];
+  return sessionBundle.listSessionsForCwd(resolveCodeCwd()).map(({ sessionId, firstTimestamp, lastTimestamp, messageCount }) => ({
+    sessionId,
+    firstTimestamp,
+    lastTimestamp,
+    messageCount,
+  }));
+});
+
+ipcMain.handle("code:resume-session", (e, sessionId, cols, rows) => {
+  if (!isCodeSender(e.sender) || typeof sessionId !== "string") return false;
+  const cwd = resolveCodeCwd();
+  const known = sessionBundle.listSessionsForCwd(cwd).some((session) => session.sessionId === sessionId);
+  if (!known) return false;
+  const target = codeView && codeView.webContents;
+  if (target && !target.isDestroyed()) target.send("code:restarting", { cwd });
+  startCodeSession({ cwd, cols, rows, args: ["--resume", sessionId] });
+  return true;
+});
+
 // --- In-window tab plumbing (sender: the claude.ai renderer) ---
 
 /** Only the main window may drive the tab. */
@@ -1215,7 +1247,11 @@ ipcMain.handle("code-tab:get-state", (e) => {
 ipcMain.on("code-tab:layout", (e, rect) => {
   if (!isMainSender(e.sender)) return;
   if (!rect || !Number.isFinite(rect.x) || !Number.isFinite(rect.y)) return;
-  codeViewBounds = { ...codeViewBounds, x: rect.x, y: rect.y };
+  // Ignore negative/invalid dimensions but preserve the x/y update. Bounds
+  // are clamped again in layoutCodeView before reaching Electron.
+  const width = Number.isFinite(rect.width) && rect.width >= 0 ? rect.width : codeViewBounds.width;
+  const height = Number.isFinite(rect.height) && rect.height >= 0 ? rect.height : codeViewBounds.height;
+  codeViewBounds = { ...codeViewBounds, x: rect.x, y: rect.y, width, height };
   if (codeViewShown) layoutCodeView();
 });
 
