@@ -504,7 +504,8 @@ body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-center {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease,
+    box-shadow 160ms ease;
 }
 
 /* The brand mark is the only thing that distinguishes our pill from Anthropic's
@@ -532,10 +533,34 @@ body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-center {
   outline-offset: 2px;
 }
 
+/* Active state: a glow, NOT a ring.
+   Measured against Anthropic's own two pills on the live page — both render
+   with border-width 0 and box-shadow none, because their selection is drawn by
+   a separate sliding indicator behind the row. A hard 1px accent border on
+   ours (what this used to be) was therefore the single loudest thing in the
+   whole nav: a bright outlined rectangle sitting next to two borderless pills.
+   The fill plus a soft accent bloom reads as selected at a glance without
+   drawing a box nothing else in the row has.
+   Two shadows: the inset one is the load-bearing half, because it is painted
+   INSIDE the pill and so still shows if Anthropic's container ever clips
+   overflow; the outer bloom is the part that actually glows when it doesn't.
+   Both are color-mixed off the live accent, so they follow the theme (and a
+   runtime accent change) instead of pinning a purple. */
 .bc-code-tab-pill[data-bc-active] {
   background: var(--nav-item-bg-selected, rgba(108, 99, 255, 0.18));
-  border-color: var(--bc-accent, #6c63ff);
+  border-color: transparent;
   color: var(--bc-text, #ece7fb);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--bc-accent, #6c63ff) 22%, transparent),
+    inset 0 0 10px color-mix(in srgb, var(--bc-accent, #6c63ff) 20%, transparent),
+    0 0 12px color-mix(in srgb, var(--bc-accent, #6c63ff) 30%, transparent);
+}
+
+/* The brand dot picks up the same bloom while active, so the glow reads as one
+   lit control rather than a lit box with a flat dot in it. */
+.bc-code-tab-pill[data-bc-active]::before {
+  opacity: 1;
+  box-shadow: 0 0 7px color-mix(in srgb, var(--bc-accent, #6c63ff) 75%, transparent);
 }
 
 /* Fallback position: the adapter could not resolve Anthropic's pill container,

@@ -10,7 +10,8 @@ module.exports = {
   _renderPlayful() {
     const { settings } = this;
     const wrap = el("div", { class: "bc-section" });
-    wrap.appendChild(el("h2", { text: "Playful" }));
+    // Sub-head, not a section title — same merge as the buddy block above.
+    wrap.appendChild(el("h2", { text: "Playful", class: "bc-ae-subhead" }));
 
     // Snake is deliberately NOT playable from inside this panel any more.
     // Settings is where you configure things; the game belongs where the

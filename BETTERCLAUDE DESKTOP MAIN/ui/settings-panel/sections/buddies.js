@@ -19,7 +19,9 @@ module.exports = {
     const perBuddy = cfg.perBuddy || {};
 
     const wrap = el("div", { class: "bc-section" });
-    wrap.appendChild(el("h2", { text: "Buddies" }));
+    // Sub-head, not a section title: this block is rendered inside the merged
+    // Personality tab (see sections/personality.js) rather than owning a tab.
+    wrap.appendChild(el("h2", { text: "Desktop buddy", class: "bc-ae-subhead" }));
     wrap.appendChild(el("p", {
       class: "bc-hint",
       text: "A little character that floats above every app on your desktop. Drag it anywhere — "
