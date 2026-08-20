@@ -25,6 +25,19 @@
  * always-present decorative ones — #bc-fx-canvas is full-window and would
  * otherwise suspend the pane permanently.
  *
+ * IT ALSO HAS TO CATCH CLAUDE.AI'S OWN MODALS. The pane sits above the whole
+ * page, not just above BetterClaude's own layer — so opening claude.ai's own
+ * Settings (their account/profile dialog, not ours) gets covered exactly the
+ * same way ours would. That dialog isn't `betterclaude-`/`bc-` prefixed, so it
+ * can't be caught by id. It's caught instead by the one signal every modal
+ * library uses for accessibility regardless of vendor: `role="dialog"` /
+ * `role="alertdialog"` / `aria-modal="true"`, present on the element itself or
+ * one level down (portals commonly wrap the dialog in a plain container div).
+ * The area/interactivity gate still applies, so a small popover with that role
+ * doesn't trip it. This is deliberately NOT "any large interactive body
+ * child" — claude.ai's own SPA root is exactly that (full-window, always
+ * interactive) and would permanently suspend the pane if it qualified.
+ *
  * DOM-only; the host supplies the suspend/resume side effects.
  */
 
@@ -40,14 +53,28 @@ function isOwnBodyChild(el) {
   return OWN_ID_PREFIXES.some((prefix) => id.startsWith(prefix));
 }
 
-/** True while a BetterClaude overlay is covering a meaningful part of the window. */
+const DIALOG_SELECTOR = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]';
+
+/** True for a non-BetterClaude modal (claude.ai's own Settings, etc). */
+function isForeignDialog(el) {
+  if (isOwnBodyChild(el)) return false;
+  if (typeof el.matches === "function" && el.matches(DIALOG_SELECTOR)) return true;
+  // Portals often wrap the actual [role=dialog] node in a plain container.
+  return typeof el.querySelector === "function" && !!el.querySelector(DIALOG_SELECTOR);
+}
+
+function isCandidateOverlay(el) {
+  return isOwnBodyChild(el) || isForeignDialog(el);
+}
+
+/** True while a BetterClaude overlay (or claude.ai's own modal) is covering a meaningful part of the window. */
 function anyBlockingOverlay() {
   if (!document.body) return false;
   const viewportArea = (window.innerWidth || 0) * (window.innerHeight || 0);
   if (viewportArea <= 0) return false;
 
   return Array.prototype.some.call(document.body.children, (el) => {
-    if (!isOwnBodyChild(el)) return false;
+    if (!isCandidateOverlay(el)) return false;
     let style;
     try {
       style = getComputedStyle(el);
@@ -68,9 +95,10 @@ function anyBlockingOverlay() {
  * Two observation scopes, both narrow:
  *   - <body> direct children, so a lazily-built overlay (the settings panel is
  *     only constructed on first open) is noticed the moment it is inserted.
- *   - the `class`/`style` attribute of each BetterClaude body child, which is
- *     how every one of these overlays actually opens — they toggle `bc-open`
- *     rather than being added and removed.
+ *   - the `class`/`style`/`role`/`aria-modal` attributes of each candidate body
+ *     child (BetterClaude's own, or a foreign dialog), since that is how most
+ *     of these overlays actually open — they toggle `bc-open` (ours) or a
+ *     visibility class (theirs) rather than being added and removed.
  *
  * Neither watches a subtree, so the cost does not scale with page content, and
  * an overlay re-rendering its own insides costs nothing.
@@ -111,9 +139,9 @@ function mountOverlayOcclusionGuard({ onChange } = {}) {
       observer.observe(document.body, { childList: true, subtree: false });
     }
     Array.prototype.forEach.call(document.body.children, (el) => {
-      if (!isOwnBodyChild(el) || watched.has(el)) return;
+      if (!isCandidateOverlay(el) || watched.has(el)) return;
       watched.add(el);
-      observer.observe(el, { attributes: true, attributeFilter: ["class", "style"] });
+      observer.observe(el, { attributes: true, attributeFilter: ["class", "style", "role", "aria-modal"] });
     });
   }
 

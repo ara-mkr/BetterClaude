@@ -8718,12 +8718,21 @@ ${content}
         const id = el.id || "";
         return OWN_ID_PREFIXES.some((prefix) => id.startsWith(prefix));
       }
+      var DIALOG_SELECTOR = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]';
+      function isForeignDialog(el) {
+        if (isOwnBodyChild(el)) return false;
+        if (typeof el.matches === "function" && el.matches(DIALOG_SELECTOR)) return true;
+        return typeof el.querySelector === "function" && !!el.querySelector(DIALOG_SELECTOR);
+      }
+      function isCandidateOverlay(el) {
+        return isOwnBodyChild(el) || isForeignDialog(el);
+      }
       function anyBlockingOverlay() {
         if (!document.body) return false;
         const viewportArea = (window.innerWidth || 0) * (window.innerHeight || 0);
         if (viewportArea <= 0) return false;
         return Array.prototype.some.call(document.body.children, (el) => {
-          if (!isOwnBodyChild(el)) return false;
+          if (!isCandidateOverlay(el)) return false;
           let style;
           try {
             style = getComputedStyle(el);
@@ -8770,9 +8779,9 @@ ${content}
             observer.observe(document.body, { childList: true, subtree: false });
           }
           Array.prototype.forEach.call(document.body.children, (el) => {
-            if (!isOwnBodyChild(el) || watched.has(el)) return;
+            if (!isCandidateOverlay(el) || watched.has(el)) return;
             watched.add(el);
-            observer.observe(el, { attributes: true, attributeFilter: ["class", "style"] });
+            observer.observe(el, { attributes: true, attributeFilter: ["class", "style", "role", "aria-modal"] });
           });
         }
         attach();
