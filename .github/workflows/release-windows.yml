@@ -26,7 +26,14 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run build:win
+      # package.json's build.publish config makes electron-builder try to
+      # publish straight to GitHub itself whenever it detects it's running
+      # on a git tag ("implicit publishing") — which fights with the
+      # softprops/action-gh-release upload below and fails outright here
+      # since no GH_TOKEN is set for that path. --publish=never keeps
+      # electron-builder to just building dist/*.exe; the step below is the
+      # only thing that talks to the release.
+      - run: npm run build:core && npx electron-builder --win --x64 --publish=never
 
       - name: Attach Windows installer to release
         uses: softprops/action-gh-release@v2
