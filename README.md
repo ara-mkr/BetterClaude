@@ -48,7 +48,7 @@ Prebuilt installers live on the [GitHub Releases page](https://github.com/ara-mk
 | `BetterClaude-<version>-x64.dmg` | macOS, Intel |
 | `BetterClaude.Setup.<version>.exe` | Windows 10/11, 64-bit |
 
-Each release also carries `.zip` copies of the macOS builds if you'd rather skip the DMG. The builds are unsigned, so first launch takes one extra click: on macOS, right-click the app in Finder and choose **Open** (Gatekeeper warns about an unidentified developer), and on Windows click **More info → Run anyway** on the SmartScreen prompt. After that the app checks this repo's Releases on launch and offers updates in-app (Windows updates in place; macOS users reinstall from a new DMG until the build is signed).
+Each release also carries `.zip` copies of the macOS builds if you'd rather skip the DMG. The builds are ad-hoc signed but not notarized, so first launch takes one extra step: on macOS, right-click the app and choose **Open**, and if macOS still refuses, go to System Settings → Privacy & Security and click **Open Anyway** there. On Windows, click **More info → Run anyway** on the SmartScreen prompt. After that the app checks this repo's Releases on launch and offers updates in-app (Windows updates in place; macOS users reinstall from a new DMG until the build gets a Developer ID certificate).
 
 ## How it actually works
 

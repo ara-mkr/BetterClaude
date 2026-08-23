@@ -51,6 +51,7 @@
   "build": {
     "appId": "com.betterclaude.app",
     "productName": "BetterClaude",
+    "afterPack": "scripts/adhoc-sign.js",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -97,6 +98,7 @@
       ],
       "category": "public.app-category.productivity",
       "icon": "build/icon.icns",
+      "identity": null,
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
     "dmg": {
