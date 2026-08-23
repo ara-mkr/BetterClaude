@@ -23,6 +23,8 @@ An Electron desktop app that loads the real claude.ai and injects a layer of UI 
 
 ![BetterClaude desktop app, home screen](.github/readme-assets/hero-home.png)
 
+> **This is a work in progress.** BetterClaude is under active development, and releases can ship with rough edges: bugs, half-finished features, and parts of the UI that haven't been sanded down yet. It holds up day to day, but if something acts up, it might not be you — check the [issue tracker](https://github.com/ara-mkr/BetterClaude/issues) or wait for the next release.
+
 ## Contents
 
 - [Download](#download)
