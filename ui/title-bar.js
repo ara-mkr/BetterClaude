@@ -17,22 +17,9 @@
  */
 
 const { TRAFFIC_LIGHT_RESERVED_WIDTH } = require("../electron/window-chrome");
-const { TERMINAL } = require("../core/icons");
 
 const TITLE_BAR_ID = "betterclaude-titlebar";
 const IS_MAC = process.platform === "darwin";
-
-// The bar is assembled with innerHTML, so the one caller-supplied string in it
-// (host.title) has to be escaped. Today's two callers pass literals, but a
-// title is exactly the kind of field that later gets fed a folder or session
-// name, and "it's a literal at the moment" is not a property the template can
-// enforce on its own.
-function escapeText(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
 
 function mountTitleBar(host) {
   if (document.getElementById(TITLE_BAR_ID)) return;
@@ -59,15 +46,8 @@ function mountTitleBar(host) {
 
   bar.innerHTML = `
     ${leftHtml}
-    <div class="bc-tb-drag bc-tb-center" data-bc-tb-drag>
-      <span class="bc-tb-title">${escapeText(host.title || "BetterClaude")}</span>
-    </div>
+    <div class="bc-tb-drag bc-tb-spacer" data-bc-tb-drag></div>
     <div class="bc-tb-controls">
-      ${host.onToggleCode ? `
-      <button class="bc-tb-btn" data-bc-tb-code aria-pressed="false"
-        title="BetterClaude Code — runs the Claude Code CLI from this machine (Cmd/Ctrl+Shift+K)">
-        ${TERMINAL}
-      </button>` : ""}
       <button class="bc-tb-btn bc-tb-logo-btn" data-bc-tb-settings title="BetterClaude Settings (Cmd/Ctrl+,)">
         ${host.logoSrc ? `<img class="bc-tb-logo" src="${host.logoSrc}" alt="Settings" />` : ""}
       </button>
@@ -81,19 +61,6 @@ function mountTitleBar(host) {
     bar.querySelector("[data-bc-tb-close]").addEventListener("click", () => host.close());
   }
   bar.querySelector("[data-bc-tb-settings]").addEventListener("click", () => host.openSettings());
-
-  const codeBtn = host.onToggleCode ? bar.querySelector("[data-bc-tb-code]") : null;
-  if (codeBtn) codeBtn.addEventListener("click", () => host.onToggleCode());
-
-  // Native chrome, not injected content — this is what makes it a reliable
-  // entry point where the claude.ai-injected pill (core/code-tab.js) is not:
-  // this button lives in our own webContents and DOM, never subject to
-  // Anthropic's own React re-renders, overlays, or event delegation.
-  bar.setCodeActive = (active) => {
-    if (!codeBtn) return;
-    codeBtn.classList.toggle("bc-tb-active", !!active);
-    codeBtn.setAttribute("aria-pressed", active ? "true" : "false");
-  };
 
   return bar;
 }

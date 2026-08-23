@@ -8,26 +8,35 @@
  * core/skill-marketplace.js and core/update-banner.js, so a browser extension
  * could mount this against a different transport unchanged.
  *
- * WHY A SEPARATE PILL RATHER THAN THE NATIVE "CODE" TAB
+ * WHY THE BETTERCLAUDE IDE OWNS THE NATIVE "CODE" ACTION
  *
- * The 2026-08-19 audit settled this by navigating to it: claude.ai's Code tab
- * is a routed Anthropic feature (`/code` ships code-prompt-input,
- * epitaxy-env-pill, pending-nav-frame — a whole product surface), driven by
- * their own `data-mode` state machine with a sliding indicator. It is not an
- * empty slot. Taking it over would mean intercepting their click handler,
- * breaking a real feature, and re-breaking on every release. So BetterClaude
- * adds its own pill beside theirs, styled to match, and never touches
- * Anthropic's two.
+ * The 2026-08-19 audit showed that claude.ai's Code tab is a routed Anthropic
+ * feature (`/code` ships code-prompt-input, epitaxy-env-pill, pending-nav-frame)
+ * behind a private desktop-app gate. BetterClaude cannot reliably unlock that
+ * route, so this module observes the semantic mode control and prevents only
+ * the native Code navigation, opening the BetterClaude-owned IDE instead.
+ * Home is left untouched. The optional CLI pill remains a separate affordance
+ * for the existing embedded terminal.
  *
  * WHY THE PANE DOES NOT COVER THE SIDEBAR
  *
  * Because the native pattern doesn't. Switching Home <-> Code on claude.ai
  * swaps the content area and leaves the sidebar in place. Matching that isn't
- * only cosmetic: if the embedded pane covered the whole window below the title
- * bar, it would cover the very control you need to switch back, and the only
- * remaining home for that control would be the title bar — where it is adjacent
- * to nothing and matches nothing. Keeping the sidebar visible is what lets the
- * switch live where the user already looks for it.
+ * only cosmetic: it keeps this row — the app's one Home / Code / CLI switch —
+ * visible and clickable while the CLI pane is open. The IDE pane is the
+ * exception: it owns the full content area below the title bar, and its way
+ * back is the workspace's own "Open Home" action (ide:open-home), not this row.
+ *
+ * SPLIT MODE (chat beside the pane)
+ *
+ * The sidebar staying visible means conversations stay one click away while
+ * the CLI is up — but opening one used to navigate underneath the opaque
+ * pane, rendering a chat nobody could see. Split mode fixes that: clicking a
+ * sidebar conversation while the pane is showing squeezes claude.ai's content
+ * column into its left half (inline styles, re-applied by sync()) and halves
+ * the reported bounds so the pane occupies the right half. Navigating off the
+ * conversation — Home, New chat, anything — ends the split and the pane takes
+ * the full content area again.
  *
  * SELF-HEALING
  *
@@ -54,6 +63,43 @@ const PILL_LABEL = "CLI";
 // Anthropic's pills are ~30px tall inside a 32px group. Matched here so ours
 // sits on the same baseline rather than stretching the row.
 const FLOATING_CLASS = "bc-code-tab-floating";
+
+// --- Split mode ---------------------------------------------------------------
+//
+// With the pane open, opening a conversation from claude.ai's sidebar used to
+// navigate underneath an opaque native view — the chat rendered where nobody
+// could see it. Split mode is the fix: the page's content column is squeezed
+// into the LEFT half of its own area and the embedded pane is re-measured into
+// the RIGHT half, so both are visible at once. Any navigation away from a
+// conversation route ends the split and the pane takes the full content area
+// again (the live wire rides along — it is part of the pane's own page).
+
+const SPLIT_BODY_CLASS = "bc-code-split";
+const SPLIT_PANE_CLASS = "bc-split-squeezed";
+
+// Same two href shapes listClaudeConversationsFromHome() trusts in main.js,
+// so what this detects as "a chat" is exactly what everywhere else in the app
+// calls one.
+const CHAT_LINK_SELECTOR = 'a[href*="/chat/"], a[href*="/conversation/"]';
+
+function isConversationPath(pathname) {
+  return /^\/(chat|conversation)\//.test(pathname || "");
+}
+
+// Inline rather than stylesheet-driven because the element being squeezed is
+// one claude-dom resolves at runtime (`.dframe-pane-primary` today); keying a
+// rule off body class would still need these same declarations somewhere, and
+// inline survives React swapping classes around it until the next re-render,
+// which sync() re-applies over anyway. `flex` covers main being a flex row;
+// width/max-width cover plain block layout; min-width:0 lets the column
+// actually shrink below its content's preferred measure instead of
+// overflowing and pushing the split point sideways.
+const SQUEEZE_PROPERTIES = [
+  ["width", "50%"],
+  ["max-width", "50%"],
+  ["flex", "0 1 50%"],
+  ["min-width", "0"],
+];
 
 /**
  * Width the collapsed sidebar rail needs left clear, remembered across peeks.
@@ -91,7 +137,7 @@ let railAllowance = 0;
  * since a pane that is too wide is recoverable and a pane positioned off-screen
  * is not.
  */
-function measureContentArea({ titleBarHeight = 0, sidebarOnRight = false } = {}) {
+function measureBaseContentArea({ titleBarHeight = 0, sidebarOnRight = false } = {}) {
   const top = Math.round(titleBarHeight);
 
   // Mirror image of the left-sidebar case below: the sidebar sits at the
@@ -146,6 +192,34 @@ function measureContentArea({ titleBarHeight = 0, sidebarOnRight = false } = {})
 }
 
 /**
+ * Where the embedded pane should sit, optionally halved for split mode.
+ *
+ * The half is cut from the FULL content rectangle, never from the pane's
+ * measured box: once the split squeeze is applied the content column's own
+ * width is already 50%, and halving that would walk the pane's left edge
+ * rightward a quarter at a time on every re-measure. Deriving the split point
+ * from the rect's origin + window width keeps it pinned no matter how the
+ * squeeze has resized the column underneath.
+ *
+ * The chat always takes the left half and the pane the right — including with
+ * the sidebar docked right, where mirroring would need margin hacks against
+ * layout internals this module deliberately doesn't model. Both halves stay
+ * fully usable either way.
+ */
+function measureContentArea({ titleBarHeight = 0, sidebarOnRight = false, split = false } = {}) {
+  const base = measureBaseContentArea({ titleBarHeight, sidebarOnRight });
+  if (!split || base.width <= 1) return base;
+  const half = Math.round(base.width / 2);
+  return {
+    x: base.x + half,
+    y: base.y,
+    width: base.width - half,
+    height: base.height,
+    anchoredTo: base.anchoredTo,
+  };
+}
+
+/**
  * Build the pill. Deliberately a <button type="button"> with the same shape as
  * Anthropic's: assistive tech should read it as one more control in the same
  * group, because that is exactly what it is.
@@ -166,18 +240,31 @@ function createPill({ onActivate }) {
   return btn;
 }
 
-/**
- * @param {Function} onActivate      User asked for the embedded Code pane.
+/** * @param {Function} onActivate      User asked for the embedded CLI pane.
  * @param {Function} onDeactivate    User asked for claude.ai back.
- * @param {Function} onLayout          Called with measureContentArea()'s result.
+ * @param {Function} onLayout         Called with measureContentArea()'s result.
+ * @param {Function} onNativeCode     User clicked Anthropic's native Code mode; BetterClaude owns that surface.
+ * @param {Function} onNativeHome     User clicked Anthropic's native Home mode.
  * @param {number}   titleBarHeight    Height of BetterClaude's own title bar.
  * @param {Function} [getSidebarOnRight] Returns whether the "Sidebar position"
+
  *   setting currently reads "right". Read fresh on every sync rather than
  *   captured once, since the user can flip the setting while the pane is
  *   mounted (or open).
  */
-function mountCodeTab({ onActivate, onDeactivate, onLayout, titleBarHeight = 0, getSidebarOnRight = () => false } = {}) {
+function mountCodeTab({ onActivate, onDeactivate, onLayout, onNativeCode, onNativeHome, titleBarHeight = 0, getSidebarOnRight = () => false, showPill = true } = {}) {
   let active = false;
+  let split = false;
+  // Where a clicked sidebar chat is ABOUT to route. React Router navigates on
+  // pushState some time after the click returns, so between setSplit(true) and
+  // the route actually landing, location.pathname still names the OLD page —
+  // and the naive "am I still on a conversation?" test in sync() would read
+  // that gap as "user left" and tear the split back down every single time.
+  // Remembering the target closes the gap; the timer below keeps a click that
+  // never navigates from pinning the split shut forever.
+  let splitPendingPath = null;
+  let splitPendingTimer = null;
+  let pillVisible = showPill !== false;
   let pill = null;
   let resizeObserver = null;
   let observedPane = null;
@@ -201,11 +288,47 @@ function mountCodeTab({ onActivate, onDeactivate, onLayout, titleBarHeight = 0, 
     // which publishes before the host shows anything, so the first frame still
     // lands with current geometry rather than stale bounds.
     if (!active) return;
-    const rect = measureContentArea({ titleBarHeight, sidebarOnRight: getSidebarOnRight() });
+    const rect = measureContentArea({ titleBarHeight, sidebarOnRight: getSidebarOnRight(), split });
     const signature = `${rect.x}:${rect.y}:${rect.width}:${rect.height}`;
     if (signature === lastPublished) return;
     lastPublished = signature;
     onLayout(rect);
+  }
+
+  /**
+   * Enter or leave split mode. The body class and the content column's inline
+   * squeeze are applied by sync() (below), which this calls — one place owns
+   * the DOM so a React re-render that drops either marker is repaired by the
+   * same self-healing pass that re-mounts the pill.
+   */
+  function setSplit(next) {
+    if (next === split) return;
+    split = next;
+    if (!next && splitPendingTimer) {
+      clearTimeout(splitPendingTimer);
+      splitPendingTimer = null;
+    }
+    if (next) lastPublished = "";
+    document.body.classList.toggle(SPLIT_BODY_CLASS, split);
+    sync();
+  }
+
+  /**
+   * Constrain claude.ai's content column to its half of the window while split
+   * mode is showing. Idempotent and cheap: four style writes against an
+   * element sync() was resolving anyway.
+   */
+  function applySplitSqueeze() {
+    const pane = resolveTarget("contentPane");
+    const el = pane ? pane.element : null;
+    if (!el) return;
+    if (active && split) {
+      for (const [prop, value] of SQUEEZE_PROPERTIES) el.style.setProperty(prop, value, "important");
+      el.classList.add(SPLIT_PANE_CLASS);
+    } else {
+      for (const [prop] of SQUEEZE_PROPERTIES) el.style.removeProperty(prop);
+      el.classList.remove(SPLIT_PANE_CLASS);
+    }
   }
 
   /**
@@ -254,6 +377,35 @@ function mountCodeTab({ onActivate, onDeactivate, onLayout, titleBarHeight = 0, 
    * mutation burst: the common path is two DOM reads and an early return.
    */
   function sync() {
+    // Leaving a conversation ends the split. This is the "click off the chat"
+    // exit: Home, New chat, picking a project — any navigation off /chat/ or
+    // /conversation/ — puts the pane back over the full content area. sync()
+    // runs on every mutation burst, so React's re-render after the navigation
+    // repairs the state here even without the route-change hook preload adds.
+    if (split) {
+      const path = window.location.pathname;
+      if (isConversationPath(path)) {
+        // Landed (or already sitting) on a conversation — the pending target
+        // has done its job.
+        splitPendingPath = null;
+      } else if (!splitPendingPath) {
+        // Not on a conversation and none in flight: the user clicked off.
+        // When a pending target DOES exist, the click has happened but React
+        // Router's pushState hasn't landed yet — hold the split open for the
+        // gap, with the timeout in the click handler as the backstop for a
+        // navigation that never arrives.
+        setSplit(false);
+        return;
+      }
+    }
+    if (!pillVisible) {
+      if (pill && pill.parentElement) pill.parentElement.removeChild(pill);
+      pill = null;
+      watchLayout();
+      applySplitSqueeze();
+      publishLayout();
+      return;
+    }
     if (!pill) pill = createPill({ onActivate: () => setActive(!active) });
 
     const group = resolveTarget("modeSwitch");
@@ -277,38 +429,80 @@ function mountCodeTab({ onActivate, onDeactivate, onLayout, titleBarHeight = 0, 
     pill.setAttribute("aria-pressed", active ? "true" : "false");
     pill.toggleAttribute("data-bc-active", active);
     watchLayout();
+    applySplitSqueeze();
     publishLayout();
   }
 
   /**
-   * Anthropic's own pills navigate claude.ai. If one is clicked while our pane
-   * is showing, the user is asking for claude.ai back — so step aside rather
-   * than leaving the pane parked on top of a route change they can't see.
-   *
-   * Listener is passive and on the capture phase purely so it observes the
-   * click before React's own handler runs; it never calls preventDefault or
-   * stopPropagation, so Anthropic's navigation happens exactly as it would
-   * without us.
+ * Anthropic's own Home / Code controls are observed on the capture phase so
+ * BetterClaude can prevent only the restricted native Code route before React's
+ * click handler runs. Home is never cancelled; it only detaches BetterClaude's
+ * views so Claude.ai remains visible.
    */
   function onDocumentClick(event) {
-    if (!active) return;
     const target = event.target;
     if (!target || !target.closest) return;
     if (target.closest(`#${PILL_ID}`)) return;
 
-    // Must be a pill INSIDE Anthropic's own mode-switch container, not merely
-    // any element carrying a data-mode attribute.
-    //
-    // `target.closest("[data-mode]")` alone looked precise and was catastrophic:
-    // claude.ai also uses data-mode for the colour scheme (`div.cds-root
-    // [data-mode="dark"]` wraps the app), so that test matched an ancestor of
-    // essentially every element on the page — and the pane closed itself on the
-    // user's next click ANYWHERE. It presented as the embedded pane refusing to
-    // track the sidebar, because a hidden pane does not get new bounds; the
-    // actual fault was three layers away from the symptom.
+    // Split entry: a conversation opened from the sidebar while the pane is
+    // showing becomes side-by-side instead of navigating underneath an opaque
+    // native view. The navigation itself is never cancelled — claude.ai routes
+    // to the chat as normal, and split mode just re-homes the pane into the
+    // other half. Sidebar containment is checked so links elsewhere on the
+    // page keep behaving normally, with a degrade-open fallback when the
+    // sidebar can't be resolved: every /chat/ link on claude.ai lives in that
+    // rail anyway, and missing the split is worse than over-triggering it.
+    const chatLink = target.closest(CHAT_LINK_SELECTOR);
+    if (chatLink && active) {
+      const sidebar = resolveTarget("sidebar");
+      if (!sidebar || sidebar.element.contains(chatLink)) {
+        try {
+          splitPendingPath = new URL(chatLink.href).pathname;
+        } catch {
+          splitPendingPath = null;
+        }
+        if (splitPendingTimer) clearTimeout(splitPendingTimer);
+        // If the navigation never lands (dead link, interrupted by another
+        // click), the remembered target would otherwise hold the split open on
+        // a page that isn't a conversation. Two seconds is far longer than
+        // React Router needs and far shorter than "stuck".
+        splitPendingTimer = setTimeout(() => {
+          splitPendingPath = null;
+          splitPendingTimer = null;
+          sync();
+        }, 2000);
+        setSplit(true);
+      }
+      return;
+    }
+
+    // Match only the semantic mode values. The same data-mode attribute is
+    // also used by claude.ai for light/dark color mode, so a bare
+    // target.closest("[data-mode]") would treat every page click as a tab
+    // click. If the audited mode-switch group exists, require the control to
+    // belong to it; the exact-value fallback keeps the native Code entry point
+    // working during a shell transition while that group is being rebuilt.
+    const nativeMode = target.closest('[data-mode="code"], [data-mode="cowork"], [data-mode="home"]');
+    if (!nativeMode) return;
     const group = resolveTarget("modeSwitch");
-    if (!group || !group.element.contains(target)) return;
-    if (target.closest("[data-mode]")) setActive(false);
+    if (group && !group.element.contains(nativeMode)) return;
+    const mode = nativeMode.getAttribute("data-mode");
+
+    if (mode === "code" && onNativeCode) {
+      if (active) setActive(false);
+      // BetterClaude owns the Code surface. Stop Anthropic's restricted /code
+      // route before its React handler can navigate there.
+      event.preventDefault();
+      event.stopPropagation();
+      onNativeCode();
+      return;
+    }
+    if (mode === "cowork" || mode === "home") {
+      if (active) setActive(false);
+      // Do not prevent Home navigation; just detach any BetterClaude view that
+      // would otherwise remain composited above the page.
+      if (onNativeHome) onNativeHome();
+    }
   }
 
   function setActive(next) {
@@ -320,22 +514,35 @@ function mountCodeTab({ onActivate, onDeactivate, onLayout, titleBarHeight = 0, 
       return;
     }
     active = next;
+    if (!active && split) setSplit(false);
     document.body.classList.toggle("bc-code-tab-active", active);
     sync();
     if (active) {
+      // Opening the pane while a conversation is on screen starts side-by-side
+      // — the same contract as clicking a chat with the pane open, and it also
+      // covers adopting a pane that outlived a claude.ai reload mid-conversation
+      // (preload re-activates from code-tab:get-state without any click).
+      // Called after sync() so the split bounds are published before the host
+      // is asked to show anything.
+      if (isConversationPath(window.location.pathname)) setSplit(true);
       if (onActivate) onActivate();
     } else if (onDeactivate) {
       onDeactivate();
     }
   }
 
-  document.addEventListener("click", onDocumentClick, { capture: true, passive: true });
+  document.addEventListener("click", onDocumentClick, { capture: true });
   window.addEventListener("resize", publishLayout);
   sync();
 
   return {
     sync,
     setActive,
+    isSplit: () => split,
+    setPillVisible(next) {
+      pillVisible = next !== false;
+      sync();
+    },
     isActive: () => active,
     publishLayout,
     unmount() {
@@ -343,6 +550,9 @@ function mountCodeTab({ onActivate, onDeactivate, onLayout, titleBarHeight = 0, 
       window.removeEventListener("resize", publishLayout);
       if (resizeObserver) resizeObserver.disconnect();
       if (sidebarResizeObserver) sidebarResizeObserver.disconnect();
+      if (splitPendingTimer) clearTimeout(splitPendingTimer);
+      applySplitSqueeze();
+      document.body.classList.remove(SPLIT_BODY_CLASS);
       if (pill && pill.parentElement) pill.parentElement.removeChild(pill);
       pill = null;
     },

@@ -387,7 +387,7 @@ const TARGETS = {
 
   modeSwitch: {
     label: "Home / Code mode switch",
-    why: "Anthropic's own segmented control. BetterClaude mounts its Code tab adjacent to it; it is never repurposed or intercepted.",
+    why: "Anthropic's own segmented control. Nothing of ours is mounted inside it; core/code-tab.js scopes its native Home/Code click interception to this group so color-mode controls sharing the data-mode attribute can never be mistaken for it.",
     absenceIsNormal: ({ signedIn }) => !signedIn,
     strategies: [
       // `data-segmented` + `data-pills` are developer-authored and semantic;

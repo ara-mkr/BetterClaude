@@ -148,12 +148,19 @@ function locateClaude(explicit) {
  * at the top of this file). The single override is TERM, which must agree with
  * the emulator we render into.
  */
-function childEnv() {
+function childEnv(extra) {
   const env = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (typeof value === "string") env[key] = value;
   }
   env.TERM = "xterm-256color";
+  // Team sessions carry BC_TEAM_* variables pointing at their shared hub so
+  // scripts/hooks inside the agent can find it without parsing the prompt.
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) {
+      if (typeof key === "string" && typeof value === "string") env[key] = value;
+    }
+  }
   return env;
 }
 
@@ -168,7 +175,7 @@ function childEnv() {
  * Emits: "data" (string chunk), "exit" ({ exitCode, signal }).
  */
 class ClaudeSession extends EventEmitter {
-  constructor({ binaryPath, args = [], cwd, cols, rows }) {
+  constructor({ binaryPath, args = [], cwd, cols, rows, env }) {
     super();
     this.cwd = cwd || process.cwd();
     this.startedAt = new Date();
@@ -195,7 +202,7 @@ class ClaudeSession extends EventEmitter {
         cols: Math.max(1, cols),
         rows: Math.max(1, rows),
         cwd: this.cwd,
-        env: childEnv(),
+        env: childEnv(env),
       });
     } catch (error) {
       throw new PtySpawnError(

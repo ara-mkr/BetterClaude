@@ -39,18 +39,43 @@ async function build() {
     globalName: "BetterClaudeXterm",
   });
 
+  const ctxIdeEditor = await esbuild.context({
+    ...commonOpts,
+    entryPoints: [path.join(__dirname, "ui/code-window/ide-editor-entry.js")],
+    outfile: path.join(__dirname, "build/ide-editor.bundle.js"),
+    format: "iife",
+    globalName: "BetterClaudeIDEEditor",
+  });
+
+  // Snake + the while-Claude-is-working popup for both Code windows. IIFE
+  // global like the xterm bundle, because the pages that load it have no
+  // require() (nodeIntegration off).
+  const ctxSnake = await esbuild.context({
+    ...commonOpts,
+    entryPoints: [path.join(__dirname, "ui/code-window/snake-entry.js")],
+    outfile: path.join(__dirname, "build/snake.bundle.js"),
+    format: "iife",
+    globalName: "BetterClaudeSnake",
+  });
+
   if (watch) {
     await ctxCore.watch();
     await ctxEditor.watch();
     await ctxXterm.watch();
+    await ctxIdeEditor.watch();
+    await ctxSnake.watch();
     console.log("esbuild watching for changes...");
   } else {
     await ctxCore.rebuild();
     await ctxEditor.rebuild();
     await ctxXterm.rebuild();
+    await ctxIdeEditor.rebuild();
+    await ctxSnake.rebuild();
     await ctxCore.dispose();
     await ctxEditor.dispose();
     await ctxXterm.dispose();
+    await ctxIdeEditor.dispose();
+    await ctxSnake.dispose();
   }
 }
 

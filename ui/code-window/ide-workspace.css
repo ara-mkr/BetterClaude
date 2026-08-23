@@ -1,0 +1,346 @@
+/* BetterClaude-owned Code workspace. This stylesheet is local to the Code view;
+   Home, the existing CLI view, Settings, and the rest of the app keep their own
+   documents and styles.
+
+   THEMING CONTRACT: every surface here derives from the shared --bc-* token set
+   the theme engine lays on :root of this document (electron/ide-preload.js
+   applies it). An earlier version hardcoded violet hex values throughout,
+   which is why picking any non-purple theme left this window purple. Absolute
+   colors now exist only as fallbacks inside the :root alias block below. */
+
+:root {
+  /* Surfaces */
+  --bc-ide-bg: var(--bc-bg, #120d1f);
+  --bc-ide-sidebar: var(--bc-bg-sidebar, #0d0917);
+  --bc-ide-panel: var(--bc-bg-elevated, #1d1531);
+  --bc-ide-line: var(--bc-border, #34224f);
+  /* Ink */
+  --bc-ide-text: var(--bc-text, #f1edff);
+  --bc-ide-muted: var(--bc-text-muted, #aa9ac5);
+  /* Accent + derived states */
+  --bc-ide-accent: var(--bc-accent, #8b5cf6);
+  --bc-ide-accent-hover: var(--bc-accent-hover, color-mix(in srgb, var(--bc-ide-accent) 88%, white));
+  --bc-ide-on-accent: var(--btn-primary-fg, #fff);
+  --bc-ide-danger: var(--bc-danger, #ef4444);
+  /* Bubbles */
+  --bc-ide-bubble-user: var(--bc-bubble-user, color-mix(in srgb, var(--bc-ide-accent) 30%, var(--bc-ide-panel)));
+  /* Semantic data accents (folder/warn amber, info blue) — content-level
+     colors, not surfaces, mixed toward the theme's own text so they stay
+     legible on light and dark themes alike. */
+  --bc-ide-folder: color-mix(in srgb, #e5b772 78%, var(--bc-ide-text));
+  --bc-ide-info: color-mix(in srgb, #7da9e8 78%, var(--bc-ide-text));
+  --bc-ide-font: var(--bc-ui-font, Inter, ui-sans-serif, sans-serif);
+  --bc-ide-code-font: var(--bc-code-font, SFMono-Regular, Menlo, Consolas, monospace);
+}
+
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--bc-ide-bg); }
+body { color: var(--bc-ide-text); font-family: var(--bc-ide-font); font-size: 13px; }
+button { font: inherit; letter-spacing: 0; }
+button:focus-visible { outline: 2px solid var(--bc-ide-accent); outline-offset: 2px; }
+
+#bc-ide-shell { width: 100%; height: 100%; display: flex; flex-direction: column; min-height: 0; background: var(--bc-ide-bg); }
+.bc-ide-icon-btn { width: 28px; height: 28px; display: inline-grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 9px; color: var(--bc-ide-muted); background: transparent; cursor: pointer; }
+.bc-ide-icon-btn:hover { color: var(--bc-ide-text); background: var(--bc-ide-panel); border-color: var(--bc-ide-line); }
+.bc-ide-icon-btn svg { width: 15px; height: 15px; }
+
+/* Every icon-only control in this workspace is populated at runtime from
+   core/icons.js (see ide-workspace.js's applyIcons()) via a `data-bc-icon`
+   placeholder, so there is exactly one canonical icon set instead of ad hoc
+   unicode glyphs scattered through the markup. */
+[data-bc-icon] svg { display: block; width: 100%; height: 100%; }
+.bc-ide-chevron-left svg, .bc-ide-chevron-down svg { transition: transform 150ms ease; }
+.bc-ide-chevron-left.collapsed svg { transform: rotate(180deg); }
+.bc-ide-chevron-down.collapsed svg { transform: rotate(180deg); }
+
+.bc-ide-layout { display: flex; flex: 1 1 auto; min-height: 0; }
+/* Yield order, right to left: the Claude assistant keeps its full width
+   while open (flex-shrink: 0 below); tighter windows squeeze this sidebar
+   first down to its floor, then the file tree, then the editor. */
+.bc-ide-sidebar { display: flex; flex: 0 1 280px; min-width: 172px; flex-direction: column; min-height: 0; background: var(--bc-ide-sidebar); border-right: 1px solid var(--bc-ide-line); }
+.bc-ide-sidebar-head { flex: 0 0 auto; padding: 12px 15px 12px; }
+
+/* --- View switcher chip (Home / Code / CLI).
+   The IDE covers claude.ai's own mode row, so this is the app-wide switch
+   while Code is showing — same three destinations as the in-page pill row,
+   drawn once here where it stays visible above every panel. Code reads as
+   the active surface for as long as this window is on screen.
+
+   LOOK: a faithful copy of claude.ai's own segmented row (the df-pills
+   group): no border and no surface on the container — the three pills sit
+   straight on the sidebar — and selection is the same quiet soft fill their
+   sliding indicator draws, with no hairline ring. The earlier outlined-box
+   container + inset-ringed active segment read as a different, louder
+   control than the row it stands in for. Position is unchanged: same top
+   margin, same three equal columns. */
+.bc-ide-viewchip { flex: 0 0 auto; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 3px; margin: 14px 15px 0; padding: 3px; }
+.bc-ide-viewchip button { position: relative; z-index: 1; width: 100%; min-height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 7px; color: var(--bc-ide-muted); background: transparent; cursor: pointer; font-size: 13px; font-weight: 400; }
+.bc-ide-viewchip button svg { width: 14px; height: 14px; flex: 0 0 auto; }
+@media (hover: hover) and (pointer: fine) {
+  .bc-ide-viewchip button:hover { color: var(--bc-ide-text); background: color-mix(in srgb, var(--bc-ide-text) 5%, transparent); }
+}
+.bc-ide-viewchip button[aria-pressed="true"] { color: var(--bc-ide-text); background: color-mix(in srgb, var(--bc-ide-text) 8%, transparent); }
+.bc-ide-eyebrow { color: var(--bc-ide-muted); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; opacity: .72; }
+.bc-ide-sidebar-title { display: flex; align-items: center; justify-content: space-between; margin-top: 5px; font-size: 18px; font-weight: 700; }
+.bc-ide-sidebar-title .bc-ide-icon-btn { width: 27px; height: 27px; font-size: 18px; }
+.bc-ide-segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; margin-top: 14px; padding: 3px; border: 1px solid var(--bc-ide-line); border-radius: 10px; background: color-mix(in srgb, var(--bc-ide-sidebar) 70%, var(--bc-ide-panel)); }
+.bc-ide-segmented button { min-height: 30px; border: 0; border-radius: 8px; color: var(--bc-ide-muted); background: transparent; cursor: pointer; }
+.bc-ide-segmented button[aria-pressed="true"] { color: var(--bc-ide-on-accent); background: var(--bc-ide-accent); font-weight: 700; }
+.bc-ide-sidebar-scroll { min-height: 0; overflow: auto; padding: 2px 9px 14px; }
+.bc-ide-side-section { margin-top: 12px; }
+.bc-ide-section-label { display: flex; align-items: center; justify-content: space-between; padding: 0 7px 6px; color: var(--bc-ide-muted); font-size: 10px; font-weight: 750; letter-spacing: .09em; text-transform: uppercase; }
+.bc-ide-section-label button { width: 20px; height: 20px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 7px; color: var(--bc-ide-muted); background: transparent; cursor: pointer; }
+.bc-ide-section-label button:hover { color: var(--bc-ide-text); background: var(--bc-ide-panel); }
+.bc-ide-section-label button svg { width: 12px; height: 12px; }
+.bc-ide-project-row, .bc-ide-session-row, .bc-ide-cloud-row { width: 100%; display: flex; align-items: center; gap: 9px; min-height: 40px; padding: 7px 9px; border: 1px solid transparent; border-radius: 8px; color: var(--bc-ide-muted); background: transparent; text-align: left; cursor: pointer; }
+.bc-ide-project-row:hover, .bc-ide-session-row:hover, .bc-ide-cloud-row:hover { color: var(--bc-ide-text); background: var(--bc-ide-panel); }
+.bc-ide-project-row.active, .bc-ide-session-row.active, .bc-ide-cloud-row.active { color: var(--bc-ide-text); background: color-mix(in srgb, var(--bc-ide-accent) 16%, transparent); border-color: color-mix(in srgb, var(--bc-ide-accent) 45%, transparent); }
+.bc-ide-row-icon { width: 18px; height: 18px; flex: 0 0 18px; display: grid; place-items: center; color: var(--bc-ide-muted); }
+.bc-ide-row-icon svg { width: 15px; height: 15px; }
+.bc-ide-project-row.active .bc-ide-row-icon { color: var(--bc-ide-accent); }
+.bc-ide-row-copy { min-width: 0; display: flex; flex: 1 1 auto; flex-direction: column; }
+.bc-ide-row-name, .bc-ide-row-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-ide-row-name { color: inherit; }
+.bc-ide-row-meta { margin-top: 2px; color: var(--bc-ide-muted); font-family: var(--bc-ide-code-font); font-size: 10px; opacity: .72; }
+.bc-ide-row-badge { flex: 0 0 auto; color: var(--bc-ide-muted); font-family: var(--bc-ide-code-font); font-size: 10px; }
+.bc-ide-status-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--bc-ide-muted); opacity: .85; }
+.bc-ide-status-dot.live { background: var(--bc-ide-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bc-ide-accent) 18%, transparent); }
+.bc-ide-status-dot.cloud { background: var(--bc-ide-info); }
+.bc-ide-status-dot.warn { background: var(--bc-ide-folder); }
+.bc-ide-sidebar-foot { display: flex; flex: 0 0 auto; gap: 6px; padding: 12px 15px 14px; border-top: 1px solid var(--bc-ide-line); color: var(--bc-ide-muted); font-size: 11px; }
+.bc-ide-sidebar-foot strong { color: var(--bc-ide-text); font-weight: 600; }
+
+.bc-ide-main { display: flex; flex: 1 1 0; min-width: 0; min-height: 0; background: var(--bc-ide-bg); }
+.bc-ide-local-main, .bc-ide-cloud-main { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; }
+.bc-ide-project-head { flex: 0 0 auto; padding: 17px 22px 13px; border-bottom: 1px solid var(--bc-ide-line); }
+.bc-ide-crumbs { display: flex; align-items: center; gap: 7px; color: var(--bc-ide-muted); font-size: 11px; }
+.bc-ide-crumbs strong { color: var(--bc-ide-text); font-weight: 500; }
+.bc-ide-title-line { display: flex; align-items: center; gap: 12px; min-width: 0; margin-top: 7px; }
+.bc-ide-title-line h1 { min-width: 0; margin: 0; overflow: hidden; color: var(--bc-ide-text); font-size: 22px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.bc-ide-branch { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; max-width: 170px; overflow: hidden; padding: 4px 8px; border: 1px solid var(--bc-ide-line); border-radius: 8px; color: var(--bc-ide-muted); font-family: var(--bc-ide-code-font); font-size: 11px; }
+.bc-ide-branch svg { flex: 0 0 12px; width: 12px; height: 12px; }
+.bc-ide-branch span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-ide-head-actions { display: flex; flex: 0 0 auto; gap: 7px; margin-left: auto; }
+.bc-ide-command { display: inline-flex; align-items: center; justify-content: center; min-height: 31px; padding: 0 11px; border: 1px solid var(--bc-ide-line); border-radius: 10px; color: var(--bc-ide-muted); background: var(--bc-ide-panel); cursor: pointer; white-space: nowrap; }
+.bc-ide-command:hover { color: var(--bc-ide-text); border-color: var(--bc-ide-muted); }
+.bc-ide-command[disabled] { opacity: .55; cursor: default; }
+.bc-ide-command.bc-ide-primary { color: var(--bc-ide-on-accent); background: var(--bc-ide-accent); border-color: transparent; font-weight: 700; }
+.bc-ide-command.bc-ide-primary:hover { background: var(--bc-ide-accent-hover); filter: none; }
+.bc-ide-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 15px; }
+.bc-ide-stat { min-width: 0; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--bc-ide-line) 68%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--bc-ide-panel) 66%, transparent); }
+.bc-ide-stat span { display: block; overflow: hidden; color: var(--bc-ide-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.bc-ide-stat strong { display: block; margin-top: 2px; overflow: hidden; color: var(--bc-ide-text); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.bc-ide-stat:nth-child(1) strong { color: var(--bc-ide-accent); }
+.bc-ide-stat:nth-child(2) strong { color: var(--bc-ide-info); }
+.bc-ide-stat:nth-child(3) strong { color: var(--bc-ide-folder); }
+
+.bc-ide-content { display: flex; flex: 1 1 auto; min-height: 0; }
+.bc-ide-file-panel { display: flex; flex: 0 1 var(--bc-ide-file-w, 226px); min-width: 150px; box-sizing: border-box; flex-direction: column; min-height: 0; padding: 13px 9px; border-right: 1px solid var(--bc-ide-line); background: color-mix(in srgb, var(--bc-ide-sidebar) 55%, var(--bc-ide-bg)); }
+.bc-ide-file-head { display: flex; align-items: center; justify-content: space-between; padding: 0 7px 8px; color: var(--bc-ide-muted); font-size: 11px; }
+.bc-ide-file-head .bc-ide-icon-btn { width: 25px; height: 25px; }
+.bc-ide-tree { min-height: 0; overflow: auto; font-family: var(--bc-ide-code-font); font-size: 11px; }
+.bc-ide-tree button { width: 100%; display: flex; align-items: center; gap: 7px; min-height: 26px; padding: 3px 7px; border: 0; border-radius: 6px; color: var(--bc-ide-muted); background: transparent; text-align: left; cursor: pointer; }
+.bc-ide-tree button:hover { color: var(--bc-ide-text); background: var(--bc-ide-panel); }
+.bc-ide-tree button.selected { color: var(--bc-ide-accent); background: color-mix(in srgb, var(--bc-ide-accent) 14%, transparent); }
+.bc-ide-tree .tree-icon { display: grid; place-items: center; flex: 0 0 14px; }
+.bc-ide-tree .tree-icon svg { width: 13px; height: 13px; }
+.bc-ide-tree .folder .tree-icon { color: var(--bc-ide-folder); }
+.bc-ide-tree .indent-1 { padding-left: 24px; }
+.bc-ide-tree .indent-2 { padding-left: 41px; }
+
+.bc-ide-editor-column { display: flex; flex: 1 1 0; flex-direction: column; min-width: 120px; min-height: 0; }
+.bc-ide-editor-tabs { display: flex; flex: 0 0 38px; min-width: 0; overflow: auto; border-bottom: 1px solid var(--bc-ide-line); background: color-mix(in srgb, var(--bc-ide-sidebar) 50%, var(--bc-ide-bg)); }
+.bc-ide-editor-tab { position: relative; display: inline-flex; align-items: center; gap: 7px; min-width: 112px; padding: 0 12px; border: 0; border-right: 1px solid var(--bc-ide-line); color: var(--bc-ide-muted); background: transparent; cursor: pointer; }
+.bc-ide-editor-tab:hover { color: var(--bc-ide-text); background: var(--bc-ide-panel); }
+.bc-ide-editor-tab.active { color: var(--bc-ide-text); background: var(--bc-ide-bg); }
+.bc-ide-editor-tab.active::after { content: ""; position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--bc-ide-accent); }
+.bc-ide-editor-tab .file-js { color: var(--bc-ide-folder); }
+.bc-ide-editor-tab .file-json { color: var(--bc-ide-info); }
+.bc-ide-editor-tab .file-css { color: var(--bc-ide-info); }
+.bc-ide-editor-tab .file-md { color: color-mix(in srgb, var(--bc-ide-accent) 60%, var(--bc-ide-text)); }
+.bc-ide-editor-host { flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--bc-ide-bg); }
+.bc-ide-editor-empty { display: grid; height: 100%; place-items: center; color: var(--bc-ide-muted); }
+.bc-ide-editor-host .cm-editor { height: 100%; }
+.bc-ide-diff-panel { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; background: var(--bc-ide-bg); }
+.bc-ide-diff-head { display: flex; flex: 0 0 36px; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--bc-ide-line); color: var(--bc-ide-muted); font-size: 11px; }
+.bc-ide-diff-output { flex: 1 1 auto; min-height: 0; margin: 0; padding: 15px 17px 28px; overflow: auto; color: var(--bc-ide-text); font: 12px/1.65 var(--bc-ide-code-font); white-space: pre; tab-size: 2; }
+
+.bc-ide-terminal { display: flex; flex: 0 0 205px; flex-direction: column; min-height: 0; border-top: 1px solid var(--bc-ide-line); background: color-mix(in srgb, black 34%, var(--bc-ide-bg)); }
+.bc-ide-terminal.hidden { display: none; }
+.bc-ide-terminal-head { display: flex; flex: 0 0 34px; align-items: center; gap: 9px; padding: 0 12px; border-bottom: 1px solid var(--bc-ide-line); color: var(--bc-ide-muted); font-size: 11px; }
+.bc-ide-terminal-head strong { color: var(--bc-ide-text); font-weight: 650; }
+.bc-ide-terminal-head .bc-ide-spacer { flex: 1; }
+.bc-ide-terminal-host { min-height: 0; flex: 1 1 auto; padding: 7px 10px; }
+.bc-ide-terminal-host .xterm { height: 100%; }
+.bc-ide-terminal-host .xterm-viewport { overflow-y: auto !important; }
+
+.bc-ide-statusbar { display: flex; flex: 0 0 27px; align-items: center; gap: 15px; min-width: 0; padding: 0 13px; overflow: hidden; border-top: 1px solid var(--bc-ide-line); color: var(--bc-ide-muted); background: var(--bc-ide-sidebar); font-size: 10px; white-space: nowrap; }
+.bc-ide-statusbar strong { color: var(--bc-ide-accent); }
+.bc-ide-status-right { min-width: 0; margin-left: auto; overflow: hidden; text-overflow: ellipsis; }
+
+.bc-ide-cloud-main { background: var(--bc-ide-bg); }
+.bc-ide-cloud-empty, .bc-ide-cloud-detail { flex: 1 1 auto; min-height: 0; padding: 35px 38px; overflow: auto; }
+.bc-ide-cloud-empty h2, .bc-ide-cloud-detail h2 { margin: 0; color: var(--bc-ide-text); font-size: 22px; }
+.bc-ide-cloud-empty p, .bc-ide-cloud-detail p { max-width: 650px; color: var(--bc-ide-muted); line-height: 1.6; }
+.bc-ide-source-note, .bc-ide-source-pill { display: inline-flex; align-items: center; gap: 7px; padding: 7px 9px; border: 1px solid var(--bc-ide-line); border-radius: 8px; color: var(--bc-ide-muted); background: var(--bc-ide-panel); font-size: 11px; }
+.bc-ide-cloud-detail dl { max-width: 680px; margin: 24px 0 20px; border-top: 1px solid var(--bc-ide-line); }
+.bc-ide-cloud-detail dl div { display: flex; justify-content: space-between; gap: 20px; padding: 11px 0; border-bottom: 1px solid color-mix(in srgb, var(--bc-ide-line) 68%, transparent); }
+.bc-ide-cloud-detail dt { color: var(--bc-ide-muted); }
+.bc-ide-cloud-detail dd { margin: 0; color: var(--bc-ide-text); text-align: right; }
+
+/* Panel widths are user-draggable via the --bc-ide-*-w variables now, so the
+   old fixed-basis breakpoints here would fight the handle — only the genuinely
+   layout-level adjustments stay. */
+@media (max-width: 1050px) {
+  .bc-ide-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 820px) {
+  .bc-ide-title-line { flex-wrap: wrap; }
+  .bc-ide-head-actions { width: 100%; margin-left: 0; }
+  .bc-ide-file-panel { display: none; }
+  #bc-ide-file-resize { display: none; }
+}
+
+/* Code-only interaction chrome. The main Home, CLI, Settings, and global
+   title-bar documents keep their own layout and theme rules. Navigation
+   (Home/Code/CLI) lives in that shared title bar now, not here — see
+   ui/title-bar.js — so this page owns only the workspace itself. */
+#bc-ide-shell [hidden] { display: none !important; }
+
+/* Activity bar — sub-surfaces are mixes of the theme's own bg/sidebar/panel,
+   never absolute colors, so light themes get lighter rails and dark themes
+   darker ones automatically. */
+.bc-ide-activitybar { display: flex; flex: 0 0 48px; flex-direction: column; align-items: center; gap: 7px; padding: 12px 0; border-right: 1px solid color-mix(in srgb, var(--bc-ide-line) 80%, transparent); background: color-mix(in srgb, var(--bc-ide-bg) 62%, var(--bc-ide-sidebar)); }
+.bc-ide-activity-btn { position: relative; width: 38px; height: 38px; display: grid; place-items: center; border: 0; border-radius: 10px; color: var(--bc-ide-muted); background: transparent; cursor: pointer; }
+.bc-ide-activity-btn svg { width: 20px; height: 20px; }
+.bc-ide-activity-btn:hover { color: var(--bc-ide-text); background: var(--bc-ide-panel); }
+.bc-ide-activity-btn.active { color: color-mix(in srgb, var(--bc-ide-accent) 65%, var(--bc-ide-text)); background: color-mix(in srgb, var(--bc-ide-accent) 16%, var(--bc-ide-panel)); }
+.bc-ide-activity-btn.active::before { content: ""; position: absolute; top: 7px; bottom: 7px; left: -1px; width: 2px; border-radius: 2px; background: var(--bc-ide-accent); }
+.bc-ide-activity-spacer { flex: 1 1 auto; }
+
+.bc-ide-sidebar { flex-basis: var(--bc-ide-sidebar-w, 264px); }
+.bc-ide-sidebar-title { color: var(--bc-ide-text); }
+.bc-ide-sidebar-title-actions { display: flex; align-items: center; gap: 2px; }
+.bc-ide-sidebar-title-actions .bc-ide-icon-btn { width: 25px; height: 25px; }
+
+/* Drag handles between the resizable columns — workspace sidebar | main,
+   file tree | editor, editor | Claude assistant. Each writes a --bc-ide-*-w
+   variable that its panel's flex-basis consumes. Dragging uses pointer
+   capture on the handle itself (a plain document-mousemove pair silently
+   dies whenever a fast drag leaves the window or an editor surface swallows
+   the stream, which is exactly the "handle shows but nothing moves" report).
+   Double-click resets a panel to its default width. */
+.bc-ide-resize-handle { flex: 0 0 6px; margin: 0 -3px; cursor: col-resize; background: transparent; position: relative; z-index: 1; touch-action: none; }
+.bc-ide-resize-handle::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 1px; background: transparent; }
+.bc-ide-resize-handle:hover::after, .bc-ide-resize-handle.dragging::after { background: var(--bc-ide-accent); }
+html.bc-ide-panel-resizing { cursor: col-resize !important; user-select: none; -webkit-user-select: none; }
+
+/* A handle whose panel is currently hidden must not sit there as a dead
+   strip you can grab but that does nothing. */
+.bc-ide-file-panel[hidden] + #bc-ide-file-resize { display: none; }
+#bc-ide-chat-resize:has(+ #bc-ide-chat-panel[hidden]) { display: none; }
+
+.bc-ide-tool-panel { padding: 13px 12px; }
+.bc-ide-tool-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; color: var(--bc-ide-text); font-size: 12px; font-weight: 650; }
+.bc-ide-muted-count { color: var(--bc-ide-muted); font: 11px var(--bc-ide-code-font); }
+.bc-ide-source-summary { margin: 0 0 12px; color: var(--bc-ide-muted); font: 11px/1.6 var(--bc-ide-code-font); white-space: pre-wrap; }
+
+/* --- Extensions panel (Installed / Browse) --- */
+.bc-ide-ext-tabs { margin-top: 2px; }
+.bc-ide-ext-search { width: 100%; box-sizing: border-box; margin-top: 9px; padding: 7px 10px; border: 1px solid var(--bc-ide-line); border-radius: 8px; color: var(--bc-ide-text); background: var(--bc-ide-panel); font: 12px var(--bc-ide-font); outline: none; }
+.bc-ide-ext-search::placeholder { color: var(--bc-ide-muted); opacity: .8; }
+.bc-ide-ext-search:focus { border-color: var(--bc-ide-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--bc-ide-accent) 18%, transparent); }
+.bc-ide-ext-status { margin-top: 9px; padding: 7px 9px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--bc-ide-accent) 30%, transparent); background: color-mix(in srgb, var(--bc-ide-accent) 10%, transparent); color: var(--bc-ide-text); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; max-height: 120px; overflow: auto; }
+.bc-ide-extension-row { width: 100%; display: flex; align-items: center; gap: 9px; padding: 9px 4px; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--bc-ide-line) 70%, transparent); color: var(--bc-ide-text); background: transparent; text-align: left; cursor: pointer; }
+button.bc-ide-extension-row:hover { background: var(--bc-ide-panel); }
+div.bc-ide-extension-row { cursor: default; }
+div.bc-ide-extension-row:hover { background: color-mix(in srgb, var(--bc-ide-panel) 55%, transparent); }
+.bc-ide-extension-row > .bc-ide-ext-copy { min-width: 0; flex: 1; }
+.bc-ide-extension-row strong, .bc-ide-extension-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-ide-extension-row strong { color: var(--bc-ide-text); font-size: 11px; }
+.bc-ide-extension-row small { margin-top: 2px; color: var(--bc-ide-muted); font-size: 10px; }
+.bc-ide-extension-icon { width: 26px; height: 26px; flex: 0 0 26px; display: grid; place-items: center; overflow: hidden; border-radius: 6px; color: var(--bc-ide-muted); background: color-mix(in srgb, var(--bc-ide-panel) 80%, var(--bc-ide-line)); }
+.bc-ide-extension-icon img { width: 100%; height: 100%; object-fit: cover; }
+.bc-ide-extension-icon svg { width: 15px; height: 15px; }
+.bc-ide-ext-remove { width: 22px; height: 22px; flex: 0 0 22px; display: grid; place-items: center; border-radius: 6px; color: var(--bc-ide-muted); cursor: pointer; }
+.bc-ide-ext-remove:hover { color: var(--bc-ide-danger); background: color-mix(in srgb, var(--bc-ide-danger) 14%, transparent); }
+.bc-ide-ext-remove svg { width: 12px; height: 12px; }
+.bc-ide-ext-install { min-height: 25px; padding: 0 9px; border-radius: 7px; font-size: 10.5px; font-weight: 650; }
+
+/* --- Chat assistant panel --- */
+/* Absolute right-of-way: while this panel is visible it keeps its full width
+   (shrink: 0) and the rest of the workspace reflows around it — nothing
+   slides underneath or gets covered. Users resize it via its handle. */
+.bc-ide-chat-panel { display: flex; flex: 0 0 var(--bc-ide-chat-w, 500px); flex-direction: column; min-height: 0; border-left: 1px solid var(--bc-ide-line); background: var(--bc-ide-sidebar); }
+.bc-ide-chat-panel[hidden] { display: none !important; }
+.bc-ide-chat-head { display: flex; flex: 0 0 53px; align-items: center; justify-content: space-between; gap: 10px; padding: 0 13px; border-bottom: 1px solid var(--bc-ide-line); }
+.bc-ide-chat-head strong, .bc-ide-chat-head small { display: block; }
+.bc-ide-chat-head strong { color: var(--bc-ide-text); font-size: 13px; }
+.bc-ide-chat-head small { margin-top: 3px; color: var(--bc-ide-muted); font-size: 10px; }
+.bc-ide-chat-messages { min-height: 0; flex: 1 1 auto; overflow: auto; padding: 15px 13px; }
+.bc-ide-chat-welcome { padding: 12px 2px; color: var(--bc-ide-muted); }
+.bc-ide-chat-welcome strong { display: block; color: var(--bc-ide-text); font-size: 13px; }
+.bc-ide-chat-welcome p { margin: 7px 0 0; color: var(--bc-ide-muted); font-size: 11px; line-height: 1.55; }
+.bc-ide-chat-message { margin: 0 0 13px; }
+.bc-ide-chat-message[data-role="user"] { text-align: right; }
+.bc-ide-chat-bubble { display: inline-block; max-width: 94%; padding: 9px 10px; border: 1px solid var(--bc-ide-line); border-radius: 8px; color: var(--bc-ide-text); background: var(--bc-ide-panel); text-align: left; font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bc-ide-chat-message[data-role="user"] .bc-ide-chat-bubble { border-color: color-mix(in srgb, var(--bc-ide-accent) 45%, transparent); background: var(--bc-ide-bubble-user); }
+.bc-ide-chat-label { margin: 0 0 4px; color: var(--bc-ide-muted); font-size: 10px; }
+.bc-ide-chat-system { margin: 0 0 11px; padding: 6px 9px; border: 1px dashed color-mix(in srgb, var(--bc-ide-accent) 40%, transparent); border-radius: 8px; color: var(--bc-ide-muted); background: color-mix(in srgb, var(--bc-ide-accent) 7%, transparent); font-size: 10.5px; line-height: 1.5; }
+.bc-ide-chat-attachments { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 12px 0; border-top: 1px solid color-mix(in srgb, var(--bc-ide-line) 70%, transparent); }
+.bc-ide-attachment-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border: 1px solid color-mix(in srgb, var(--bc-ide-accent) 45%, transparent); border-radius: 8px; color: var(--bc-ide-text); background: color-mix(in srgb, var(--bc-ide-accent) 12%, transparent); font: 10px var(--bc-ide-code-font); }
+
+/* Composer + model picker. */
+.bc-ide-chat-composer { flex: 0 0 auto; margin: 10px 11px 12px; padding: 8px 9px 7px; border: 1px solid var(--bc-ide-line); border-radius: 10px; background: var(--bc-ide-panel); box-shadow: 0 0 0 1px color-mix(in srgb, var(--bc-ide-accent) 8%, transparent); }
+.bc-ide-chat-composer:focus-within { border-color: var(--bc-ide-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--bc-ide-accent) 18%, transparent); }
+.bc-ide-chat-composer textarea { width: 100%; min-height: 56px; box-sizing: border-box; resize: vertical; border: 0; outline: 0; color: var(--bc-ide-text); background: transparent; font: 12px/1.5 var(--bc-ide-font); }
+.bc-ide-chat-composer textarea::placeholder { color: var(--bc-ide-muted); opacity: .85; }
+.bc-ide-composer-foot, .bc-ide-chat-composer-foot { display: flex; align-items: center; gap: 7px; }
+.bc-ide-model-picker { position: relative; min-width: 0; flex: 1; }
+.bc-ide-model-btn { max-width: 100%; display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 2px 8px; border: 1px solid var(--bc-ide-line); border-radius: 999px; color: var(--bc-ide-muted); background: transparent; cursor: pointer; font-size: 10.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bc-ide-model-btn::after { content: "▾"; font-size: 8px; opacity: .7; }
+.bc-ide-model-btn[data-free="true"] { color: color-mix(in srgb, var(--bc-ide-accent) 70%, var(--bc-ide-text)); border-color: color-mix(in srgb, var(--bc-ide-accent) 50%, transparent); }
+.bc-ide-model-btn:hover { color: var(--bc-ide-text); border-color: var(--bc-ide-muted); }
+.bc-ide-model-menu { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 40; width: 300px; max-height: 380px; overflow: auto; padding: 7px; border: 1px solid var(--bc-ide-line); border-radius: 12px; background: var(--bc-ide-panel); box-shadow: 0 14px 38px rgba(0,0,0,.35); }
+.bc-ide-model-header { margin: 8px 4px 4px; color: var(--bc-ide-muted); font-size: 9.5px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.bc-ide-model-list { display: flex; flex-direction: column; gap: 1px; }
+.bc-ide-model-row { width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 8px; border: 0; border-radius: 8px; color: var(--bc-ide-text); background: transparent; text-align: left; cursor: pointer; }
+.bc-ide-model-row:hover { background: color-mix(in srgb, var(--bc-ide-accent) 12%, transparent); }
+.bc-ide-model-row .bc-ide-model-copy { min-width: 0; flex: 1; }
+.bc-ide-model-row strong { display: block; overflow: hidden; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.bc-ide-model-row small { display: block; margin-top: 1px; overflow: hidden; color: var(--bc-ide-muted); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+.bc-ide-model-free { flex: 0 0 auto; padding: 1px 5px; border-radius: 5px; background: color-mix(in srgb, #22c55e 20%, transparent); color: #22c55e; font-size: 8.5px; font-weight: 800; letter-spacing: .05em; }
+.bc-ide-model-check { width: 13px; height: 13px; flex: 0 0 13px; visibility: hidden; color: var(--bc-ide-accent); }
+.bc-ide-model-check svg { width: 100%; height: 100%; }
+.bc-ide-model-row.selected { background: color-mix(in srgb, var(--bc-ide-accent) 16%, transparent); }
+.bc-ide-model-row.selected .bc-ide-model-check { visibility: visible; }
+.bc-ide-model-note { padding: 8px; color: var(--bc-ide-muted); font-size: 11px; }
+.bc-ide-model-foot { margin-top: 8px; padding: 9px 4px 3px; border-top: 1px solid color-mix(in srgb, var(--bc-ide-line) 70%, transparent); }
+.bc-ide-model-toggle { display: flex; align-items: center; gap: 7px; color: var(--bc-ide-text); font-size: 10.5px; cursor: pointer; }
+.bc-ide-model-toggle input { accent-color: var(--bc-ide-accent); }
+.bc-ide-model-key { display: block; margin-top: 8px; color: var(--bc-ide-muted); font-size: 9.5px; }
+.bc-ide-model-key input { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 5px 8px; border: 1px solid var(--bc-ide-line); border-radius: 7px; color: var(--bc-ide-text); background: var(--bc-ide-bg); font: 11px var(--bc-ide-code-font); outline: none; }
+.bc-ide-model-key input:focus { border-color: var(--bc-ide-accent); }
+.bc-ide-send-btn { width: 28px; height: 28px; flex: 0 0 28px; display: grid; place-items: center; border: 0; border-radius: 999px; color: var(--bc-ide-on-accent); background: var(--bc-ide-accent); cursor: pointer; }
+.bc-ide-send-btn svg { width: 15px; height: 15px; }
+.bc-ide-send-btn:hover { background: var(--bc-ide-accent-hover); }
+.bc-ide-chat-stop { min-height: 27px; padding: 0 8px; font-size: 10px; }
+
+/* Narrow-window fallbacks for the assistant's right-of-way: the flexible
+   columns above shrink first, so whole panels only bow out once their
+   min-width floors would be violated. Each step is scoped with :has() to an
+   open chat panel, so a narrow window WITHOUT the chat keeps every panel. */
+@media (max-width: 1060px) {
+  body:has(#bc-ide-chat-panel:not([hidden])) .bc-ide-file-panel { display: none; }
+  body:has(#bc-ide-chat-panel:not([hidden])) #bc-ide-file-resize { display: none; }
+}
+@media (max-width: 880px) {
+  body:has(#bc-ide-chat-panel:not([hidden])) .bc-ide-sidebar { display: none; }
+  body:has(#bc-ide-chat-panel:not([hidden])) #bc-ide-sidebar-resize { display: none; }
+}
+@media (max-width: 700px) {
+  /* Last resort: the chat yields, and the workspace sidebar comes back. */
+  body:has(#bc-ide-chat-panel:not([hidden])) .bc-ide-sidebar { display: flex; flex-basis: 230px; }
+  body:has(#bc-ide-chat-panel:not([hidden])) #bc-ide-sidebar-resize { display: block; }
+  .bc-ide-chat-panel { display: none !important; }
+  #bc-ide-chat-resize { display: none; }
+}

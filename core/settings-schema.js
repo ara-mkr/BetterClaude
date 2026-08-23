@@ -452,7 +452,7 @@ const DEFAULT_SETTINGS = {
   },
   // Embedded Claude Code window (electron/main.js's createCodeWindow +
   // electron/claude-cli.js). Nothing here is auth-related and nothing here is
-  // read from Claude Code's own config — these are BetterClaude's own three
+  // read from Claude Code's own config — these are BetterClaude's own
   // preferences for the window it draws around the CLI.
   codeWindow: {
     // Whether the CLI pill appears next to Anthropic's own Home / Code
@@ -471,17 +471,53 @@ const DEFAULT_SETTINGS = {
     // Re-validated with statSync before use (a stored folder can be renamed or
     // deleted between sessions), falling back to $HOME.
     lastCwd: null,
+    // Last project selected in the IDE Code workspace. Kept separate from
+    // lastCwd so opening the terminal CLI does not unexpectedly change the IDE
+    // project the user returns to.
+    ideLastCwd: null,
+    // Recent folders surfaced in the IDE's Local project list. Paths only;
+    // project contents are never stored in settings.
+    recentCwds: [],
     // Escape hatch for a version-managed or non-standard install that isn't on
     // the PATH a GUI app inherits. null = resolve `claude` the way a shell
     // would. This is a path to an EXECUTABLE, never to a config or credential
     // file.
     claudePath: null,
+    // Session mesh: every CLI session in the Code pane automatically joins the
+    // shared .bc-team/ hub for its folder (electron/team-hub.js), so all of
+    // them learn the coordination protocol, can read each other's status,
+    // exchange messages, and hand work to one another — not just sessions
+    // explicitly started as teammates. Off = the old opt-in behaviour where
+    // only "+ Teammate" sessions participate.
+    teamMesh: true,
     // Terminal font size in px. Separate from fonts.baseSizePx (which sizes
     // claude.ai's prose): a comfortable reading size for chat is usually too
     // large for a terminal that has to fit 100+ columns. The font FAMILY is
     // shared — it reuses fonts.codeFont, so picking a coding font in Settings
     // applies here too.
     fontSizePx: 13,
+    // Free-model fallback for the Code workspace chat (electron/openrouter.js).
+    // When the Claude subscription hits its usage limit, the chat can keep
+    // going on whatever models are free right now — scraped live from
+    // OpenRouter's public catalog, plus one genuinely keyless provider so the
+    // "no login" case still has somewhere to land.
+    freeModels: {
+      // Master switch for the whole feature. The picker is hidden while off.
+      enabled: true,
+      // When Claude Code dies with a usage/limit error mid-chat, automatically
+      // re-run the same prompt on the next free provider instead of surfacing
+      // an error bubble and stopping there.
+      autoFailover: true,
+      // The model chosen in the Code tab's picker, or null = "Claude only".
+      // Free ids are OpenRouter ids ("stealth/ox-alpha") or keyless:*
+      // builtins; they rotate constantly so nothing validates this against a
+      // fixed list.
+      preferredModelId: null,
+      // Optional OpenRouter API key. Empty string = keyless attempts only;
+      // OpenRouter's free tier needs a key to run inference today, so without
+      // this the chain usually lands on the keyless providers at the end.
+      openRouterKey: "",
+    },
   },
 };
 

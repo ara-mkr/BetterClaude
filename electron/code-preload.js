@@ -13,14 +13,19 @@
  *     touching the shared DOM directly, which is how electron/preload.js
  *     already mounts the title bar and settings panel; contextIsolation means
  *     preload shares the document but not the page's JS realm.
- *   - The PAGE realm (ui/code-window/terminal.js) has no Node at all —
- *     nodeIntegration is off. It drives xterm.js and reaches the subprocess
- *     only through the `betterClaudeCode` object exposed below. Every pty byte
- *     in either direction therefore crosses one narrow, enumerable bridge.
+ *   - The PAGE realm (ui/code-window/terminal.js + team-panel.js) has no Node
+ *     at all — nodeIntegration is off. It drives xterm.js and reaches the
+ *     subprocesses only through the `betterClaudeCode` object exposed below.
+ *     Every pty byte in either direction crosses one narrow, enumerable bridge,
+ *     and every call names its session, which is what makes concurrent
+ *     sessions safe to multiplex over a single bridge.
  *
- * Compliance: the bridge below has no method that reads a file, and none that
- * writes to the child except `write`, which forwards the user's own keystrokes
- * verbatim. Nothing here parses terminal output.
+ * Compliance: the bridge itself has no method that reads a file, and none that
+ * writes to any child except `write`, which forwards the user's own keystrokes
+ * verbatim to that one session's pty. The code:team:* passthroughs neither read
+ * files nor touch ptys — they carry JSON intent to electron/main.js, which owns
+ * the shared hub files and the (opt-in, teammate-only) relay into teammate
+ * terminals. Nothing here parses terminal output.
  */
 
 const { contextBridge, ipcRenderer, clipboard } = require("electron");
@@ -118,13 +123,16 @@ contextBridge.exposeInMainWorld("betterClaudeCode", {
   getSettings: () => ipcRenderer.invoke("settings:get"),
 
   // Renderer -> main. `ready` reports the measured grid so the first pty is
-  // spawned at the right size; `restart` re-launches after an exit.
+  // spawned at the right size. Everything else is session-scoped: every
+  // channel names the tab it belongs to, so concurrent sessions stay separate.
   ready: (cols, rows) => ipcRenderer.send("code:ready", { cols, rows }),
-  restart: (cols, rows) => ipcRenderer.send("code:restart", { cols, rows }),
-  // The ONLY path into the child's stdin. Nothing else in this file or in
-  // main.js writes to it.
-  write: (data) => ipcRenderer.send("code:input", String(data)),
-  resize: (cols, rows) => ipcRenderer.send("code:resize", { cols, rows }),
+  newSession: (opts) => ipcRenderer.invoke("code:session:new", opts),
+  closeSession: (id) => ipcRenderer.send("code:session:close", id),
+  restartSession: (opts) => ipcRenderer.invoke("code:restart", opts),
+  // The ONLY path into a child's stdin. Nothing else in this file or in
+  // main.js writes to it from the renderer.
+  write: (id, data) => ipcRenderer.send("code:input", { id, data: String(data) }),
+  resize: (id, cols, rows) => ipcRenderer.send("code:resize", { id, cols, rows }),
   // Clipboard integration for the right-click copy/paste convention in
   // ui/code-window/terminal.js. `clipboard` is one of the Electron modules
   // available directly in a preload (no IPC round-trip needed), and this reads
@@ -133,11 +141,24 @@ contextBridge.exposeInMainWorld("betterClaudeCode", {
   copyText: (text) => clipboard.writeText(String(text)),
   pasteText: () => clipboard.readText(),
   pickFolder: () => ipcRenderer.invoke("code:pick-folder"),
-  listSessions: () => ipcRenderer.invoke("code:list-sessions"),
-  resumeSession: (sessionId, cols, rows) => ipcRenderer.invoke("code:resume-session", sessionId, cols, rows),
+  pickFolderPath: () => ipcRenderer.invoke("code:pick-folder-path"),
+  listSessions: (cwd) => ipcRenderer.invoke("code:list-sessions", cwd),
+  resumeSession: (opts) => ipcRenderer.invoke("code:resume-session", opts),
   listAgentSessions: () => ipcRenderer.invoke("code:list-agent-sessions"),
-  attachAgentSession: (sessionId, cwd, cols, rows) => ipcRenderer.invoke("code:attach-agent-session", sessionId, cwd, cols, rows),
+  attachAgentSession: (opts) => ipcRenderer.invoke("code:attach-agent-session", opts),
   closeWindow: () => ipcRenderer.invoke("code:window-close"),
+
+  // --- Team bridge ---
+  // All passthroughs to the code:team:* handlers in electron/main.js, which
+  // own the hub files, the watcher, and the relay into teammate ptys (see
+  // electron/team-hub.js). The page world only ever sees JSON snapshots.
+  teamSnapshot: () => ipcRenderer.invoke("code:team:snapshot"),
+  teamCreateTeammate: (opts) => ipcRenderer.invoke("code:team:create-teammate", opts),
+  teamJoin: (opts) => ipcRenderer.invoke("code:team:join", opts),
+  teamSend: (opts) => ipcRenderer.invoke("code:team:send", opts),
+  teamAddTask: (opts) => ipcRenderer.invoke("code:team:add-task", opts),
+  teamUpdateTask: (opts) => ipcRenderer.invoke("code:team:update-task", opts),
+  teamNudge: (opts) => ipcRenderer.invoke("code:team:nudge", opts),
 
   // main -> renderer.
   onData: forward("code:data"),
@@ -145,6 +166,7 @@ contextBridge.exposeInMainWorld("betterClaudeCode", {
   onExit: forward("code:exit"),
   onFatal: forward("code:fatal"),
   onRestarting: forward("code:restarting"),
+  onTeamUpdate: forward("code:team:update"),
   onSettingsChanged: (cb) => {
     settingsListeners.push(cb);
     if (latestSettings) cb(latestSettings);

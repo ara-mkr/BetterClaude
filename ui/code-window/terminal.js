@@ -1,16 +1,23 @@
 /**
- * Page-world driver for the embedded Claude Code terminal.
+ * Page-world driver for the embedded Claude Code terminals.
  *
  * Runs in the renderer's own realm (a plain <script> in
  * electron/code-window.html), NOT in the preload realm — so it has no
  * require(), no ipcRenderer, and no Node at all. Its entire connection to the
- * `claude` subprocess is `window.betterClaudeCode`, the contextBridge surface
+ * `claude` subprocesses is `window.betterClaudeCode`, the contextBridge surface
  * exposed by electron/code-preload.js.
+ *
+ * MULTI-SESSION: this file owns the tab strip. Every session is its own xterm
+ * Terminal bound to one pty in the main process; every bridge call and every
+ * event carries the session id, so keystrokes and output for one tab can never
+ * reach another. The team sidebar lives in ui/code-window/team-panel.js — this
+ * file deliberately knows nothing about teams beyond showing a teammate's name
+ * on its tab.
  *
  * Compliance: this file forwards keystrokes and paints bytes. It never inspects
  * or pattern-matches terminal output to trigger anything, and the only thing it
- * ever writes to the child is what xterm's onData hands it — the user's own
- * input, verbatim.
+ * ever writes to a child is what xterm's onData hands it — the user's own
+ * input, verbatim, addressed to that tab's own pty.
  */
 
 (async function () {
@@ -24,18 +31,18 @@
   // exposes this bridge synchronously — see the comment on the
   // exposeInMainWorld call in electron/code-preload.js.
   const initialSettings = await api.getSettings();
+  let latestSettings = initialSettings;
 
   const shell = document.getElementById("bc-code-shell");
-  const host = document.getElementById("bc-code-term");
   const cwdLabel = document.getElementById("bc-code-cwd");
   const folderBtn = document.getElementById("bc-code-folder-btn");
   const resumeBtn = document.getElementById("bc-code-resume-btn");
-  const overlay = document.getElementById("bc-code-overlay");
-  const overlayMsg = overlay.querySelector(".bc-code-overlay-msg");
-  const overlayActions = overlay.querySelector(".bc-code-overlay-actions");
+  const tabsStrip = document.getElementById("bc-code-tabs");
+  const termHost = document.getElementById("bc-code-term");
+  const newTabBtn = document.createElement("button");
 
   /**
-   * Fixed ANSI 16 for the terminal's own palette, in dark and light variants.
+   * Fixed ANSI 16 for the terminals' own palette, in dark and light variants.
    *
    * A BetterClaude theme defines nine --bc-* colours (see THEME_VAR_DEFS in
    * core/theme-engine.js) — background, elevated, sidebar, text, muted, border,
@@ -48,8 +55,6 @@
    * So the ANSI 16 stay fixed and legible, while everything the theme genuinely
    * DOES define — background, foreground, cursor, selection, and the red slot,
    * which maps cleanly onto --bc-danger — is taken live from the theme below.
-   * That is what makes a theme switch visibly restyle this window without
-   * risking output nobody can read. Flagged in the report as a judgment call.
    */
   const ANSI_DARK = {
     black: "#3b3b47", red: "#f4787a", green: "#8ee08a", yellow: "#e8cf7d",
@@ -90,8 +95,6 @@
       if (!rgb) return false;
       r = Number(rgb[1]); g = Number(rgb[2]); b = Number(rgb[3]);
     }
-    // Rec. 601 luma, the same cheap approximation core/theme-engine.js uses to
-    // decide dark vs light for a theme's background.
     return (0.299 * r + 0.587 * g + 0.114 * b) / 255 >= 0.5;
   }
 
@@ -107,293 +110,608 @@
       background: bg,
       foreground: fg,
       cursor: accent,
-      // The glyph drawn UNDER the block cursor: the background, so a cursor
-      // sitting on a character stays readable instead of accent-on-accent.
       cursorAccent: bg,
-      // xterm accepts 8-digit hex for selection, and a translucent accent is
-      // what keeps selected text legible rather than blocking it out.
       selectionBackground: /^#[0-9a-f]{6}$/i.test(accent) ? `${accent}59` : "rgba(96,89,230,0.35)",
       red: danger,
       brightRed: danger,
     });
   }
 
-  const term = new Terminal({
-    allowProposedApi: true,
-    convertEol: false,
-    cursorBlink: true,
-    // scrollback of 5000 lines: enough to page back through a long build or
-    // test run, without holding an unbounded buffer for a session left open.
-    scrollback: 5000,
-    fontFamily: cssVar("--bc-code-font", "SFMono-Regular, Menlo, Consolas, monospace"),
-    fontSize: Number((initialSettings.codeWindow || {}).fontSizePx) || 13,
-    theme: themeFromCSSVars(),
-  });
+  function currentFontFamily() {
+    return cssVar("--bc-code-font", "SFMono-Regular, Menlo, Consolas, monospace");
+  }
 
-  const fitAddon = new FitAddon();
-  term.loadAddon(fitAddon);
+  function currentFontSize() {
+    return Number((initialSettings.codeWindow || {}).fontSizePx) || 13;
+  }
 
-  // GPU renderer, with a real fallback.
-  //
-  // xterm's default is the DOM renderer, which builds one element per styled
-  // run per row and rebuilds them as the screen changes. That is fine for a
-  // shell prompt and poor for a full-screen TUI — which is exactly what the
-  // `claude` CLI is: it repaints large regions continuously, and on the DOM
-  // renderer that is the sluggish, visibly-tearing terminal this pane had.
-  // The WebGL renderer draws the same buffer into a single canvas from a glyph
-  // atlas instead.
-  //
-  // Wrapped because it is genuinely optional: WebGL context creation can fail
-  // (blocklisted GPU, a machine with no working GL, too many live contexts),
-  // and the addon also emits `onContextLoss` when the driver takes the context
-  // away at runtime. Either way the correct move is to drop back to the DOM
-  // renderer and keep a working terminal, never to leave the user with a blank
-  // pane — so the failure path disposes the addon and simply carries on.
-  let webglAddon = null;
-  if (typeof WebglAddon === "function") {
-    try {
-      webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        try { webglAddon.dispose(); } catch (_err) { /* already gone */ }
-        webglAddon = null;
+  // --- Session registry (renderer side) ---
+
+  const sessions = new Map(); // id -> SessionTab
+  let activeId = null;
+
+  function get(id) {
+    return typeof id === "string" ? sessions.get(id) || null : null;
+  }
+
+  function activeSession() {
+    return activeId ? sessions.get(activeId) || null : null;
+  }
+
+  class SessionTab {
+    constructor({ id, name }) {
+      this.id = id;
+      this.name = name || `Session ${id.replace(/^s/, "")}`;
+      this.cwd = "";
+      this.state = "starting";
+      this.memberId = null; // set when the session belongs to a team
+      this.lastSize = { cols: 0, rows: 0 };
+      this.webglAddon = null;
+
+      // --- DOM: one slot per session inside the shared terminal area ---
+      this.slot = document.createElement("div");
+      this.slot.className = "bc-code-slot";
+      this.slot.dataset.id = id;
+      this.slot.dataset.active = "false";
+
+      this.hostEl = document.createElement("div");
+      this.hostEl.className = "bc-code-term-host";
+      this.slot.appendChild(this.hostEl);
+
+      // Startup failures and exits land here rather than being written INTO
+      // the terminal: the terminal shows the child's own bytes and nothing
+      // else, so BetterClaude's messages stay visibly BetterClaude's.
+      this.overlay = document.createElement("div");
+      this.overlay.className = "bc-code-overlay";
+      this.overlay.dataset.visible = "false";
+      this.overlay.setAttribute("role", "status");
+      this.overlayMsg = document.createElement("p");
+      this.overlayMsg.className = "bc-code-overlay-msg";
+      this.overlayActions = document.createElement("div");
+      this.overlayActions.className = "bc-code-overlay-actions";
+      this.overlay.appendChild(this.overlayMsg);
+      this.overlay.appendChild(this.overlayActions);
+      this.slot.appendChild(this.overlay);
+
+      termHost.appendChild(this.slot);
+
+      // --- Terminal ---
+      this.term = new Terminal({
+        allowProposedApi: true,
+        convertEol: false,
+        cursorBlink: true,
+        scrollback: 5000,
+        fontFamily: currentFontFamily(),
+        fontSize: currentFontSize(),
+        theme: themeFromCSSVars(),
       });
-      term.loadAddon(webglAddon);
-    } catch (_err) {
-      // No GPU path available — the DOM renderer stays in place.
-      webglAddon = null;
+      this.fitAddon = new FitAddon();
+      this.term.loadAddon(this.fitAddon);
+      this.term.open(this.hostEl);
+      this.term.onData((data) => api.write(this.id, data));
+
+      this.buildTabButton();
+    }
+
+    buildTabButton() {
+      this.tabBtn = document.createElement("button");
+      this.tabBtn.className = "bc-code-tab";
+      this.tabBtn.type = "button";
+      this.tabBtn.setAttribute("role", "tab");
+      this.tabBtn.setAttribute("aria-selected", "false");
+      this.tabBtn.dataset.sessionId = this.id;
+      this.tabBtn.dataset.sessionState = this.state;
+      this.tabBtn.title = this.name;
+
+      const dot = document.createElement("span");
+      dot.className = "bc-code-dot";
+      dot.setAttribute("aria-hidden", "true");
+
+      this.labelEl = document.createElement("span");
+      this.labelEl.className = "bc-code-tab-label";
+      this.labelEl.textContent = this.name;
+
+      this.badgeEl = document.createElement("span");
+      this.badgeEl.className = "bc-code-tab-badge";
+      this.badgeEl.hidden = true;
+
+      const closeBtn = document.createElement("span");
+      closeBtn.className = "bc-code-tab-close";
+      closeBtn.textContent = "×";
+      closeBtn.title = "Close this session";
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeSession(this.id);
+      });
+
+      this.tabBtn.append(dot, this.labelEl, this.badgeEl, closeBtn);
+      this.tabBtn.addEventListener("click", () => activateSession(this.id));
+      tabsStrip.insertBefore(this.tabBtn, newTabBtn);
+    }
+
+    setName(name) {
+      if (!name || name === this.name) return;
+      this.name = name;
+      this.labelEl.textContent = name;
+      this.tabBtn.title = name;
+    }
+
+    setState(state) {
+      this.state = state;
+      this.tabBtn.dataset.sessionState = state;
+      refreshChrome();
+    }
+
+    ensureWebgl() {
+      // GPU renderer, with a real fallback (see the long comment in git
+      // history / original single-session build): WebGL draws the buffer into
+      // one canvas from a glyph atlas instead of rebuilding DOM runs, which
+      // matters for the CLI's continuous TUI repaints. Only ONE tab holds a GL
+      // context at a time — contexts are scarce browser-wide, and a hidden
+      // terminal is never painted anyway.
+      if (this.webglAddon || typeof WebglAddon !== "function") return;
+      try {
+        this.webglAddon = new WebglAddon();
+        this.webglAddon.onContextLoss(() => {
+          try { this.webglAddon.dispose(); } catch (_err) { /* already gone */ }
+          this.webglAddon = null;
+        });
+        this.term.loadAddon(this.webglAddon);
+      } catch (_err) {
+        this.webglAddon = null; // No GPU path available — DOM renderer stays.
+      }
+    }
+
+    disposeWebgl() {
+      if (!this.webglAddon) return;
+      try { this.webglAddon.dispose(); } catch (_err) { /* already gone */ }
+      this.webglAddon = null;
+    }
+
+    proposeSize() {
+      const proposed = this.fitAddon.proposeDimensions();
+      if (!proposed || !proposed.cols || !proposed.rows) return null;
+      return proposed;
+    }
+
+    syncSize() {
+      const proposed = this.proposeSize();
+      if (!proposed) return null;
+      if (proposed.cols !== this.term.cols || proposed.rows !== this.term.rows) {
+        this.fitAddon.fit();
+      }
+      const size = { cols: this.term.cols, rows: this.term.rows };
+      // Only tell the child when the size actually changed: a resize is a
+      // SIGWINCH to the CLI, which makes it redraw; firing one per resize
+      // *event* makes a window drag flicker.
+      if (size.cols !== this.lastSize.cols || size.rows !== this.lastSize.rows) {
+        this.lastSize = size;
+        api.resize(this.id, size.cols, size.rows);
+      }
+      return size;
+    }
+
+    hideOverlay() {
+      this.overlay.dataset.visible = "false";
+      this.overlayMsg.textContent = "";
+      this.overlayActions.textContent = "";
+    }
+
+    showOverlay(message, actions) {
+      this.overlayMsg.textContent = message;
+      this.overlayActions.textContent = "";
+      (actions || []).forEach(({ label, primary, onClick }) => {
+        const btn = document.createElement("button");
+        btn.textContent = label;
+        if (primary) btn.className = "bc-code-primary";
+        btn.addEventListener("click", onClick);
+        this.overlayActions.appendChild(btn);
+      });
+      this.overlay.dataset.visible = "true";
+    }
+
+    restartInPlace() {
+      this.hideOverlay();
+      this.term.reset();
+      this.setState("starting");
+      const size = this.syncSize() || this.lastSize;
+      api.restartSession({ id: this.id, cols: size.cols || 100, rows: size.rows || 30 });
+    }
+
+    destroy() {
+      this.disposeWebgl();
+      try { this.term.dispose(); } catch (_err) { /* already disposed */ }
+      this.tabBtn.remove();
+      this.slot.remove();
     }
   }
-  term.open(host);
 
-  // --- Input: the user's own keystrokes, forwarded verbatim ---
-  term.onData((data) => api.write(data));
+  function createSession({ id, name }) {
+    const existing = sessions.get(id);
+    if (existing) return existing;
+    const tab = new SessionTab({ id, name });
+    sessions.set(id, tab);
+    activateSession(id);
+    refreshTabsVisibility();
+    return tab;
+  }
 
-  // --- Output: bytes from the child, painted and nothing else ---
-  api.onData((chunk) => term.write(chunk));
-
-  // --- Size: xterm and the pty must always agree ---
-  let lastSize = { cols: 0, rows: 0 };
-
-  function syncSize() {
-    // proposeDimensions() returns undefined while the host has no layout yet
-    // (window still hidden, or the element measured 0x0), and fit() would then
-    // resize the terminal to NaN columns.
-    const proposed = fitAddon.proposeDimensions();
-    if (!proposed || !proposed.cols || !proposed.rows) return null;
-    // Only fit when the grid would actually change.
-    //
-    // fit() is not a cheap no-op on an unchanged size: it re-runs the terminal's
-    // layout and repaints the buffer. This ran on EVERY ResizeObserver callback,
-    // and that observer fires for any change to the host box — including
-    // sub-pixel ones that round to the same cols/rows, and every bounds push
-    // from the embedded pane's host. The result was a terminal that repainted
-    // continuously while nothing about it had changed, which is the visible
-    // flicker and a large part of the sluggishness.
-    // The guard below the fit already existed for exactly this reason, but it
-    // only protected the pty (a SIGWINCH makes the CLI redraw); the far more
-    // frequent local repaint was left unguarded.
-    if (proposed.cols !== term.cols || proposed.rows !== term.rows) {
-      fitAddon.fit();
+  function closeSession(id) {
+    const tab = sessions.get(id);
+    if (!tab) return;
+    const wasActive = id === activeId;
+    api.closeSession(id);
+    tab.destroy();
+    sessions.delete(id);
+    if (wasActive) {
+      activeId = null;
+      // Activate the nearest remaining tab, or show the empty-state overlay.
+      const next = [...sessions.keys()].pop();
+      if (next) activateSession(next);
+      else refreshEmptyState();
     }
-    const size = { cols: term.cols, rows: term.rows };
-    // Only tell the child when the size actually changed. A resize is a SIGWINCH
-    // to the CLI, which makes it redraw; firing one per resize *event* makes a
-    // window drag flicker.
-    if (size.cols !== lastSize.cols || size.rows !== lastSize.rows) {
-      lastSize = size;
-      api.resize(size.cols, size.rows);
+    refreshChrome();
+  }
+
+  function activateSession(id) {
+    const tab = sessions.get(id);
+    if (!tab) return;
+    const prev = activeSession();
+    if (prev && prev !== tab) {
+      prev.slot.dataset.active = "false";
+      prev.tabBtn.setAttribute("aria-selected", "false");
+      prev.disposeWebgl();
     }
-    return size;
-  }
-
-  // ResizeObserver rather than window.onresize: it also catches the layout
-  // change when the settings panel opens/closes and when the status strip
-  // reflows, neither of which fires a window resize event.
-  // Coalesced to one run per frame: a window drag or a sidebar collapse
-  // delivers a burst of resize callbacks, and there is no reason to measure
-  // more than once per painted frame.
-  let sizeFrame = 0;
-  const observer = new ResizeObserver(() => {
-    if (sizeFrame) return;
-    sizeFrame = requestAnimationFrame(() => { sizeFrame = 0; syncSize(); });
-  });
-  observer.observe(host);
-
-  // --- Session state / overlay ---
-  function setState(state) {
-    shell.dataset.state = state;
-  }
-
-  function hideOverlay() {
-    overlay.dataset.visible = "false";
-    overlayMsg.textContent = "";
-    overlayActions.textContent = "";
-  }
-
-  function showOverlay(message, actions) {
-    overlayMsg.textContent = message;
-    overlayActions.textContent = "";
-    (actions || []).forEach(({ label, primary, onClick }) => {
-      const btn = document.createElement("button");
-      btn.textContent = label;
-      if (primary) btn.className = "bc-code-primary";
-      btn.addEventListener("click", onClick);
-      overlayActions.appendChild(btn);
+    activeId = id;
+    tab.slot.dataset.active = "true";
+    tab.tabBtn.setAttribute("aria-selected", "true");
+    tab.ensureWebgl();
+    // The host had no layout while hidden, so measure now that it's visible.
+    requestAnimationFrame(() => {
+      tab.syncSize();
+      tab.term.focus();
     });
-    overlay.dataset.visible = "true";
+    refreshChrome();
   }
 
-  function restart() {
-    hideOverlay();
-    term.reset();
-    setState("starting");
-    const size = syncSize() || lastSize;
-    api.restart(size.cols || 100, size.rows || 30);
+  function refreshEmptyState() {
+    if (sessions.size > 0) return;
+    cwdLabel.textContent = "";
+    // With every tab closed the terminal area would be blank; surface the same
+    // overlay primitive as a dead session so "+" isn't the only way back.
+    emptyOverlay.dataset.visible = "true";
   }
 
-  // Two-tab sessions picker: "Local" (this folder's own transcripts, via
-  // sessionBundle) and "Cloud" (`claude agents --json --all` — every active
-  // session the CLI itself currently knows about, interactive or background,
-  // in any folder). The "Local"/"Cloud" entries at the top of each list act
-  // as the tab switcher — they just re-render the overlay with the other
-  // list, reusing the same primitives the exit/error overlays already use
-  // rather than adding a second picker UI.
-  async function showLocalSessionsPicker() {
-    const sessions = await api.listSessions();
-    const header = sessions.length
-      ? "Resume a local Claude Code session"
-      : "No saved local sessions were found for this folder.";
-    const items = sessions.slice(0, 10).map((session) => ({
-      label: `${session.lastTimestamp ? new Date(session.lastTimestamp).toLocaleString() : session.sessionId.slice(0, 8)} · ${session.messageCount || 0} messages`,
-      onClick: async () => {
-        const size = syncSize() || lastSize;
-        const started = await api.resumeSession(session.sessionId, size.cols || 100, size.rows || 30);
-        if (!started) showOverlay("That saved session is no longer available for this folder.", [{ label: "Back", primary: true, onClick: showLocalSessionsPicker }]);
-      },
-    }));
-    showOverlay(header, [
-      { label: "Local", primary: true, onClick: showLocalSessionsPicker },
-      { label: "Cloud", onClick: showAgentSessionsPicker },
-      ...items,
-      { label: "Start a new session", onClick: restart },
-      { label: "Back", onClick: hideOverlay },
-    ]);
+  // Shared overlay shown when the LAST tab closes. Lives outside any slot.
+  const emptyOverlay = document.createElement("div");
+  emptyOverlay.className = "bc-code-overlay";
+  emptyOverlay.dataset.visible = "false";
+  emptyOverlay.setAttribute("role", "status");
+  const emptyMsg = document.createElement("p");
+  emptyMsg.className = "bc-code-overlay-msg";
+  emptyMsg.textContent = "No sessions are running.";
+  const emptyActions = document.createElement("div");
+  emptyActions.className = "bc-code-overlay-actions";
+  const emptyStartBtn = document.createElement("button");
+  emptyStartBtn.className = "bc-code-primary";
+  emptyStartBtn.textContent = "Start a session";
+  emptyStartBtn.addEventListener("click", () => {
+    emptyOverlay.dataset.visible = "false";
+    openNewSession({});
+  });
+  emptyActions.appendChild(emptyStartBtn);
+  emptyOverlay.append(emptyMsg, emptyActions);
+  termHost.appendChild(emptyOverlay);
+
+  async function openNewSession(opts) {
+    const size = lastKnownSize();
+    let result;
+    try {
+      result = await api.newSession({
+        cols: size.cols,
+        rows: size.rows,
+        ...opts,
+      });
+    } catch (_err) {
+      result = null;
+    }
+    if (!result || !result.id) return null;
+    const tab = createSession(result);
+    if (result.name) tab.setName(result.name);
+    return tab;
   }
 
-  async function showAgentSessionsPicker() {
-    const sessions = await api.listAgentSessions();
-    const header = sessions.length
-      ? "Active Claude Code sessions"
-      : "No other active sessions were found.";
-    const items = sessions.slice(0, 10).map((session) => ({
-      label: `${session.name || session.sessionId.slice(0, 8)} — ${session.cwd} (${session.kind === "interactive" ? "local" : "background"})`,
-      onClick: async () => {
-        const size = syncSize() || lastSize;
-        const started = await api.attachAgentSession(session.sessionId, session.cwd, size.cols || 100, size.rows || 30);
-        if (!started) showOverlay("That session is no longer available.", [{ label: "Back", primary: true, onClick: showAgentSessionsPicker }]);
-      },
-    }));
-    showOverlay(header, [
-      { label: "Local", onClick: showLocalSessionsPicker },
-      { label: "Cloud", primary: true, onClick: showAgentSessionsPicker },
-      ...items,
-      { label: "Start a new session", onClick: restart },
-      { label: "Back", onClick: hideOverlay },
-    ]);
+  function lastKnownSize() {
+    const tab = activeSession();
+    if (tab) {
+      const proposed = tab.proposeSize();
+      if (proposed) return { cols: proposed.cols, rows: proposed.rows };
+    }
+    return { cols: 100, rows: 30 };
   }
 
-  api.onStarted(({ cwd }) => {
-    setState("running");
-    cwdLabel.textContent = cwd;
-    cwdLabel.title = cwd;
-    hideOverlay();
-    term.focus();
+  /** Status bar + tab visibility follow whichever session is on screen. */
+  function refreshChrome() {
+    const tab = activeSession();
+    if (tab && tab.cwd) {
+      cwdLabel.textContent = tab.cwd;
+      cwdLabel.title = tab.cwd;
+    }
+    if (tab) {
+      shell.dataset.state =
+        tab.state === "running" ? "running"
+        : tab.state === "exited" ? "exited"
+        : tab.state === "failed" ? "failed"
+        : "starting";
+    } else {
+      shell.dataset.state = "starting";
+    }
+    // Hide the strip entirely until there is more than one session — a single
+    // session gains nothing from a tab bar costing it a row.
+    refreshTabsVisibility();
+  }
+
+  function refreshTabsVisibility() {
+    tabsStrip.style.display = sessions.size > 0 ? "" : "none";
+    newTabBtn.style.display = sessions.size > 0 ? "" : "none";
+  }
+
+  // "+" opens another session in the pane default folder.
+  newTabBtn.id = "bc-code-newtab-btn";
+  newTabBtn.type = "button";
+  newTabBtn.textContent = "+";
+  newTabBtn.title = "New session";
+  newTabBtn.addEventListener("click", () => openNewSession({}));
+  tabsStrip.appendChild(newTabBtn);
+
+  // --- Events from main, routed by session id ---
+
+  // --- While Claude Code works: Snake ------------------------------------
+  // Timing bookkeeping lives here, above the event wiring that uses it.
+  let lastPtyDataAt = 0;
+
+  api.onStarted(({ id, cwd, name, pid }) => {
+    const tab = sessions.get(id) || createSession({ id, name });
+    tab.setName(name);
+    tab.cwd = cwd;
+    tab.pid = pid;
+    tab.setState("running");
+    tab.hideOverlay();
+    emptyOverlay.dataset.visible = "false";
+    refreshChrome();
+    if (id === activeId) tab.term.focus();
   });
 
-  api.onExit(({ exitCode, signal }) => {
-    setState("exited");
+  api.onData(({ id, chunk }) => {
+    const tab = sessions.get(id);
+    if (!tab) return;
+    tab.term.write(chunk);
+    // Timing only — never content. "Bytes arrived recently" is one of this
+    // window's two signals for "Claude Code is working" (the other is the
+    // session being live); it feeds only the while-you-wait snake below.
+    lastPtyDataAt = Date.now();
+  });
+
+  // The main window shows its waiting popup while claude.ai is generating;
+  // here the equivalent signal is pty activity — output within the last few
+  // seconds of a live session. The CLI repaints its spinner constantly while
+  // thinking and goes quiet at an input prompt, which is exactly the
+  // working/idle split this wants. Every Playful setting applies (master
+  // toggle, delay), same as the main window; dismissing covers only that one
+  // wait.
+  let waitingBusy = false;
+  const waitingGame = window.BetterClaudeSnake
+    ? window.BetterClaudeSnake.createWaitingSnake({
+        readConfig: () => ({
+          masterEnabled: !(latestSettings && latestSettings.general && latestSettings.general.enabled === false),
+          snakeWhileWaiting: !!(latestSettings && latestSettings.playful && latestSettings.playful.snakeWhileWaiting),
+          snakeDelayMs: (latestSettings && latestSettings.playful && latestSettings.playful.snakeDelayMs) || 2000,
+        }),
+      })
+    : null;
+  setInterval(() => {
+    if (!waitingGame) return;
+    const anyLive = Array.from(sessions.values()).some((tab) => tab.state === "running");
+    const busy = anyLive && Date.now() - lastPtyDataAt < 2500;
+    if (busy !== waitingBusy) {
+      waitingBusy = busy;
+      waitingGame.setWorking(busy);
+    }
+  }, 400);
+
+  api.onExit(({ id, exitCode, signal }) => {
+    const tab = sessions.get(id);
+    if (!tab) return;
+    tab.setState("exited");
     const how = signal ? `signal ${signal}` : `exit code ${exitCode}`;
-    showOverlay(`Claude Code ended (${how}).`, [
-      { label: "Start a new session", primary: true, onClick: restart },
-      { label: "Close window", onClick: () => api.closeWindow() },
+    tab.showOverlay(`Claude Code ended (${how}).`, [
+      { label: "Restart session", primary: true, onClick: () => tab.restartInPlace() },
+      { label: "New session", onClick: () => openNewSession({}) },
+      { label: "Close tab", onClick: () => closeSession(id) },
     ]);
   });
 
   // A launch that never got off the ground: no `claude` on PATH, or the pty
   // backend failed to start. The real error text is shown as-is — a vague
   // "something went wrong" would leave the user with nothing to act on.
-  api.onFatal(({ message }) => {
-    setState("failed");
-    showOverlay(message, [
-      { label: "Try again", primary: true, onClick: restart },
-      { label: "Close window", onClick: () => api.closeWindow() },
+  api.onFatal(({ id, message }) => {
+    const tab = sessions.get(id);
+    if (!tab) return;
+    tab.setState("failed");
+    tab.showOverlay(message, [
+      { label: "Try again", primary: true, onClick: () => tab.restartInPlace() },
+      { label: "Close tab", onClick: () => closeSession(id) },
     ]);
   });
 
-  api.onRestarting(({ cwd }) => {
-    term.reset();
-    setState("starting");
-    cwdLabel.textContent = cwd;
-    cwdLabel.title = cwd;
-    hideOverlay();
+  // Main-driven restarts (folder change via tray/menu, resume flows).
+  api.onRestarting(({ id, cwd }) => {
+    let tab = sessions.get(id);
+    if (!tab) tab = createSession({ id });
+    tab.term.reset();
+    tab.setState("starting");
+    if (cwd) {
+      tab.cwd = cwd;
+      refreshChrome();
+    }
+    tab.hideOverlay();
   });
 
-  // Live theme + font updates. The pty is untouched by any of this: the child
-  // never learns the colours changed, so a theme switch cannot interrupt a
-  // running session (acceptance criterion 6).
-  api.onSettingsChanged((settings) => {
-    term.options.theme = themeFromCSSVars();
-    const fontFamily = cssVar("--bc-code-font", "SFMono-Regular, Menlo, Consolas, monospace");
-    const fontSize = Number((settings.codeWindow || {}).fontSizePx) || 13;
-    if (term.options.fontFamily !== fontFamily) term.options.fontFamily = fontFamily;
-    if (term.options.fontSize !== fontSize) term.options.fontSize = fontSize;
-    // Font metrics change the cell size, which changes how many cols/rows fit.
-    syncSize();
+  // --- Sessions picker (per tab): local transcripts + live agent sessions ---
+
+  async function showLocalSessionsPicker(tab) {
+    const sessionsList = await api.listSessions(tab.cwd);
+    const header = sessionsList.length
+      ? "Resume a local Claude Code session"
+      : "No saved local sessions were found for this folder.";
+    const items = sessionsList.slice(0, 10).map((session) => ({
+      label: `${session.lastTimestamp ? new Date(session.lastTimestamp).toLocaleString() : session.sessionId.slice(0, 8)} · ${session.messageCount || 0} messages`,
+      onClick: async () => {
+        const size = tab.syncSize() || tab.lastSize;
+        const started = await api.resumeSession({
+          id: tab.id,
+          sessionId: session.sessionId,
+          cwd: tab.cwd,
+          cols: size.cols || 100,
+          rows: size.rows || 30,
+        });
+        if (!started) tab.showOverlay("That saved session is no longer available for this folder.", [{ label: "Back", primary: true, onClick: () => showLocalSessionsPicker(tab) }]);
+      },
+    }));
+    tab.showOverlay(header, [
+      { label: "Local", primary: true, onClick: () => showLocalSessionsPicker(tab) },
+      { label: "Cloud", onClick: () => showAgentSessionsPicker(tab) },
+      ...items,
+      { label: "Start a new session", onClick: () => openNewSession({ cwd: tab.cwd }) },
+      { label: "Back", onClick: () => tab.hideOverlay() },
+    ]);
+  }
+
+  async function showAgentSessionsPicker(tab) {
+    const agentSessions = await api.listAgentSessions();
+    const header = agentSessions.length
+      ? "Active Claude Code sessions"
+      : "No other active sessions were found.";
+    const items = agentSessions.slice(0, 10).map((session) => ({
+      label: `${session.name || session.sessionId.slice(0, 8)} — ${session.cwd} (${session.kind === "interactive" ? "local" : "background"})`,
+      onClick: async () => {
+        const size = tab.syncSize() || tab.lastSize;
+        const started = await api.attachAgentSession({
+          id: tab.id,
+          sessionId: session.sessionId,
+          cwd: session.cwd,
+          cols: size.cols || 100,
+          rows: size.rows || 30,
+        });
+        if (!started) tab.showOverlay("That session is no longer available.", [{ label: "Back", primary: true, onClick: () => showAgentSessionsPicker(tab) }]);
+      },
+    }));
+    tab.showOverlay(header, [
+      { label: "Local", onClick: () => showLocalSessionsPicker(tab) },
+      { label: "Cloud", primary: true, onClick: () => showAgentSessionsPicker(tab) },
+      ...items,
+      { label: "Start a new session", onClick: () => openNewSession({}) },
+      { label: "Back", onClick: () => tab.hideOverlay() },
+    ]);
+  }
+
+  resumeBtn.addEventListener("click", () => {
+    let tab = activeSession();
+    if (!tab) {
+      openNewSession({});
+      tab = activeSession();
+      if (!tab) return;
+    }
+    showLocalSessionsPicker(tab).catch(() => {
+      tab.showOverlay("Could not load saved Claude Code sessions.", [{ label: "Back", primary: true, onClick: () => tab.hideOverlay() }]);
+    });
   });
 
-  folderBtn.addEventListener("click", () => api.pickFolder());
-  resumeBtn.addEventListener("click", () => showLocalSessionsPicker().catch(() => {
-    showOverlay("Could not load saved Claude Code sessions.", [{ label: "Back", primary: true, onClick: hideOverlay }]);
-  }));
+  // Change folder applies to whichever session is on screen: a pty can't move,
+  // so the honest way to honour the request remains restarting that tab in the
+  // picked folder.
+  folderBtn.addEventListener("click", async () => {
+    const path = await api.pickFolderPath();
+    if (!path) return;
+    let tab = activeSession();
+    if (!tab) {
+      await openNewSession({ cwd: path });
+      return;
+    }
+    tab.cwd = path;
+    refreshChrome();
+    tab.term.reset();
+    tab.setState("starting");
+    const size = tab.syncSize() || tab.lastSize;
+    api.restartSession({ id: tab.id, cwd: path, cols: size.cols || 100, rows: size.rows || 30 });
+  });
 
-  // Clicking anywhere in the terminal area should put focus back in the CLI —
-  // after using the settings panel, the natural next action is to keep typing.
-  host.addEventListener("mousedown", (e) => {
-    // Don't steal focus from the overlay's own buttons.
-    if (overlay.dataset.visible === "true") return;
-    if (e.button === 0) term.focus();
+  // --- Resize plumbing ---
+  //
+  // ResizeObserver rather than window.onresize: it also catches the layout
+  // change when the settings panel opens/closes, when the team sidebar toggles,
+  // and when the status strip reflows. Coalesced to one run per frame, and it
+  // only fits the VISIBLE session — hidden slots have no layout to measure.
+
+  let sizeFrame = 0;
+  const observer = new ResizeObserver(() => {
+    if (sizeFrame) return;
+    sizeFrame = requestAnimationFrame(() => {
+      sizeFrame = 0;
+      const tab = activeSession();
+      if (tab) tab.syncSize();
+    });
+  });
+  observer.observe(termHost);
+
+  // --- Input affordances shared by every slot ---
+
+  // Clicking anywhere in the visible terminal should put focus back in that
+  // CLI — after using the settings panel, the natural next action is typing.
+  termHost.addEventListener("mousedown", (e) => {
+    const tab = activeSession();
+    if (!tab) return;
+    if (tab.overlay.dataset.visible === "true") return;
+    if (e.button === 0) tab.term.focus();
   });
 
   // Right-click copy/paste, the convention most terminal emulators use (PuTTY,
   // most Linux terminals): a selection means "copy that", no selection means
-  // "paste". Chosen over a floating context menu to avoid adding another
-  // popover with its own positioning/z-index surface in a window that already
-  // has one (the settings panel). term.paste() (not api.write()) so a paste
-  // still goes through xterm's own bracketed-paste-mode wrapping when the
-  // running CLI has that mode enabled.
-  host.addEventListener("contextmenu", (e) => {
+  // "paste". term.paste() (not api.write()) so a paste still goes through
+  // xterm's own bracketed-paste-mode wrapping when the running CLI has that
+  // mode enabled.
+  termHost.addEventListener("contextmenu", (e) => {
+    const tab = activeSession();
+    if (!tab) return;
     e.preventDefault();
-    if (overlay.dataset.visible === "true") return;
-    const selection = term.getSelection();
+    if (tab.overlay.dataset.visible === "true") return;
+    const selection = tab.term.getSelection();
     if (selection) {
       api.copyText(selection);
-      term.clearSelection();
+      tab.term.clearSelection();
     } else {
       Promise.resolve(api.pasteText()).then((text) => {
-        if (text) term.paste(text);
+        if (text) tab.term.paste(text);
       });
     }
-    term.focus();
+    tab.term.focus();
   });
 
-  // First paint: report the measured size so the main process can spawn the pty
-  // at the right dimensions rather than at a guess it has to correct.
-  requestAnimationFrame(() => {
-    const size = syncSize() || { cols: 100, rows: 30 };
-    lastSize = size;
-    setState("starting");
-    api.ready(size.cols, size.rows);
-    term.focus();
+  // Live theme + font updates apply to EVERY terminal. The ptys are untouched
+  // by any of this: children never learn the colours changed, so a theme switch
+  // cannot interrupt a running session.
+  api.onSettingsChanged((settings) => {
+    latestSettings = settings || latestSettings;
+    initialSettings.codeWindow = (settings || {}).codeWindow || initialSettings.codeWindow;
+    const fontFamily = currentFontFamily();
+    const fontSize = currentFontSize();
+    for (const tab of sessions.values()) {
+      tab.term.options.theme = themeFromCSSVars();
+      if (tab.term.options.fontFamily !== fontFamily) tab.term.options.fontFamily = fontFamily;
+      if (tab.term.options.fontSize !== fontSize) tab.term.options.fontSize = fontSize;
+    }
+    const tab = activeSession();
+    if (tab) tab.syncSize();
   });
 
   // --- Session Bundle transcript viewer bridge ---
@@ -407,7 +725,7 @@
   // unlike JS classes, are the same object across worlds) plus the parsed
   // transcript data; this listener builds a second, read-only Terminal into
   // that node using the classes only this side has. Nothing here reads or
-  // writes the live `claude` child — a completely separate Terminal instance,
+  // writes any live `claude` child — completely separate Terminal instances,
   // never wired to `api`.
   const transcriptViewers = new Map();
 
@@ -432,7 +750,7 @@
       disableStdin: true,
       cursorBlink: false,
       scrollback: 5000,
-      fontFamily: cssVar("--bc-code-font", "SFMono-Regular, Menlo, Consolas, monospace"),
+      fontFamily: currentFontFamily(),
       fontSize: 13,
       theme: themeFromCSSVars(),
     });
@@ -467,4 +785,29 @@
     viewerTerm.dispose();
     transcriptViewers.delete(requestId);
   });
+
+  // First paint: report the measured size so the first pty is spawned at the
+  // right dimensions rather than at a guess it has to correct. The session
+  // itself arrives via code:started.
+  requestAnimationFrame(() => {
+    const size = lastKnownSize();
+    setStateStarting();
+    api.ready(size.cols, size.rows);
+  });
+
+  function setStateStarting() {
+    shell.dataset.state = "starting";
+  }
+
+  // Tiny handoff for sibling page scripts (ui/code-window/team-panel.js),
+  // which needs to know which session is on screen without reaching into this
+  // closure's internals.
+  window.BetterClaudeTabs = {
+    get activeId() {
+      return activeId;
+    },
+    byId(id) {
+      return sessions.get(id) || null;
+    },
+  };
 })();

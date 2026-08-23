@@ -33,17 +33,88 @@
         <button id="bc-code-resume-btn" type="button" title="Browse local and active Claude Code sessions">
           Sessions…
         </button>
+        <button id="bc-code-team-btn" type="button" title="Show or hide the agent team sidebar">
+          Team
+        </button>
+        <button id="bc-code-rail-btn" type="button" title="Show or hide the live session-to-session activity rail">
+          Live
+        </button>
       </div>
 
-      <div id="bc-code-term">
-        <div id="bc-code-overlay" data-visible="false" role="status">
-          <p class="bc-code-overlay-msg"></p>
-          <div class="bc-code-overlay-actions"></div>
-        </div>
+      <!-- Session tabs. Populated entirely by ui/code-window/terminal.js; one
+           button per live session, plus the "+" that opens another. -->
+      <div id="bc-code-tabs" role="tablist" aria-label="Terminal sessions"></div>
+
+      <div id="bc-code-main">
+        <!-- Terminal hosts are added here, one per session, each with its own
+             overlay element (the old single overlay lived directly inside). -->
+        <div id="bc-code-term"></div>
+
+        <!-- Agent team sidebar. The roster/chat/tasks/diffs inside are rendered
+             by ui/code-window/team-panel.js from snapshots pushed over IPC;
+             nothing here is wired to any one pty. -->
+        <aside id="bc-team-panel" data-visible="false">
+          <div class="bc-team-head">
+            <span class="bc-team-title">Agent team</span>
+            <div class="bc-team-head-actions">
+              <button id="bc-team-add-btn" type="button" title="Start a new teammate session in this folder">+ Teammate</button>
+              <button id="bc-team-hide-btn" type="button" title="Hide the team sidebar">×</button>
+            </div>
+          </div>
+
+          <div class="bc-team-body">
+            <section class="bc-team-section">
+              <h3>Who's doing what</h3>
+              <div id="bc-team-members"><div class="bc-team-empty">No team yet — start a teammate.</div></div>
+            </section>
+
+            <section class="bc-team-section bc-team-chat">
+              <h3>Team chat</h3>
+              <div id="bc-team-feed"><div class="bc-team-empty">Messages between teammates land here.</div></div>
+              <form id="bc-team-compose" autocomplete="off">
+                <select id="bc-team-compose-to" title="Recipient"></select>
+                <input id="bc-team-compose-input" type="text" placeholder="Message a teammate…" />
+                <button type="submit" title="Send">Send</button>
+              </form>
+            </section>
+
+            <section class="bc-team-section">
+              <h3>Work board</h3>
+              <div id="bc-team-tasks"><div class="bc-team-empty">Break the work up into tasks for the team.</div></div>
+              <form id="bc-team-task-form" autocomplete="off">
+                <input id="bc-team-task-input" type="text" placeholder="Add a task…" />
+                <button type="submit" title="Add task">Add</button>
+              </form>
+            </section>
+
+            <section class="bc-team-section">
+              <h3>Made so far</h3>
+              <div id="bc-team-diff"><div class="bc-team-empty">Files the team has touched show up here.</div></div>
+            </section>
+          </div>
+        </aside>
+
+        <!-- Live rail: the tiny right-edge wire. One compact entry per
+             inter-session message and per piece of delegated work (task
+             claims, assignments, completions), rendered by
+             ui/code-window/team-panel.js from the same hub snapshots.
+             Its left-edge pull bar widens/narrows the wire; team-panel.js
+             owns the drag. -->
+        <aside id="bc-team-rail" data-visible="true" aria-label="Live session activity">
+          <div id="bc-team-rail-resize" title="Drag to widen the live wire · double-click to reset"></div>
+          <div class="bc-team-rail-head">
+            <span class="bc-team-rail-pulse" aria-hidden="true"></span>
+            <span class="bc-team-rail-title">Live wire</span>
+            <button id="bc-team-rail-hide" type="button" title="Hide the live rail">×</button>
+          </div>
+          <div id="bc-team-rail-feed"><div class="bc-team-empty">What the sessions say to each other — and who hands what to whom — streams here.</div></div>
+        </aside>
       </div>
     </div>
 
     <script src="../build/xterm.bundle.js"></script>
+    <script src="../build/snake.bundle.js"></script>
     <script src="../ui/code-window/terminal.js"></script>
+    <script src="../ui/code-window/team-panel.js"></script>
   </body>
 </html>

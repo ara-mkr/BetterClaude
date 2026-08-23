@@ -20,6 +20,7 @@
  */
 
 const { clampNumber, BOUNDS } = require("./tokens");
+const { cssSelectorList } = require("./claude-dom");
 
 // Selectors for BetterClaude's OWN floating chrome — deliberately never
 // includes claude.ai's own page elements, matching the scoping rule the rest
@@ -175,6 +176,21 @@ body.bc-zen-mode #betterclaude-plugin-dock {
 }
 `;
 
+// claude.ai shows a spinning burst loader beside sidebar rows ("Claude",
+// "Projects", recents) while their content loads, and it lingers as visual
+// noise even when the row label is already rendered. Removed outright:
+// the text carries the row fine on its own. Scoped to the sidebar so the
+// spinner that signals "Claude is generating" in the chat keeps working.
+// Tailwind's animate-spin utility is the rotation hook those bursts use;
+// a substring match also catches duration-suffixed variants.
+function sidebarSpinnerCSS() {
+  return `
+${cssSelectorList("sidebar", { suffix: ' [class*="animate-spin"]' })} {
+  display: none !important;
+}
+`;
+}
+
 function buildExtrasCSS(settings = {}) {
   const parts = [
     cursorCSS(settings.cursor, settings.appearance && settings.appearance.accentColor),
@@ -185,6 +201,7 @@ function buildExtrasCSS(settings = {}) {
     motionCSS(settings.motion),
     moodTintCSS(),
     ZEN_MODE_CSS,
+    sidebarSpinnerCSS(),
   ];
   return parts.filter(Boolean).join("\n").trim();
 }

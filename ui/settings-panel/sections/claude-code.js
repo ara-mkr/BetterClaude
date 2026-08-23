@@ -29,7 +29,17 @@ module.exports = {
     ));
     wrap.appendChild(el("p", {
       class: "bc-hint",
-      text: "Adds a CLI pill next to Claude's own Home and Code tabs. Turning it off only hides the pill — the terminal icon in BetterClaude's own title bar, the tray item, the app menu and ⌘⇧K still open the terminal.",
+      text: "Adds a CLI pill next to Claude's own Home and Code tabs. Turning it off only hides the pill — the tray item, the app menu and ⌘⇧K still open the terminal.",
+    }));
+
+    wrap.appendChild(toggleField(
+      "Session mesh (sessions talk to each other)",
+      code.teamMesh !== false,
+      (v) => this._set("codeWindow.teamMesh", v)
+    ));
+    wrap.appendChild(el("p", {
+      class: "bc-hint",
+      text: "Every CLI session automatically joins its folder's shared team hub: each one can see what the others are working on, message them, and hand tasks back and forth. The Live wire on the right edge of the terminal shows the traffic. Off = only sessions explicitly started as teammates cooperate.",
     }));
 
     wrap.appendChild(rangeField("Terminal font size", {

@@ -74,7 +74,9 @@ body {
 }
 
 #bc-code-folder-btn,
-#bc-code-resume-btn {
+#bc-code-resume-btn,
+#bc-code-team-btn,
+#bc-code-rail-btn {
   flex: 0 0 auto;
   font: inherit;
   color: var(--bc-text-muted, #a99bd1);
@@ -86,15 +88,178 @@ body {
 }
 
 #bc-code-folder-btn:hover,
-#bc-code-resume-btn:hover {
+#bc-code-resume-btn:hover,
+#bc-code-team-btn:hover,
+#bc-code-rail-btn:hover {
   color: var(--bc-text, #ece7fb);
   border-color: var(--bc-accent, #6059e6);
 }
 
 #bc-code-folder-btn:focus-visible,
-#bc-code-resume-btn:focus-visible {
+#bc-code-resume-btn:focus-visible,
+#bc-code-team-btn:focus-visible,
+#bc-code-rail-btn:focus-visible {
   outline: 2px solid var(--bc-focus-ring, var(--bc-accent, #6059e6));
   outline-offset: 1px;
+}
+
+/* Team button reflects whether the sidebar is open. */
+#bc-code-team-btn[data-active="true"] {
+  color: var(--btn-primary-fg, #fff);
+  background: var(--bc-accent, #6059e6);
+  border-color: transparent;
+}
+
+/* ------------------------------------------------------------------ *
+ * Session tabs
+ *
+ * One tab per live pty session. The strip is deliberately thin — it has to
+ * earn its place above a full-height terminal without stealing rows from it.
+ * ------------------------------------------------------------------ */
+
+#bc-code-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px 8px 0;
+  background: var(--bc-bg-sidebar, #100c1c);
+  border-bottom: 1px solid var(--bc-border, #2c2347);
+  overflow-x: auto;
+  scrollbar-width: none;
+  user-select: none;
+}
+
+#bc-code-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.bc-code-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 200px;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--bc-text-muted, #a99bd1);
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bc-code-tab .bc-code-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--bc-text-muted, #a99bd1);
+  flex: 0 0 auto;
+}
+
+.bc-code-tab[data-session-state="running"] .bc-code-dot {
+  background: var(--bc-accent, #6059e6);
+}
+
+.bc-code-tab[data-session-state="exited"] .bc-code-dot,
+.bc-code-tab[data-session-state="failed"] .bc-code-dot {
+  background: var(--bc-danger, #ef4444);
+}
+
+.bc-code-tab[aria-selected="true"] {
+  color: var(--bc-text, #ece7fb);
+  background: var(--bc-bg, #14101f);
+  border-color: var(--bc-border, #2c2347);
+}
+
+.bc-code-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Unread team-message badge on a tab. */
+.bc-code-tab-badge {
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  color: var(--btn-primary-fg, #fff);
+  background: var(--bc-danger, #ef4444);
+}
+
+.bc-code-tab-badge[hidden] {
+  display: none;
+}
+
+.bc-code-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-right: -3px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.bc-code-tab-close:hover {
+  opacity: 1;
+  background: var(--bc-border, #2c2347);
+}
+
+/* Rectangular pill: wider than tall, fully rounded ends, and the "+" is
+   dead-centre via flexbox (a bare text node in a fixed square was drifting
+   off-centre depending on the font's metrics). */
+#bc-code-newtab-btn {
+  align-self: center;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 20px;
+  margin-bottom: 3px;
+  padding: 0 12px;
+  border: 1px solid var(--bc-border, #2c2347);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--bc-text-muted, #a99bd1);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#bc-code-newtab-btn:hover {
+  color: var(--bc-text, #ece7fb);
+  background: color-mix(in srgb, var(--bc-accent, #6059e6) 14%, transparent);
+  border-color: var(--bc-accent, #6059e6);
+}
+
+#bc-code-newtab-btn:focus-visible {
+  outline: 2px solid var(--bc-focus-ring, var(--bc-accent, #6059e6));
+  outline-offset: 1px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Body row: terminals + team sidebar
+ * ------------------------------------------------------------------ */
+
+#bc-code-main {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
 }
 
 /* Terminal host. min-height:0 matters: without it the flex item refuses to
@@ -103,33 +268,53 @@ body {
 #bc-code-term {
   position: relative;
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
-  padding: 8px 10px 4px;
   background: var(--bc-bg, #14101f);
 }
 
-/* xterm measures the element it's opened into, so it must fill the host
-   exactly — any implicit inline-block sizing here shows up as clipped rows. */
-#bc-code-term .xterm,
-#bc-code-term .xterm-viewport,
-#bc-code-term .xterm-screen {
+/* One slot per session; exactly one is visible at a time. Slots exist so each
+   session keeps its own overlay element and xterm host. */
+.bc-code-slot {
+  position: absolute;
+  inset: 0;
+  display: none;
+  padding: 8px 10px 4px;
+}
+
+.bc-code-slot[data-active="true"] {
+  display: block;
+}
+
+.bc-code-term-host {
+  position: relative;
   width: 100%;
   height: 100%;
 }
 
-#bc-code-term .xterm-viewport::-webkit-scrollbar {
+/* xterm measures the element it's opened into, so it must fill the host
+   exactly — any implicit inline-block sizing here shows up as clipped rows. */
+.bc-code-term-host .xterm,
+.bc-code-term-host .xterm-viewport,
+.bc-code-term-host .xterm-screen {
+  width: 100%;
+  height: 100%;
+}
+
+.bc-code-term-host .xterm-viewport::-webkit-scrollbar {
   width: 10px;
 }
 
-#bc-code-term .xterm-viewport::-webkit-scrollbar-thumb {
+.bc-code-term-host .xterm-viewport::-webkit-scrollbar-thumb {
   background: var(--bc-border, #2c2347);
   border-radius: 5px;
 }
 
 /* Startup failures and "the CLI exited" both land here rather than being
    written INTO the terminal: the terminal shows the child's own bytes and
-   nothing else, so BetterClaude's messages stay visibly BetterClaude's. */
-#bc-code-overlay {
+   nothing else, so BetterClaude's messages stay visibly BetterClaude's.
+   One overlay per session slot now, hence the class rather than an id. */
+.bc-code-overlay {
   position: absolute;
   inset: 0;
   display: none;
@@ -144,11 +329,11 @@ body {
   z-index: 10;
 }
 
-#bc-code-overlay[data-visible="true"] {
+.bc-code-overlay[data-visible="true"] {
   display: flex;
 }
 
-#bc-code-overlay .bc-code-overlay-msg {
+.bc-code-overlay .bc-code-overlay-msg {
   max-width: 60ch;
   margin: 0;
   white-space: pre-wrap;
@@ -158,12 +343,12 @@ body {
   color: var(--bc-text, #ece7fb);
 }
 
-#bc-code-overlay .bc-code-overlay-actions {
+.bc-code-overlay .bc-code-overlay-actions {
   display: flex;
   gap: 10px;
 }
 
-#bc-code-overlay button {
+.bc-code-overlay button {
   font: inherit;
   font-size: 12px;
   padding: 7px 16px;
@@ -174,15 +359,253 @@ body {
   color: var(--bc-text, #ece7fb);
 }
 
-#bc-code-overlay button.bc-code-primary {
+.bc-code-overlay button.bc-code-primary {
   background: var(--bc-accent, #6059e6);
   color: var(--btn-primary-fg, #fff);
   border-color: transparent;
 }
 
-#bc-code-overlay button:focus-visible {
+.bc-code-overlay button:focus-visible {
   outline: 2px solid var(--bc-focus-ring, var(--bc-accent, #6059e6));
   outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Live rail (the tiny right-edge wire)
+ *
+ * A narrow, always-scannable strip of inter-session traffic: who said
+ * what to whom, and how work is being delegated (claims, assignments,
+ * completions, focus changes). Rendered from the same hub snapshots as
+ * the team sidebar — nothing here touches a pty.
+ * ------------------------------------------------------------------ */
+
+#bc-team-rail {
+  position: relative;
+  flex: 0 0 auto;
+  width: 216px;
+  display: none;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bc-bg-sidebar, #100c1c);
+  border-left: 1px solid var(--bc-border, #2c2347);
+  font-size: 11px;
+}
+
+#bc-team-rail[data-visible="true"] {
+  display: flex;
+}
+
+/* The pull bar: a full-height grab strip hanging off the rail's left edge.
+   It overlaps the terminal by a few pixels so the hit area feels generous
+   without eating clicks meant for the feed itself. team-panel.js wires the
+   drag (pointer capture, persisted width, double-click reset). */
+#bc-team-rail-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 9px;
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 5;
+}
+
+/* The visible grip line only shows while you're on/near it or dragging —
+   the wire stays visually quiet the rest of the time. */
+#bc-team-rail-resize::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+}
+
+#bc-team-rail-resize:hover::after,
+#bc-team-rail-resize.dragging::after {
+  background: var(--bc-accent, #6059e6);
+}
+
+html.bc-team-rail-resizing {
+  cursor: ew-resize !important;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.bc-team-rail-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--bc-border, #2c2347);
+}
+
+.bc-team-rail-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--bc-text-muted, #a99bd1);
+}
+
+/* Soft breathing dot — "this wire is live". Purely decorative. */
+.bc-team-rail-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--bc-accent, #6059e6);
+  animation: bc-rail-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes bc-rail-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+#bc-team-rail-hide {
+  margin-left: auto;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 1px 5px;
+  border-radius: 5px;
+  cursor: pointer;
+  color: var(--bc-text-muted, #a99bd1);
+  background: transparent;
+  border: 1px solid var(--bc-border, #2c2347);
+}
+
+#bc-team-rail-hide:hover {
+  color: var(--bc-text, #ece7fb);
+  border-color: var(--bc-accent, #6059e6);
+}
+
+#bc-team-rail-feed {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0 8px;
+}
+
+#bc-team-rail-feed::-webkit-scrollbar {
+  width: 6px;
+}
+
+#bc-team-rail-feed::-webkit-scrollbar-thumb {
+  background: var(--bc-border, #2c2347);
+  border-radius: 3px;
+}
+
+/* One wire entry. Messages get a route line + snippet; delegation events
+   are single tinted lines. Newest at the bottom, like the chat feed. */
+.bc-rail-entry {
+  padding: 5px 10px;
+  border-bottom: 1px dashed color-mix(in srgb, var(--bc-border, #2c2347) 55%, transparent);
+}
+
+.bc-rail-entry:last-child {
+  border-bottom: none;
+}
+
+.bc-rail-route {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 2px;
+  color: var(--bc-text-muted, #a99bd1);
+  font-size: 10px;
+}
+
+.bc-rail-name {
+  font-weight: 600;
+  color: var(--bc-text, #ece7fb);
+}
+
+.bc-rail-name[data-from="you"] {
+  color: var(--bc-accent, #6059e6);
+}
+
+.bc-rail-kind {
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--bc-text-muted, #a99bd1);
+  border: 1px solid var(--bc-border, #2c2347);
+  border-radius: 999px;
+  padding: 0 6px;
+  line-height: 14px;
+}
+
+.bc-rail-body {
+  color: var(--bc-text, #ece7fb);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* Delegation / status events: one compact line, tinted by kind. */
+.bc-rail-event {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  line-height: 1.45;
+  color: var(--bc-text-muted, #a99bd1);
+}
+
+.bc-rail-event .bc-rail-glyph {
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+.bc-rail-event[data-event="claim"] .bc-rail-glyph,
+.bc-rail-event[data-event="assign"] .bc-rail-glyph {
+  color: var(--bc-accent, #6059e6);
+}
+
+.bc-rail-event[data-event="done"] .bc-rail-glyph {
+  color: var(--ansi-green, #8ee08a);
+}
+
+.bc-rail-event[data-event="focus"] .bc-rail-glyph {
+  color: var(--ansi-yellow, #e8cf7d);
+}
+
+.bc-rail-event[data-event="exit"] .bc-rail-glyph {
+  color: var(--bc-danger, #ef4444);
+}
+
+.bc-rail-event .bc-rail-who {
+  font-weight: 600;
+  color: var(--bc-text, #ece7fb);
+}
+
+.bc-rail-event .bc-rail-what {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bc-rail-time {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 9px;
+  color: var(--bc-text-muted, #a99bd1);
+  opacity: 0.7;
+}
+
+/* The Team button in the status bar and its rail sibling share styling. */
+#bc-code-rail-btn[data-active="true"] {
+  color: var(--btn-primary-fg, #fff);
+  background: var(--bc-accent, #6059e6);
+  border-color: transparent;
 }
 
 /* ------------------------------------------------------------------ *
@@ -208,5 +631,442 @@ html.bc-embedded body {
    this only matters if a future change mounts it unconditionally again. */
 html.bc-embedded #betterclaude-titlebar {
   display: none !important;
+}
+
+/* ------------------------------------------------------------------ *
+ * Agent team sidebar (ui/code-window/team-panel.js)
+ *
+ * Rendered entirely from IPC snapshots of the shared .bc-team/ hub, so this is
+ * ordinary document styling — nothing here touches a pty.
+ * ------------------------------------------------------------------ */
+
+#bc-team-panel {
+  flex: 0 0 auto;
+  width: 320px;
+  display: none;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bc-bg-sidebar, #100c1c);
+  border-left: 1px solid var(--bc-border, #2c2347);
+  font-size: 12px;
+}
+
+#bc-team-panel[data-visible="true"] {
+  display: flex;
+}
+
+.bc-team-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--bc-border, #2c2347);
+}
+
+.bc-team-title {
+  font-weight: 600;
+  color: var(--bc-text, #ece7fb);
+  letter-spacing: 0.02em;
+}
+
+.bc-team-head-actions {
+  display: flex;
+  gap: 6px;
+}
+
+#bc-team-add-btn,
+#bc-team-hide-btn {
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--bc-text-muted, #a99bd1);
+  background: transparent;
+  border: 1px solid var(--bc-border, #2c2347);
+}
+
+#bc-team-add-btn:hover {
+  color: var(--btn-primary-fg, #fff);
+  background: var(--bc-accent, #6059e6);
+  border-color: transparent;
+}
+
+#bc-team-hide-btn:hover {
+  color: var(--bc-text, #ece7fb);
+  border-color: var(--bc-accent, #6059e6);
+}
+
+.bc-team-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.bc-team-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.bc-team-body::-webkit-scrollbar-thumb {
+  background: var(--bc-border, #2c2347);
+  border-radius: 4px;
+}
+
+.bc-team-section {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--bc-border, #2c2347);
+}
+
+/* The chat section grows to fill leftover height so its feed scrolls instead
+   of pushing the sections below it out of view. */
+.bc-team-chat {
+  min-height: 180px;
+}
+
+.bc-team-section h3 {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--bc-text-muted, #a99bd1);
+}
+
+.bc-team-empty {
+  color: var(--bc-text-muted, #a99bd1);
+  opacity: 0.75;
+  font-style: italic;
+}
+
+/* --- Roster --- */
+
+.bc-team-member {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 9px;
+  border: 1px solid var(--bc-border, #2c2347);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bc-bg-elevated, #1c1630) 55%, transparent);
+}
+
+/* Status dot for roster entries: colour comes from the member's state class,
+   not from any session strip context. */
+.bc-team-member .bc-code-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--bc-text-muted, #a99bd1);
+}
+
+.bc-team-member .st-running {
+  background: var(--bc-accent, #6059e6);
+}
+
+.bc-team-member .st-exited {
+  background: var(--bc-danger, #ef4444);
+}
+
+.bc-team-member .st-blocked {
+  background: var(--ansi-yellow, #e8cf7d);
+}
+
+.bc-team-member .st-done {
+  background: var(--ansi-green, #8ee08a);
+}
+
+.bc-team-member-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.bc-team-member-name {
+  font-weight: 600;
+  color: var(--bc-text, #ece7fb);
+}
+
+.bc-team-member-cwd {
+  margin-left: auto;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  color: var(--bc-text-muted, #a99bd1);
+  font-size: 10px;
+}
+
+.bc-team-member-task {
+  color: var(--bc-text-muted, #a99bd1);
+  line-height: 1.45;
+}
+
+.bc-team-member-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+/* A teammate's own work log (self-reported file changes from the hub). */
+.bc-team-made {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--bc-border, #2c2347);
+}
+
+.bc-team-made-summary {
+  color: var(--bc-text-muted, #a99bd1);
+  line-height: 1.45;
+  margin-bottom: 2px;
+}
+
+.bc-team-chip-btn {
+  font: inherit;
+  font-size: 10px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--bc-text-muted, #a99bd1);
+  background: transparent;
+  border: 1px solid var(--bc-border, #2c2347);
+}
+
+.bc-team-chip-btn:hover {
+  color: var(--bc-text, #ece7fb);
+  border-color: var(--bc-accent, #6059e6);
+}
+
+/* --- Chat feed --- */
+
+#bc-team-feed {
+  flex: 1 1 auto;
+  min-height: 90px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 2px;
+}
+
+#bc-team-feed::-webkit-scrollbar {
+  width: 8px;
+}
+
+#bc-team-feed::-webkit-scrollbar-thumb {
+  background: var(--bc-border, #2c2347);
+  border-radius: 4px;
+}
+
+.bc-team-msg {
+  padding: 6px 9px;
+  border-radius: 9px;
+  background: var(--bc-bg-elevated, #1c1630);
+  border: 1px solid var(--bc-border, #2c2347);
+  line-height: 1.45;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.bc-team-msg-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 2px;
+  font-size: 10px;
+  color: var(--bc-text-muted, #a99bd1);
+}
+
+.bc-team-msg-from {
+  font-weight: 700;
+  color: var(--bc-text, #ece7fb);
+}
+
+/* Messages addressed to everyone get an accent left edge; DMs stay neutral. */
+.bc-team-msg[data-broadcast="true"] {
+  border-left: 2px solid var(--bc-accent, #6059e6);
+}
+
+.bc-team-msg[data-from="you"] .bc-team-msg-from {
+  color: var(--bc-accent, #6059e6);
+}
+
+.bc-team-msg[data-kind="review"] .bc-team-msg-from::after,
+.bc-team-msg[data-kind="done"] .bc-team-msg-from::after {
+  content: " · " attr(data-kind);
+  font-weight: 400;
+  color: var(--bc-text-muted, #a99bd1);
+}
+
+/* --- Composer / task forms --- */
+
+#bc-team-compose,
+#bc-team-task-form {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+#bc-team-compose-to {
+  flex: 0 0 auto;
+  max-width: 92px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--bc-text, #ece7fb);
+  background: var(--bc-bg-elevated, #1c1630);
+  border: 1px solid var(--bc-border, #2c2347);
+  border-radius: 7px;
+  padding: 3px 4px;
+}
+
+#bc-team-compose-input,
+#bc-team-task-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--bc-text, #ece7fb);
+  background: var(--bc-bg, #14101f);
+  border: 1px solid var(--bc-border, #2c2347);
+  border-radius: 7px;
+  padding: 5px 8px;
+}
+
+#bc-team-compose-input:focus,
+#bc-team-task-input:focus {
+  outline: none;
+  border-color: var(--bc-accent, #6059e6);
+}
+
+#bc-team-compose button,
+#bc-team-task-form button {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  color: var(--btn-primary-fg, #fff);
+  background: var(--bc-accent, #6059e6);
+  border: none;
+}
+
+#bc-team-compose button:hover,
+#bc-team-task-form button:hover {
+  filter: brightness(1.12);
+}
+
+/* --- Task board --- */
+
+.bc-team-task {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border: 1px solid var(--bc-border, #2c2347);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bc-bg-elevated, #1c1630) 55%, transparent);
+}
+
+.bc-team-task-state {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 1.5px solid var(--bc-text-muted, #a99bd1);
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+.bc-team-task[data-state="doing"] .bc-team-task-state {
+  border-color: var(--bc-accent, #6059e6);
+  background: color-mix(in srgb, var(--bc-accent, #6059e6) 35%, transparent);
+}
+
+.bc-team-task[data-state="done"] .bc-team-task-state {
+  border-color: transparent;
+  background: var(--bc-accent, #6059e6);
+}
+
+.bc-team-task-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--bc-text, #ece7fb);
+}
+
+.bc-team-task[data-state="done"] .bc-team-task-title {
+  text-decoration: line-through;
+  color: var(--bc-text-muted, #a99bd1);
+}
+
+.bc-team-task-assignee {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--bc-text-muted, #a99bd1);
+  border: 1px solid var(--bc-border, #2c2347);
+  border-radius: 999px;
+  padding: 1px 7px;
+  cursor: pointer;
+  background: transparent;
+  font: inherit;
+  font-size: 10px;
+}
+
+.bc-team-task-assignee:hover {
+  border-color: var(--bc-accent, #6059e6);
+  color: var(--bc-text, #ece7fb);
+}
+
+/* --- Made-so-far (git summary) --- */
+
+.bc-team-diff-file {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-family: var(--bc-code-font, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 10.5px;
+  line-height: 1.7;
+}
+
+.bc-team-diff-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--bc-text, #ece7fb);
+}
+
+.bc-team-diff-stats {
+  flex: 0 0 auto;
+  color: var(--bc-text-muted, #a99bd1);
+}
+
+.bc-team-diff-stats .add {
+  color: var(--ansi-green, #8ee08a);
+}
+
+.bc-team-diff-stats .del {
+  color: var(--bc-danger, #ef4444);
+}
+
+.bc-team-diff-branch {
+  font-size: 10px;
+  color: var(--bc-text-muted, #a99bd1);
+  margin-bottom: 2px;
 }
 

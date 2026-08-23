@@ -796,12 +796,13 @@ function pickComposerPlaceholder(composerBg, composerFg, naturalMuted) {
 // four containers above it is a single element mounted INSIDE Anthropic's own
 // nav row rather than as a sibling of the app root. It is still BetterClaude
 // chrome, and leaving it off this list is why it rendered as the one square,
-// unfilled control in a row of rounded ones — the scaffold applied the page's
-// corner-shape preference to it and theme-engine's "every unpainted button is
-// transparent" rule erased its selected fill. Both of those rules carry an
-// 8-id specificity chain, so no amount of !important in ui/title-bar.css could
-// outrank them; being excluded here is the only fix that actually works.
-const OWN_CHROME_IDS = ["betterclaude-titlebar", "betterclaude-settings-panel", "betterclaude-hud", "betterclaude-plugin-dock", "bc-code-tab-pill"];
+// unfilled control in a row of rounded ones.
+// "bc-ide-shell" covers the whole embedded Code workspace window: its
+// controls have their own fixed styling (ui/code-window/ide-workspace.css)
+// that must never follow the page's shape preference — without this entry
+// the scaffold's relational-radius button rule flattened every IDE control
+// to whatever --bc-radius resolved to in that document.
+const OWN_CHROME_IDS = ["betterclaude-titlebar", "betterclaude-settings-panel", "betterclaude-hud", "betterclaude-plugin-dock", "bc-code-tab-pill", "bc-ide-shell"];
 const OWN_CHROME_EXCLUDE = OWN_CHROME_IDS.map((id) => `:not(#${id}):not(#${id} *)`).join("");
 // Scope for "every real element of the actual page". Previously
 // `:where(#__next, #root) *`, which silently matched NOTHING (theme text

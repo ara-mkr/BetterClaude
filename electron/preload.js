@@ -13,46 +13,6 @@
  */
 const { contextBridge, ipcRenderer } = require("electron");
 
-/**
- * Reverse-engineered from the real Claude.app's own preload (its app.asar,
- * inspected on-disk — never anything running on Anthropic's servers): claude.ai
- * decides whether it's inside the official desktop app by checking for
- * window.desktopBootFeatures / window.claudeAppBindings, which that app's
- * preload exposes via contextBridge. BetterClaude exposed neither, so
- * claude.ai treated it as a plain browser tab and hid desktop-only surfaces —
- * concretely, local CLI session history under the Code tab, which the real
- * app gates on desktopBootFeatures.coworkLocalSessionProjects.status ===
- * "supported". This block reproduces just enough of that contract for
- * claude.ai's own check to pass; it does not touch Claude Code's config,
- * credentials, or any Anthropic-server behavior.
- *
- * Best-effort and unofficial: Anthropic can change or remove this contract in
- * any Claude.app update without notice, and this would silently stop
- * unlocking anything (not break — claude.ai already tolerates a browser tab
- * lacking these globals, since that's every non-desktop user).
- */
-const desktopFeaturesArg = process.argv.find((a) => a.startsWith("--desktop-features="));
-if (desktopFeaturesArg) {
-  try {
-    contextBridge.exposeInMainWorld(
-      "desktopBootFeatures",
-      JSON.parse(desktopFeaturesArg.slice("--desktop-features=".length))
-    );
-  } catch {
-    // Malformed flag (shouldn't happen — we control the value in main.js) —
-    // leave window.desktopBootFeatures unset rather than crash the preload.
-  }
-}
-
-contextBridge.exposeInMainWorld("claudeAppBindings", {
-  registerBinding: (channel, listener) => {
-    ipcRenderer.on(channel, listener);
-    return () => ipcRenderer.removeListener(channel, listener);
-  },
-  unregisterBinding: (channel) => ipcRenderer.removeAllListeners(channel),
-  listMcpServers: () => ipcRenderer.invoke("list-mcp-servers"),
-});
-
 const { ThemeEngine, resolveScheduledTheme, ensureStyleTag, restoreClaudeColorMode, applySidebarPositionOffset } = require("../core/theme-engine");
 const { PluginLoader } = require("../core/plugin-loader");
 const { buildExtrasCSS, applyColorBlindSafeVars } = require("../core/extras-css");
@@ -458,14 +418,8 @@ async function bootstrap() {
   // would TDZ-fault — same reason updateBanner and pluginLoader are declared
   // this way further up.
   let codeTab = null;
-  // Set once the title bar mounts (near the end of bootstrap); the state
-  // syncing below runs before that, so this starts null and every updater
-  // checks for it rather than assuming it exists.
+  // Set once the title bar mounts (near the end of bootstrap).
   let titleBarHandle = null;
-  // Mirrors main.js's codeViewShown independent of the pill: the title bar's
-  // own Code button has to work even when codeWindow.tabEnabled is off and
-  // codeTab is null, the same way the tray/menu/accelerator already do.
-  let codeShown = false;
   // Watches for claude.ai's OWN "refresh to update" prompt. Purely
   // observational — see core/claude-reload.js for why detection is not what
   // recovery depends on.
@@ -510,29 +464,47 @@ async function bootstrap() {
   // first, passing its return value through — Claude's own routing is never
   // blocked, cancelled, delayed, or rewritten.
   const routeWatcher = mountRouteWatcher({
-    onRouteChange: () => syncContextualChrome(),
+    onRouteChange: () => {
+      syncContextualChrome();
+      // Route transitions are also what starts and ends the CLI pane's chat
+      // split (core/code-tab.js). The mutation observer catches it eventually,
+      // but this fires exactly once per navigation, so the pane re-halves or
+      // re-widens on the first frame instead of a burst later.
+      if (codeTab) {
+        codeTab.sync();
+        codeTab.publishLayout();
+      }
+    },
   });
   window.addEventListener("pagehide", () => routeWatcher.unmount(), { once: true });
 
-  // --- Embedded Claude Code tab ---
-  // The pane itself is a WebContentsView owned by main.js (see the long note
-  // there for why it is not an iframe). This side owns only the control that
-  // toggles it and the measurement that tells main.js where claude.ai's own
-  // content area currently is, so the pane lands beside the sidebar rather than
-  // on top of it.
+  // --- BetterClaude-owned Code surfaces ---
+  // The IDE is a WebContentsView owned by main.js and replaces only the native
+  // Claude Code content area. The existing CLI pane remains a separate,
+  // optional BetterClaude pill and title-bar action. This side owns the
+  // semantic Home/Code interception and the CLI pane's geometry measurement;
+  // the IDE itself uses the full content area below the shared title bar.
   // Settings -> the CLI pill can be switched off (codeWindow.tabEnabled). Only
-  // the pill is gated: the title bar's own Code button, the tray item, app
-  // menu, Cmd-Shift-K and `--code` keep working either way, so turning this
-  // off declutters Anthropic's nav without taking the terminal away. See
-  // core/settings-schema.js for the reasoning.
+  // the pill is gated: the tray item, app menu, Cmd-Shift-K and `--code` keep
+  // working either way, so turning this off declutters Anthropic's nav without
+  // taking the terminal away. See core/settings-schema.js for the reasoning.
   function syncCodeTabEnabled() {
     const enabled = !(settings.codeWindow && settings.codeWindow.tabEnabled === false);
-    if (enabled && !codeTab) {
+    if (!codeTab) {
       codeTab = mountCodeTab({
+        showPill: enabled,
         titleBarHeight: TITLE_BAR_HEIGHT,
         getSidebarOnRight: () => !!(settings.layout && settings.layout.sidebarPosition === "right"),
         onActivate: () => ipcRenderer.invoke("code-tab:show").catch(() => {}),
         onDeactivate: () => ipcRenderer.invoke("code-tab:hide").catch(() => {}),
+        onNativeCode: () => Promise.all([
+          ipcRenderer.invoke("code-tab:hide").catch(() => {}),
+          ipcRenderer.invoke("ide-tab:show").catch(() => {}),
+        ]),
+        onNativeHome: () => Promise.all([
+          ipcRenderer.invoke("code-tab:hide").catch(() => {}),
+          ipcRenderer.invoke("ide-tab:hide").catch(() => {}),
+        ]),
         onLayout: (rect) => ipcRenderer.send("code-tab:layout", rect),
       });
       // The pane can already be open (tray/menu/accelerator, or a claude.ai
@@ -541,39 +513,59 @@ async function bootstrap() {
       ipcRenderer.invoke("code-tab:get-state").then(({ shown }) => {
         if (codeTab && shown) codeTab.setActive(true);
       }).catch(() => {});
-    } else if (!enabled && codeTab) {
-      // Unmount removes the pill only. Deliberately does NOT hide an open
-      // pane: the user asked for the control to go away, not for their running
-      // terminal session to be closed out from under them.
-      codeTab.unmount();
-      codeTab = null;
+    } else {
+      // Keep the listener alive even when the optional CLI pill is hidden: the
+      // native Claude Code tab still needs to open the BetterClaude IDE.
+      codeTab.setPillVisible(enabled);
     }
   }
   syncCodeTabEnabled();
-  // Something other than the pill can open the pane (tray, menu, the Settings
-  // accelerator, `--code`), so the pill's state follows main.js rather than
-  // main.js following the pill.
+  // Several things other than this page can open or close the pane (tray,
+  // menu, the accelerator, `--code`), so the pill's state follows main.js
+  // rather than main.js following the pill.
+  //
+  // While ANY native pane is composited above this page, claude.ai's own
+  // macOS drag strips (the `draggable` header bands just below our title bar)
+  // sit underneath it — invisible, but still live. Electron resolves
+  // -webkit-app-region at the WINDOW level before any view receives the
+  // event, so those hidden strips swallow clicks aimed at the pane's own
+  // top-left chrome (the IDE's Home / Code / CLI chip). `bc-native-pane-shown`
+  // lets title-bar.css strip app-region from them for exactly as long as a
+  // pane covers them.
+  let codePaneShown = false;
+  let idePaneShown = false;
+  function syncPaneCoverClass() {
+    document.body.classList.toggle("bc-native-pane-shown", codePaneShown || idePaneShown);
+  }
   ipcRenderer.on("code-tab:state", (_e, { shown }) => {
-    codeShown = shown;
+    codePaneShown = !!shown;
+    syncPaneCoverClass();
     if (codeTab && codeTab.isActive() !== shown) codeTab.setActive(shown);
-    if (titleBarHandle) titleBarHandle.setCodeActive(shown);
   });
-  // A claude.ai reload gives this preload a fresh realm with no memory of the
-  // pane, which outlived the reload in its own webContents. Ask main.js what
-  // the truth is rather than assuming the pane is closed — assuming would leave
-  // the pill reading "off" while the terminal is plainly visible.
-  ipcRenderer.invoke("code-tab:get-state").then(({ shown }) => {
-    codeShown = shown;
-    if (codeTab && shown) codeTab.setActive(true);
-    if (titleBarHandle) titleBarHandle.setCodeActive(shown);
-  }).catch(() => {});
+  ipcRenderer.on("ide-tab:state", (_e, { shown }) => {
+    idePaneShown = !!shown;
+    syncPaneCoverClass();
+    if (codeTab && codeTab.isActive() && shown) codeTab.setActive(false);
+  });
+  // Adopt main.js's truth after this page (re)loads with a pane already open.
+  Promise.all([
+    ipcRenderer.invoke("code-tab:get-state").catch(() => ({ shown: false })),
+    ipcRenderer.invoke("ide-tab:get-state").catch(() => ({ shown: false })),
+  ]).then(([codeState, ideState]) => {
+    codePaneShown = !!(codeState && codeState.shown);
+    idePaneShown = !!(ideState && ideState.shown);
+    syncPaneCoverClass();
+  });
 
   // The embedded pane is a native view composited above this page, so it also
   // covers BetterClaude's own overlays. Step it aside while one is open — see
   // core/overlay-occlusion.js for why this is behavioural rather than a list of
   // overlay ids.
   const occlusionGuard = mountOverlayOcclusionGuard({
-    onChange: (blocking) => ipcRenderer.send("code-tab:suspend", blocking),
+    onChange: (blocking) => {
+      ipcRenderer.send("code-tab:suspend", blocking);
+      ipcRenderer.send("ide-tab:suspend", blocking);
+    },
   });
   window.addEventListener("pagehide", () => occlusionGuard.unmount(), { once: true });
 
@@ -625,10 +617,10 @@ async function bootstrap() {
     layoutProbe.checkSoon();
     topStripGuard.checkSoon();
     applySidebarPositionOffset(settings);
-    // Idempotent and cheap: two DOM reads and an early return in the common
-    // case. This is what makes the Code tab self-healing — claude.ai is React,
-    // and a re-render that rebuilds the pill container drops our child, which
-    // would otherwise make the tab vanish mid-session with no error anywhere.
+    // Idempotent and cheap: re-resolves the observed elements (React can swap
+    // them wholesale on a route change) and republishes geometry only when it
+    // actually changed. This is what keeps the embedded pane tracking
+    // claude.ai's layout across soft updates instead of silently drifting.
     if (codeTab) codeTab.sync();
     // An in-page notice arrives as a DOM mutation, which is exactly what this
     // handler already runs on. Deduped internally by signature, so calling it
@@ -932,7 +924,6 @@ async function bootstrap() {
     applyThemeState();
     applyScheduledTheme();
     applyPluginState();
-    syncCodeTabEnabled();
     syncZenModeWithFocusPlugin();
     syncDigestTimer();
     refreshAchievements();
@@ -1593,26 +1584,15 @@ async function bootstrap() {
   const logoSrc = "data:image/png;base64," + fs.readFileSync(path.join(__dirname, "../assets/logo-mark.png")).toString("base64");
 
   titleBarHandle = mountTitleBar({
+    title: "Claude",
     minimize: () => ipcRenderer.invoke("window:minimize"),
     maximizeToggle: () => ipcRenderer.invoke("window:maximize-toggle"),
     close: () => ipcRenderer.invoke("window:close"),
     toggleAlwaysOnTop: () => ipcRenderer.invoke("window:toggle-always-on-top"),
     isAlwaysOnTop: () => ipcRenderer.invoke("window:is-always-on-top"),
     openSettings: () => settingsPanel.toggle(),
-    // Native chrome, always available — unlike the claude.ai-injected CLI
-    // pill (core/code-tab.js), which lives inside Anthropic's own DOM and can
-    // be missed by real pointer clicks when their page re-renders or layers
-    // something over it. This button never has that problem: it's our own
-    // webContents. Deliberately NOT gated on codeWindow.tabEnabled — that
-    // setting's whole point is decluttering Anthropic's nav, not removing the
-    // terminal, and this button isn't in Anthropic's nav.
-    onToggleCode: () => ipcRenderer.invoke(codeShown ? "code-tab:hide" : "code-tab:show").catch(() => {}),
     logoSrc,
   });
-  // codeShown may already be true by the time the title bar mounts (its own
-  // get-state fetch above can resolve first) — reflect that on first paint
-  // instead of waiting for the next state change to correct it.
-  titleBarHandle.setCodeActive(codeShown);
 
   // --- Menu / accelerator bridges from main.js ---
   ipcRenderer.on("betterclaude:toggle-settings", () => settingsPanel.toggle());

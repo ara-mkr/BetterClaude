@@ -7,7 +7,8 @@
  *   onDownload()        -> begin downloading the pending update
  *   onInstall()         -> quit + install the downloaded update
  *   onDismiss(version)  -> remember "Later" for THIS version
- *   onOpenReleases()    -> open the GitHub Releases page (error fallback)
+ *   onOpenReleases()    -> open the GitHub Releases page ("View on GitHub"
+ *                          on an available/downloaded update; error fallback)
  *
  * Deliberately NOT a native dialog: main.js keeps electron-updater silent
  * and broadcasts state instead, and this is the only surface that
@@ -97,10 +98,10 @@ class UpdateBanner {
       title.textContent = `Downloading v${version || ""}`.trim();
       blurb.textContent = `${percent || 0}%`;
     } else {
-      title.textContent = `Update available: v${version}`;
+      title.textContent = `New release available: v${version}`;
       // textContent, never innerHTML — `notes` is a GitHub release body,
       // i.e. text this app does not author.
-      blurb.textContent = notes || "New version available";
+      blurb.textContent = notes || "A new version is ready — restart to update.";
     }
 
     text.appendChild(title);
@@ -122,6 +123,7 @@ class UpdateBanner {
 
     if (state === "available") {
       actions.appendChild(this._button("Download & Install", "bc-update-primary", () => this.onDownload()));
+      actions.appendChild(this._button("View on GitHub", "bc-update-ghost", () => this.onOpenReleases()));
       actions.appendChild(this._button("Later", "bc-update-ghost", () => {
         this.onDismiss(version);
         this.dismissedVersion = version;
@@ -129,6 +131,7 @@ class UpdateBanner {
       }));
     } else if (state === "downloaded") {
       actions.appendChild(this._button("Restart & Install", "bc-update-primary", () => this.onInstall()));
+      actions.appendChild(this._button("View on GitHub", "bc-update-ghost", () => this.onOpenReleases()));
       actions.appendChild(this._button("Later", "bc-update-ghost", () => {
         // A downloaded update applies on the next manual restart anyway, so
         // "Later" here only needs to hide the banner for this session.

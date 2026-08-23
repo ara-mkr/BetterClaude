@@ -98,27 +98,10 @@
   #betterclaude-titlebar .bc-tb-traffic:hover .bc-tb-dot-max::before { content: "\002B"; opacity: 1; }
 }
 
-/* --- Center: logo + title --- */
-#betterclaude-titlebar .bc-tb-center {
+#betterclaude-titlebar .bc-tb-spacer {
   flex: 1;
   height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-width: 0;
   -webkit-app-region: drag;
-}
-
-
-#betterclaude-titlebar .bc-tb-title {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--bc-text-muted, #a99bd1);
-  letter-spacing: 0.01em;
-  -webkit-user-select: none;
-  user-select: none;
-  white-space: nowrap;
 }
 
 /* --- Right: BetterClaude actions (not window controls) --- */
@@ -458,19 +441,15 @@ body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-traffic,
 body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-btn {
   pointer-events: auto !important;
 }
-/* The centred wordmark is decoration with no click target, and in this state
-   it would be the one thing still painted over unknown page content. */
-body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-center {
-  display: none !important;
-}
 
 /* ------------------------------------------------------------------ *
  * BetterClaude's Code tab (core/code-tab.js)
  *
- * One pill mounted next to Anthropic's own Home / Code segmented control. It is
- * BetterClaude's, not theirs: the 2026-08-19 audit established that the native
- * Code tab is a routed Anthropic feature with its own product surface behind
- * it, so we sit beside it instead of taking it over.
+ * One pill mounted next to Anthropic's own Home / Code segmented control —
+ * THE Home/Code/CLI switch for the whole app: claude.ai's own two pills are
+ * left exactly as Anthropic draws them, and ours is styled to disappear into
+ * that row rather than compete with it as a second, chrome-drawn copy of the
+ * same navigation.
  *
  * Everything here is expressed in --bc-* tokens and inherited metrics rather
  * than in copies of Anthropic's numbers. Hardcoding their pill height is the
@@ -547,42 +526,25 @@ body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-center {
   outline-offset: 2px;
 }
 
-/* Active state: a glow, NOT a ring.
-   Measured against Anthropic's own two pills on the live page — both render
-   with border-width 0 and box-shadow none, because their selection is drawn by
-   a separate sliding indicator behind the row. A hard 1px accent border on
-   ours (what this used to be) was therefore the single loudest thing in the
-   whole nav: a bright outlined rectangle sitting next to two borderless pills.
-   The fill plus a soft accent bloom reads as selected at a glance without
-   drawing a box nothing else in the row has.
-   Deliberately NO 1px ring, inset or otherwise. A first pass kept a 22% inset
-   hairline "to define the edge" and it read as exactly the same outlined box
-   at normal zoom — a crisp 1px line is a border to the eye whatever its alpha,
-   which is the entire thing being fixed. Only diffuse blurs here: the inset
-   bloom is the load-bearing half, because it is painted INSIDE the pill and so
-   survives a container that clips overflow, while the two outer blurs are the
-   glow proper when it doesn't. All color-mixed off the live accent, so they
-   follow the theme (and a runtime accent change) rather than pinning a purple. */
+/* Active state: the SAME treatment Anthropic's own row uses for its selected
+   pill — a quiet soft fill, nothing else — and explicitly NOT a filled accent
+   glow or an outlined box.
+   Measured against Anthropic's two pills on the live page: their selection is
+   drawn by a separate sliding indicator (a soft filled segment, no edge), with
+   border-width 0 and box-shadow none on the pills themselves. The earlier
+   inset hairline ring read as a boxed outline — a different, louder control
+   parked next to two quiet ones. There is deliberately NO ring and NO outer
+   glow of any kind: fill only, exactly like their indicator. */
 .bc-code-tab-pill[data-bc-active] {
-  /* color-mix rather than the theme's --nav-item-bg-selected: that token is
-     an 18% accent wash tuned for sidebar rows on the page background, and it
-     is nearly invisible over this row's own translucent group fill. A slightly
-     stronger mix is what makes the pill read as filled-and-lit rather than
-     outlined. */
-  background: color-mix(in srgb, var(--bc-accent, #6c63ff) 30%, transparent) !important;
+  background: color-mix(in srgb, var(--bc-text, #ece7fb) 8%, transparent) !important;
   border-color: transparent;
   color: var(--bc-text, #ece7fb);
-  box-shadow:
-    inset 0 0 12px color-mix(in srgb, var(--bc-accent, #6c63ff) 26%, transparent),
-    0 0 16px color-mix(in srgb, var(--bc-accent, #6c63ff) 38%, transparent),
-    0 0 4px color-mix(in srgb, var(--bc-accent, #6c63ff) 30%, transparent);
 }
 
-/* The brand dot picks up the same bloom while active, so the glow reads as one
-   lit control rather than a lit box with a flat dot in it. */
+/* The brand dot stays lit while active but no longer glows — same rule as the
+   container: read as selected, not as a lamp. */
 .bc-code-tab-pill[data-bc-active]::before {
   opacity: 1;
-  box-shadow: 0 0 7px color-mix(in srgb, var(--bc-accent, #6c63ff) 75%, transparent);
 }
 
 /* While OUR pane owns the content area, Anthropic's segmented control must not
@@ -593,18 +555,40 @@ body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-center {
    Clicking our pill deliberately does not navigate claude.ai, so their
    indicator stays parked under Home or Code and the row reads as two selected
    tabs at once, which is exactly what it looked like.
+   Matched as a DESCENDANT rather than a direct child, with !important: the
+   indicator carries an inline opacity of its own on some builds, and a build
+   that nests the element one level deeper would otherwise keep it lit — which
+   read as the native Code pill permanently filled and selected while our pane
+   was up.
    Hidden with opacity rather than display/visibility so their own slide
    transition is untouched and the indicator fades back the instant the class
    comes off (core/code-tab.js toggles body.bc-code-tab-active in setActive) —
    nothing about their state machine is modified, so their navigation still
-   behaves exactly as it would without us. Two hooks because the class name is
-   Anthropic's own and the audit's rule is to prefer data-* attributes: either
-   one alone is enough to find it.
+   behaves exactly as it would without us.
    pointer-events stays untouched: their pills remain fully clickable, which is
    how the user switches back. */
-body.bc-code-tab-active [data-segmented] > .df-pill-indicator,
-body.bc-code-tab-active [data-segmented] > [data-at] {
-  opacity: 0;
+body.bc-code-tab-active [data-segmented] .df-pill-indicator,
+body.bc-code-tab-active [data-segmented] [data-at] {
+  opacity: 0 !important;
+}
+
+/* While a native pane (the IDE workspace or the CLI terminal) is composited
+   above this page, claude.ai's own macOS window-drag strips sit underneath
+   it: invisible, but still armed. Electron resolves -webkit-app-region at
+   the WINDOW level before any view — including a WebContentsView stacked on
+   top — receives the event, so those hidden bands swallow real clicks. The
+   first band (.df-titlebar, 44px tall starting exactly at our title bar's
+   bottom edge) covers nearly all of the IDE sidebar's Home / Code / CLI
+   chip, which is why only a few-pixel sliver of each button still responded.
+   electron/preload.js toggles body.bc-native-pane-shown for exactly as long
+   as a pane covers these strips; while it is set they are useless as drag
+   handles (they are not even visible), so their app-region goes away.
+   Scoped to claude.ai's own "draggable" word-marked elements and .df-titlebar;
+   BetterClaude's bar keeps its drag regions (bc-tb-* classes) so the window
+   can still be moved by its visible title bar. */
+body.bc-native-pane-shown .df-titlebar,
+body.bc-native-pane-shown [class~="draggable"] {
+  -webkit-app-region: no-drag !important;
 }
 
 /* Fallback position: the adapter could not resolve Anthropic's pill container,

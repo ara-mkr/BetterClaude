@@ -5,6 +5,7 @@ const os = require("os");
 const Store = require("electron-store");
 const AdmZip = require("adm-zip");
 const chokidar = require("chokidar");
+const { spawn } = require("child_process");
 
 // Must be set before app is ready: this is what the app-menu role ("appMenu")
 // and app.getName() (userData folder, About panel, etc.) use — it's the
@@ -25,6 +26,9 @@ const { deriveChannelId, encryptText, decryptText } = require("../core/clipboard
 const analyticsDb = require("./analytics-db");
 const teamSync = require("./team-sync");
 const sessionBundle = require("./session-bundle");
+const ideWorkspace = require("./ide-workspace");
+const openrouter = require("./openrouter");
+const teamHub = require("./team-hub");
 
 // Single source of truth for the repo that backs the update feed and every
 // "view on GitHub" affordance. Must stay in lockstep with package.json's
@@ -760,11 +764,11 @@ ipcMain.handle("buddies:get-thumbnail", (_e, id) => {
 //     copied to the renderer and drawn. Themes/presets change colour and
 //     chrome only, never what the CLI does.
 //
-// Single-session by design, matching how buddyWindow above is handled and what
-// the tray/menu affordance implies: re-launching focuses the existing session
-// instead of silently starting a second `claude` the user can't see. Concurrent
-// sessions would need a tabbed or split UI inside the pane to be usable at all,
-// which is a bigger feature than this one (flagged for review, not assumed).
+// MULTI-SESSION: the pane keeps a REGISTRY of concurrent sessions (the tab
+// strip in ui/code-window/terminal.js is the UI for it). Every `code:*`
+// message in either direction carries the session id, so bytes for one
+// terminal can never land in another. Sessions are independent ptys; closing
+// a tab kills that tab's child and nothing else.
 //
 // WHY A WebContentsView AND NOT A SECOND BrowserWindow (it used to be one), AND
 // NOT AN IFRAME INSIDE claude.ai's PAGE.
@@ -782,14 +786,58 @@ ipcMain.handle("buddies:get-thumbnail", (_e, id) => {
 // `claude` process all survive a reload of the page next to them.
 let codeView = null;
 let codeViewShown = false;
+let ideView = null;
+let ideViewShown = false;
+let ideViewSuspended = false;
+let ideSession = null;
+let ideChatProcess = null;
 // Detached-but-still-open. A WebContentsView composites above the window's web
 // page unconditionally, so it also covers BetterClaude's own in-page overlays —
 // open Settings with the pane showing and the panel renders behind it. The pane
 // therefore steps aside while an overlay is up. This is NOT the same state as
-// `codeViewShown`: the tab is still the tab the user is on, the pill stays
-// active, and the terminal and its child process are untouched.
+// `codeViewShown`: the tab is still the tab the user is on, its in-page active
+// state stays set, and the terminals and their child processes are untouched.
 let codeViewSuspended = false;
-let codeSession = null;
+
+// --- Session registry --------------------------------------------------------
+//
+// id -> { id, session, cwd, args, team } where `team` is null for plain
+// sessions or { hubRoot, hub, memberId, name } for teammates. Insertion order
+// of the Map is the tab order the renderer sees.
+const codeSessions = new Map();
+let codeSessionSeq = 0;
+// Most recently started session — the target for flows that arrive without a
+// session context (e.g. sessionBundle "resume from here").
+let codeLastSessionId = null;
+
+function codeSessionEntry(id) {
+  return typeof id === "string" ? codeSessions.get(id) || null : null;
+}
+
+function disposeCodeSessionEntry(entry) {
+  if (!entry) return;
+  if (entry.session) entry.session.dispose();
+  entry.session = null;
+  codeSessions.delete(entry.id);
+  // Curated teammates get a tombstone so the roster shows they left; an
+  // auto-bound mesh tab just came from "+" on the tab strip, so it is
+  // removed from the roster outright instead of piling up exited entries.
+  if (entry.team) {
+    if (entry.team.auto) teamHub.removeAgentFile(entry.team.hub, entry.team.memberId);
+    else markMemberExited(entry);
+  }
+  rebuildTeamWatchers();
+  broadcastTeamSnapshot();
+}
+
+/** Kills every registered session. Teardown paths only (window close / quit). */
+function disposeCodeSession() {
+  for (const entry of [...codeSessions.values()]) {
+    if (entry.session) entry.session.dispose();
+    entry.session = null;
+  }
+  codeSessions.clear();
+}
 
 // Where the pane sits, in CSS px relative to the window's content area. The
 // renderer measures claude.ai's real sidebar and reports it (`code-tab:layout`)
@@ -799,7 +847,12 @@ let codeSession = null;
 // Seeded to a full-width content area below the title bar: that is what a
 // missing or unresolvable sidebar should fall back to, and it is also correct
 // for the first frame, before the renderer has measured anything.
-let codeViewBounds = { x: 0, y: TITLE_BAR_HEIGHT, width: 0, height: 0 };
+let codeViewBounds = { x: 0, y: TITLE_BAR_HEIGHT, width: 0, height: 0 };// The IDE owns the full Code-tab content area below BetterClaude's global
+// title bar. It is deliberately separate from the existing CLI pane, which
+// still uses claude.ai's content-column geometry. It talks to the installed
+// Claude Code executable directly, so the CLI's own subscription/auth state
+// remains the source of truth.
+let ideViewBounds = { x: 0, y: TITLE_BAR_HEIGHT, width: 0, height: 0 };
 
 // cwd for the FIRST session only, consumed by the `code:ready` handler once the
 // renderer has measured its terminal. Later folder changes go through
@@ -818,6 +871,8 @@ const CODE_DEFAULT_ROWS = 30;
 // immediately resizing (which makes a CLI that paints on startup redraw over
 // itself). Module-scoped now that there is no window object to hang it on.
 let codeLastTerm = { cols: null, rows: null };
+let ideLastTerm = { cols: null, rows: null };
+let idePendingCwd = null;
 
 /**
  * Working directory for a new session, in the order the user would expect:
@@ -839,33 +894,93 @@ function resolveCodeCwd(requested) {
   return os.homedir();
 }
 
-/** Kills the child and drops our handle. Safe to call more than once. */
-function disposeCodeSession() {
-  if (!codeSession) return;
-  codeSession.dispose();
-  codeSession = null;
-}
-
 /**
- * Starts `claude` for an already-open Code window and pipes it to that window.
+ * Starts `claude` for the Code pane and registers it.
+ *
+ * Pass `id` to restart an existing tab in place (same registry slot); omit it
+ * to open a new tab. `team`, when set, spawns the child as a teammate: it gets
+ * the coordination protocol appended to its system prompt and BC_TEAM_* env
+ * vars pointing at the shared hub (see electron/team-hub.js).
+ *
  * Errors are sent to the renderer to be drawn in the terminal area rather than
  * thrown here: a missing CLI is a normal, recoverable, user-facing situation
- * ("install Claude Code first"), not a main-process fault.
+ * ("install Claude Code first"), not a main-process fault. Returns the registry
+ * entry, or null when nothing was started.
  */
-function startCodeSession({ cwd, cols, rows, args = [] }) {
-  disposeCodeSession();
+function startCodeSession({ cwd, cols, rows, args = [], id = null, team = null }) {
   const target = codeView && codeView.webContents;
-  if (!target || target.isDestroyed()) return;
+  if (!target || target.isDestroyed()) return null;
+
+  // Restart-in-place reuses the entry; a fresh launch allocates a new one.
+  let entry = id ? codeSessionEntry(id) : null;
+  if (entry) {
+    if (entry.session) entry.session.dispose();
+  } else {
+    codeSessionSeq += 1;
+    entry = { id: `s${codeSessionSeq}` };
+    codeSessions.set(entry.id, entry);
+  }
+  entry.cwd = cwd;
+  entry.args = args;
+
+  // Session mesh (codeWindow.teamMesh, default on): EVERY session joins its
+  // folder's team hub, so any two CLI tabs can see each other's status, swap
+  // messages, and hand work over — the protocol appendix + BC_TEAM_* env land
+  // on plain sessions exactly as they always have on explicit teammates.
+  // Resume/attach flows pass no `team`, so an existing binding is kept rather
+  // than silently stripped (that wipe was a bug: resuming a teammate tab
+  // used to demote it to a plain session).
+  let autoBound = false;
+  if (!team && !entry.team && store.get("codeWindow.teamMesh") !== false) {
+    try {
+      team = teamBindingFor(cwd);
+      autoBound = true;
+    } catch {
+      // Unwritable project folder — degrade to a plain session.
+    }
+  }
+  entry.team = team || entry.team;
+  // Auto-bound tabs are ephemeral: when their tab closes they are removed
+  // from the roster outright (see disposeCodeSessionEntry) rather than
+  // lingering as "exited" entries the way curated "+ Teammate" members do.
+  if (autoBound && entry.team) entry.team.auto = true;
 
   let binaryPath;
   try {
     binaryPath = locateClaude(store.get("codeWindow.claudePath") || undefined);
   } catch (err) {
     if (err instanceof ClaudeNotFoundError) {
-      target.send("code:fatal", { message: err.message });
-      return;
+      // An auto-created mesh binding must not survive as a phantom roster
+      // entry for a session that never existed.
+      if (autoBound) teamHub.removeAgentFile(entry.team.hub, entry.team.memberId);
+      target.send("code:fatal", { id: entry.id, message: err.message });
+      return null;
     }
     throw err;
+  }
+
+  let spawnArgs = args;
+  let spawnEnv;
+  if (entry.team) {
+    // A mesh member (every session by default) is a normal `claude` plus the
+    // coordination protocol. --append-system-prompt keeps every built-in
+    // behaviour; the appendix only teaches it the hub conventions. --add-dir
+    // lets an agent whose own folder differs from the hub's still read/write
+    // the hub with its ordinary tools. Deliberately driven off the RESOLVED
+    // entry.team rather than the `team` argument: resume/attach flows pass no
+    // team of their own, and a resumed session must keep its protocol and
+    // identity instead of silently degrading to a plain REPL.
+    const extraArgs = [
+      "--append-system-prompt",
+      teamHub.buildTeamPrompt({ hub: entry.team.hub, id: entry.team.memberId, name: entry.team.name }),
+    ];
+    if (!sameDir(cwd, entry.team.hubRoot)) extraArgs.push("--add-dir", entry.team.hubRoot);
+    spawnArgs = [...args, ...extraArgs];
+    spawnEnv = {
+      BC_TEAM_HUB: entry.team.hub,
+      BC_TEAM_ID: entry.team.memberId,
+      BC_TEAM_NAME: entry.team.name,
+    };
   }
 
   try {
@@ -877,40 +992,313 @@ function startCodeSession({ cwd, cols, rows, args = [] }) {
     const finalCols = normalizeDimension(cols, normalizeDimension(codeLastTerm.cols, CODE_DEFAULT_COLS));
     const finalRows = normalizeDimension(rows, normalizeDimension(codeLastTerm.rows, CODE_DEFAULT_ROWS));
 
-    codeSession = new ClaudeSession({
+    entry.session = new ClaudeSession({
       binaryPath,
-      args,
+      args: spawnArgs,
       cwd,
       cols: finalCols,
       rows: finalRows,
+      env: spawnEnv,
     });
   } catch (err) {
     if (err instanceof PtySpawnError) {
-      target.send("code:fatal", { message: `${err.message}\n\n${err.detail}` });
-      return;
+      if (autoBound) teamHub.removeAgentFile(entry.team.hub, entry.team.memberId);
+      target.send("code:fatal", { id: entry.id, message: `${err.message}\n\n${err.detail}` });
+      return null;
     }
     throw err;
   }
 
   store.set("codeWindow.lastCwd", cwd);
+  codeLastSessionId = entry.id;
 
-  const session = codeSession;
+  const session = entry.session;
   session.on("data", (chunk) => {
     // Guarded on every chunk, not just at startup: a pty can emit between the
     // window closing and the child dying, and send() on destroyed webContents
     // throws.
     if (target.isDestroyed()) return;
-    target.send("code:data", chunk);
+    target.send("code:data", { id: entry.id, chunk });
   });
   session.on("exit", ({ exitCode, signal }) => {
-    if (session === codeSession) codeSession = null;
+    if (session === entry.session) entry.session = null;
+    if (entry.team) markMemberExited(entry);
+    broadcastTeamSnapshot();
     if (target.isDestroyed()) return;
-    target.send("code:exit", { exitCode, signal });
+    target.send("code:exit", { id: entry.id, exitCode, signal });
   });
 
   if (!target.isDestroyed()) {
-    target.send("code:started", { cwd, binaryPath, pid: session.pid });
+    target.send("code:started", {
+      id: entry.id,
+      cwd,
+      binaryPath,
+      pid: session.pid,
+      name: entry.team ? entry.team.name : `Session ${entry.id.slice(1)}`,
+      team: !!entry.team,
+    });
   }
+  if (entry.team) {
+    rebuildTeamWatchers();
+    broadcastTeamSnapshot();
+  }
+  return entry;
+}
+
+function sameDir(a, b) {
+  try {
+    return fs.realpathSync(a) === fs.realpathSync(b);
+  } catch {
+    return path.resolve(a) === path.resolve(b);
+  }
+}
+
+// --- Team hub wiring ---------------------------------------------------------
+//
+// One watcher set across every project folder that currently has teammates.
+// Hub file changes are what drive the Team sidebar AND cross-agent message
+// delivery, so the callback does both: refresh the cached snapshot and push it
+// to the pane.
+
+let teamWatcherStop = null;
+const teamHubCache = new Map(); // hubRoot -> { root, hub }
+let deliveredMessageIds = new Set();
+// Per-folder "what changed on disk" summaries (team-hub.gitSummary results),
+// refreshed on demand and included in every snapshot.
+const teamDiffCache = {};
+
+async function refreshTeamDiffs() {
+  const cwds = new Set();
+  for (const entry of codeSessions.values()) {
+    if (entry.team && entry.cwd) cwds.add(entry.cwd);
+  }
+  for (const cwd of cwds) {
+    const summary = await teamHub.gitSummary(cwd);
+    if (summary) {
+      // Drop hub-internal churn from the visible change list.
+      summary.files = summary.files.filter((f) => !f.path.startsWith(teamHub.HUB_DIRNAME + "/"));
+      teamDiffCache[cwd] = { ...summary, refreshedAt: Date.now() };
+    } else {
+      delete teamDiffCache[cwd];
+    }
+  }
+}
+
+function rebuildTeamWatchers() {
+  const roots = new Set();
+  for (const entry of codeSessions.values()) {
+    if (entry.team) roots.add(entry.team.hubRoot);
+  }
+
+  // Forget caches for folders with no teammates left.
+  for (const root of [...teamHubCache.keys()]) {
+    if (!roots.has(root)) teamHubCache.delete(root);
+  }
+  for (const root of roots) {
+    if (!teamHubCache.has(root)) {
+      try {
+        teamHubCache.set(root, { root, hub: teamHub.ensureHub(root) });
+      } catch {
+        // Unwritable project folder — that teammate simply has no hub.
+      }
+    }
+  }
+
+  if (teamWatcherStop) {
+    teamWatcherStop();
+    teamWatcherStop = null;
+  }
+  const hubs = [...teamHubCache.values()].map((c) => c.hub);
+  if (hubs.length) {
+    teamWatcherStop = teamHub.watchHubs(hubs, () => {
+      relayHubMessages();
+      broadcastTeamSnapshot();
+    });
+  }
+}
+
+/** Marks a teammate's roster file so the sidebar shows it has left. */
+function markMemberExited(entry) {
+  try {
+    teamHub.writeAgentFile(entry.team.hub, {
+      id: entry.team.memberId,
+      name: entry.team.name,
+      status: "exited",
+      currentTask: "",
+      cwd: entry.cwd,
+    });
+  } catch {
+    // Best-effort; the live registry is the authority anyway.
+  }
+}
+
+/**
+ * Builds the full Team snapshot the sidebar renders: live sessions first
+ * (they're the source of truth for liveness), then any roster-only members
+ * found in the hubs, plus messages, tasks, work logs, and a per-folder git
+ * summary of what has actually changed on disk.
+ */
+function buildTeamSnapshot() {
+  const members = [];
+  const seen = new Set();
+  for (const entry of codeSessions.values()) {
+    if (!entry.team) continue;
+    seen.add(entry.team.memberId);
+    let agentStatus = null;
+    try {
+      agentStatus = teamHub.readJsonSafe(
+        path.join(entry.team.hub, "agents", `${entry.team.memberId}.json`),
+        null
+      );
+    } catch { /* ignore */ }
+    members.push({
+      id: entry.team.memberId,
+      sessionId: entry.id,
+      name: entry.team.name,
+      cwd: entry.cwd,
+      live: !!entry.session,
+      status: entry.session ? "running" : "exited",
+      currentTask: agentStatus && typeof agentStatus.currentTask === "string" ? agentStatus.currentTask : "",
+      agentStatus: agentStatus && typeof agentStatus.status === "string" ? agentStatus.status : null,
+    });
+  }
+
+  const messages = [];
+  const tasks = [];
+  const changes = {};
+  for (const cache of teamHubCache.values()) {
+    for (const agentFile of teamHub.listMembersFromFiles(cache.hub)) {
+      if (seen.has(agentFile.id)) continue;
+      seen.add(agentFile.id);
+      members.push({
+        id: agentFile.id,
+        sessionId: null,
+        name: agentFile.name || agentFile.id,
+        cwd: typeof agentFile.cwd === "string" ? agentFile.cwd : cache.root,
+        live: false,
+        status: typeof agentFile.status === "string" ? agentFile.status : "unknown",
+        currentTask: typeof agentFile.currentTask === "string" ? agentFile.currentTask : "",
+        agentStatus: null,
+      });
+    }
+    messages.push(...teamHub.listMessages(cache.hub));
+    tasks.push(...teamHub.listTasks(cache.hub));
+    Object.assign(changes, teamHub.listChanges(cache.hub));
+  }
+  messages.sort((a, b) => a.ts - b.ts);
+
+  return {
+    members,
+    messages: messages.slice(-300),
+    tasks,
+    changes,
+    diffs: teamDiffCache,
+  };
+}
+
+function sendTeamSnapshot(payload) {
+  payload = payload || buildTeamSnapshot();
+  if (codeView && !codeView.webContents.isDestroyed()) {
+    codeView.webContents.send("code:team:update", payload);
+  }
+}
+
+let teamDiffTimer = 0;
+
+function broadcastTeamSnapshot() {
+  // Coalesce bursts of hub events into one refresh + one push per short tick.
+  clearTimeout(teamDiffTimer);
+  teamDiffTimer = setTimeout(() => sendTeamSnapshot(), 120);
+}
+
+/**
+ * Delivers an inter-agent (or user-authored) message into a LIVE teammate's
+ * pty. Bracketed-paste wrapping means the receiving CLI treats the whole thing
+ * as one pasted block rather than interpreting its characters as keystrokes,
+ * and the trailing \r submits it — which is exactly how the user themselves
+ * would hand the agent text. This stdin write applies ONLY to sessions that
+ * joined a team (entry.team set); plain sessions never receive synthetic input.
+ */
+function deliverToTeammate(entry, message) {
+  if (!entry || !entry.session || !entry.team) return false;
+  const fromName = message.fromName || message.from;
+  const body = String(message.body || "").slice(0, 4000);
+  const header = message.kind === "task"
+    ? `[BetterClaude team · ${fromName} → you] task update`
+    : `[BetterClaude team · ${fromName} → you]`;
+  const text =
+    `\n\x1b[200~${header}\n${body}\n\x1b[201~\r`;
+  entry.session.write(text);
+  return true;
+}
+
+/**
+ * Reads each watched hub's newest messages and relays any addressed to another
+ * live teammate into that teammate's pty. Each message file is delivered at
+ * most once per app run (deliveredMessageIds), which keeps the direct-send path
+ * (which writes the file AND delivers inline) from double-typing.
+ */
+function relayHubMessages() {
+  for (const cache of teamHubCache.values()) {
+    for (const msg of teamHub.listMessages(cache.hub, 40)) {
+      if (deliveredMessageIds.has(msg.id)) continue;
+      deliveredMessageIds.add(msg.id);
+      if (deliveredMessageIds.size > 2000) deliveredMessageIds = new Set([...deliveredMessageIds].slice(-1000));
+      if (msg.to === "all") {
+        // Broadcast: typed into every OTHER live teammate's pty (the sender
+        // already knows what it said). This is what makes "talking to the
+        // whole team" a real delivery rather than a feed-only note.
+        for (const entry of codeSessions.values()) {
+          if (entry.team && entry.session && entry.team.memberId !== msg.from) {
+            deliverToTeammate(entry, msg);
+          }
+        }
+        continue;
+      }
+      for (const entry of codeSessions.values()) {
+        if (entry.team && entry.team.memberId === msg.to && entry.session) {
+          deliverToTeammate(entry, msg);
+          break;
+        }
+      }
+    }
+  }
+}
+
+function nextMemberName() {
+  const taken = new Set();
+  for (const entry of codeSessions.values()) {
+    if (entry.team) taken.add(entry.team.name);
+  }
+  for (const name of teamHub.MEMBER_NAMES) {
+    if (!taken.has(name)) return name;
+  }
+  return `Agent ${codeSessionSeq + 1}`;
+}
+
+/**
+ * Creates (or reuses) the hub for `cwd` and returns the team binding a new
+ * teammate should be spawned with.
+ */
+function teamBindingFor(cwd) {
+  const root = cwd;
+  let cache = teamHubCache.get(root);
+  if (!cache) {
+    cache = { root, hub: teamHub.ensureHub(root) };
+    teamHubCache.set(root, cache);
+  }
+  const memberId = teamHub.newId("agent");
+  const name = nextMemberName();
+  try {
+    teamHub.writeAgentFile(cache.hub, {
+      id: memberId,
+      name,
+      cwd,
+      status: "working",
+      currentTask: "Joining the team…",
+    });
+  } catch { /* best-effort */ }
+  return { hubRoot: root, hub: cache.hub, memberId, name };
 }
 
 /**
@@ -962,7 +1350,439 @@ function createCodeView() {
   return codeView;
 }
 
-/** Apply the current bounds, clamped to the window so the pane can't overhang. */
+/** Kills the IDE child and drops our handle. */
+function disposeIdeSession() {
+  if (!ideSession) return;
+  ideSession.dispose();
+  ideSession = null;
+}
+
+let ideChatAbort = null;
+
+function disposeIdeChatProcess() {
+  if (ideChatAbort) {
+    try { ideChatAbort.abort(); } catch {}
+    ideChatAbort = null;
+  }
+  if (!ideChatProcess) return;
+  try { ideChatProcess.kill(); } catch {}
+  ideChatProcess = null;
+}
+
+function sendIdeChat(payload) {
+  if (ideView && !ideView.webContents.isDestroyed()) ideView.webContents.send("ide:chat-event", payload);
+}
+
+/**
+ * Settings for the free-model fallback, merged so installs predating the
+ * feature still see every default.
+ */
+function freeModelsConfig() {
+  return mergeDefaults(store.store).codeWindow.freeModels;
+}
+
+/** Claude Code's own phrasing for "you're out of usage" and near-neighbours. */
+const LIMIT_ERROR_RE = /(usage limit|rate.?limit|limit (has been |was )?reached|credit balance|insufficient credits|billing|quota exceeded|overloaded|error (402|429)\b)/i;
+
+/**
+ * Runs one user turn entirely on the free-model chain (electron/openrouter.js).
+ *
+ * This is both the explicit path — the user picked a free model in the picker
+ * — and the automatic one, when auto-failover re-runs a prompt after Claude
+ * hit its usage limit. Events reuse the exact same `ide:chat-event` shapes the
+ * CLI path emits, plus two extras: `model-switch` (which model is answering,
+ * emitted before its first delta) and `done` carrying `modelId`/`modelLabel`
+ * so the renderer can say who wrote the answer.
+ */
+async function startFreeModelChat({ prompt, attachments = [], sessionId = null, projectName = "", preferredModelId = null }) {
+  const target = ideView && ideView.webContents;
+  if (!target || target.isDestroyed()) return false;
+  if (typeof prompt !== "string" || !prompt.trim()) return false;
+
+  const controller = new AbortController();
+  ideChatAbort = controller;
+  const request = controller;
+  sendIdeChat({ type: "start", sessionId });
+  let resolvedSessionId = sessionId;
+
+  try {
+    const config = freeModelsConfig();
+    const { text, modelId, modelLabel } = await openrouter.runFreeChat({
+      prompt,
+      attachments: Array.isArray(attachments) ? attachments : [],
+      projectName,
+      preferredModelId,
+      openRouterKey: config.openRouterKey || "",
+      signal: controller.signal,
+      onEvent: (payload) => {
+        if (!payload) return;
+        if (payload.type === "session") return; // free providers have no CLI session id
+        sendIdeChat(payload);
+      },
+    });
+    if (ideChatAbort === request) ideChatAbort = null;
+    sendIdeChat({ type: "done", modelId, modelLabel, sessionId: resolvedSessionId });
+    return true;
+  } catch (err) {
+    if (ideChatAbort === request) ideChatAbort = null;
+    if ((controller.signal.aborted || err.message === "stopped") && !target.isDestroyed()) {
+      sendIdeChat({ type: "stopped" });
+      return true;
+    }
+    sendIdeChat({ type: "error", message: err.message || "The free models could not be reached." });
+    return false;
+  }
+}
+
+async function startIdeChat({ cwd, prompt, attachments = [], sessionId = null, model = null }) {
+  // A free model picked in the chat's own selector bypasses the CLI entirely.
+  // No Claude credentials are involved: this is exactly the "run out of usage,
+  // keep going on whatever is free" path.
+  if (model && model !== "claude") {
+    await startFreeModelChat({
+      prompt,
+      attachments,
+      sessionId,
+      projectName: path.basename(String(cwd || "")),
+      preferredModelId: model,
+    });
+    return true;
+  }
+
+  disposeIdeChatProcess();
+  const target = ideView && ideView.webContents;
+  if (!target || target.isDestroyed()) return false;
+  if (typeof prompt !== "string" || !prompt.trim()) return false;
+
+  let binaryPath;
+  try {
+    binaryPath = locateClaude(store.get("codeWindow.claudePath") || undefined);
+  } catch (err) {
+    sendIdeChat({ type: "error", message: err.message });
+    return false;
+  }
+
+  let resolvedCwd;
+  try {
+    resolvedCwd = ideWorkspace.realDirectory(cwd);
+  } catch (err) {
+    sendIdeChat({ type: "error", message: err.message || "The selected project folder is unavailable." });
+    return false;
+  }
+
+  const attachmentParts = [];
+  let attachmentBytes = 0;
+  for (const file of Array.isArray(attachments) ? attachments : []) {
+    if (!file || typeof file.path !== "string" || typeof file.content !== "string") continue;
+    const part = `\n\n--- ${file.path} ---\n${file.content}`;
+    const partBytes = Buffer.byteLength(part, "utf8");
+    if (attachmentBytes + partBytes > 512 * 1024) break;
+    attachmentParts.push(part);
+    attachmentBytes += partBytes;
+  }
+  const fullPrompt = `${prompt.trim()}${attachmentParts.join("")}`;
+  const args = [
+    "--print",
+    "--output-format", "stream-json",
+    "--verbose",
+    "--include-partial-messages",
+    "--input-format", "text",
+    "--setting-sources", "project,local",
+    "--strict-mcp-config",
+    "--no-chrome",
+    "--permission-mode", "acceptEdits",
+  ];
+  if (sessionId) args.push("--resume", sessionId);
+  // Pass the project-aware prompt over stdin. `--tools` and `--add-dir` are
+  // variadic CLI options, so using the supported text-input channel avoids
+  // treating the user's prompt as another tool or directory.
+  args.push("--tools", "Read,Glob,Grep,Edit,Write", "--add-dir", resolvedCwd);
+
+  const chatEnv = { ...process.env, TERM: "dumb" };
+  // BetterClaude's Code chat should use the Claude.ai subscription already
+  // authenticated by Claude Code. API-key/provider variables take precedence
+  // over that login, so remove only those overrides from this child process.
+  [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+  ].forEach((key) => delete chatEnv[key]);
+
+  let child;
+  try {
+    child = spawn(binaryPath, args, {
+      cwd: resolvedCwd,
+      env: chatEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch (err) {
+    sendIdeChat({ type: "error", message: err.message });
+    return false;
+  }
+
+  ideChatProcess = child;
+  sendIdeChat({ type: "start", sessionId, modelLabel: "Claude" });
+  const request = child;
+  let stdoutBuffer = "";
+  let assistantText = "";
+  // Every stderr diagnostic the CLI emits during this turn. The usage-limit
+  // detection below reads THIS — never the pty terminal stream — so the
+  // failover decision is based on the CLI's own structured error output.
+  const diagnostics = [];
+  const emitDeltaText = (text) => {
+    if (typeof text !== "string" || !text) return;
+    assistantText += text;
+    sendIdeChat({ type: "delta", text });
+  };
+  const emitCumulativeText = (text) => {
+    if (typeof text !== "string" || !text) return;
+    // Complete assistant/result events contain the whole answer, while
+    // content_block_delta events contain only the next token. Keep the two
+    // paths separate so repeated words are never mistaken for duplicates.
+    if (text.startsWith(assistantText)) {
+      const unseen = text.slice(assistantText.length);
+      assistantText = text;
+      if (unseen) sendIdeChat({ type: "delta", text: unseen });
+      return;
+    }
+    if (assistantText.endsWith(text)) return;
+    assistantText += text;
+    sendIdeChat({ type: "delta", text });
+  };
+  const parseChunk = (chunk) => {
+    stdoutBuffer += String(chunk || "");
+    const lines = stdoutBuffer.split("\n");
+    stdoutBuffer = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const event = JSON.parse(line);
+        const streamEvent = event.event || {};
+        const delta = event.delta || streamEvent.delta || {};
+        let text = "";
+        let cumulative = false;
+        if (typeof delta.text === "string") {
+          text = delta.text;
+        } else if (event.type === "assistant" && event.message && Array.isArray(event.message.content)) {
+          text = event.message.content.filter((part) => part && part.type === "text").map((part) => part.text).join("");
+          cumulative = true;
+        } else if (event.type === "result" && typeof event.result === "string") {
+          text = event.result;
+          cumulative = true;
+        }
+        if (cumulative) emitCumulativeText(text);
+        else emitDeltaText(text);
+        if (event.session_id) sendIdeChat({ type: "session", sessionId: event.session_id });
+        if (event.type === "result") sendIdeChat({ type: "done", sessionId: event.session_id || sessionId || null });
+      } catch {
+        // Stream-json is line-delimited; ignore a partial/non-JSON diagnostic line.
+      }
+    }
+  };
+  child.stdout.on("data", (chunk) => {
+    if (ideChatProcess === request) parseChunk(chunk);
+  });
+  child.stdin.on("error", () => {
+    // The CLI can close stdin while emitting a final result; there is no user
+    // action to take for that stream-level EPIPE.
+  });
+  child.stderr.on("data", (chunk) => {
+    if (ideChatProcess !== request) return;
+    const message = String(chunk || "").trim();
+    if (message) {
+      diagnostics.push(message);
+      sendIdeChat({ type: "diagnostic", message });
+    }
+  });
+  child.on("error", (err) => {
+    if (ideChatProcess !== request) return;
+    ideChatProcess = null;
+    sendIdeChat({ type: "error", message: err.message });
+  });
+  child.on("close", (code, signal) => {
+    if (ideChatProcess !== request) return;
+    ideChatProcess = null;
+    if (stdoutBuffer.trim()) parseChunk("\n");
+    if (code && !assistantText) {
+      // Auto-failover: Claude died before answering anything and its own
+      // diagnostics look like a usage/rate/credit limit. Rather than dumping
+      // an error bubble, re-run the same turn on the free chain when the user
+      // has that enabled — this is the "continue automatically with the next
+      // free provider" behaviour.
+      const diagnosticText = diagnostics.join("\n");
+      if (LIMIT_ERROR_RE.test(diagnosticText)) {
+        const config = freeModelsConfig();
+        if (config.enabled && config.autoFailover) {
+          sendIdeChat({ type: "diagnostic", message: "Claude hit its usage limit — continuing with a free provider" });
+          startFreeModelChat({
+            prompt,
+            attachments,
+            sessionId,
+            projectName: path.basename(resolvedCwd),
+            preferredModelId: config.preferredModelId || null,
+          }).catch(() => {});
+          return;
+        }
+      }
+      sendIdeChat({ type: "error", message: `Claude Code exited with status ${code}${signal ? ` (${signal})` : ""}. Check the session status and try again.` });
+      return;
+    }
+    sendIdeChat({ type: "done", code, signal, sessionId, modelLabel: "Claude" });
+  });
+  // Closing stdin is required for --input-format=text; without it Claude Code
+  // correctly waits for the rest of the user's message forever.
+  child.stdin.end(fullPrompt);
+  return true;
+}
+
+function createIdeView() {
+  ideView = new WebContentsView({
+    webPreferences: {
+      preload: path.join(__dirname, "ide-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      backgroundThrottling: false,
+    },
+  });
+  ideView.setBackgroundColor("#14101f");
+  if (process.env.BC_DEBUG_CONSOLE) {
+    ideView.webContents.on("console-message", (_e, level, message, line, sourceId) => {
+      console.log(`[ide-renderer:${level}] ${message} (${sourceId}:${line})`);
+    });
+    ideView.webContents.on("preload-error", (_e, preloadPath, error) => {
+      console.error(`[ide-preload-error] ${preloadPath}`, error);
+    });
+    ideView.webContents.on("did-finish-load", () => {
+      console.log("[ide-renderer] BetterClaude Code workspace loaded");
+    });
+    ideView.webContents.on("did-fail-load", (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (isMainFrame) console.error(`[ide-renderer-load-error] ${errorCode} ${errorDescription} ${validatedURL}`);
+    });
+  }
+  ideView.webContents.loadFile(path.join(__dirname, "ide-window.html"));
+  ideView.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//.test(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+  return ideView;
+}
+
+function layoutIdeView() {
+  if (!ideView || !mainWindow || mainWindow.isDestroyed()) return;
+  const { width, height } = mainWindow.getContentBounds();
+  const x = Math.max(0, Math.min(ideViewBounds.x, width));
+  const y = Math.max(0, Math.min(Number.isFinite(ideViewBounds.y) ? ideViewBounds.y : TITLE_BAR_HEIGHT, height));
+  const viewWidth = Number.isFinite(ideViewBounds.width) && ideViewBounds.width > 0
+    ? Math.min(ideViewBounds.width, width - x)
+    : width - x;
+  const viewHeight = Number.isFinite(ideViewBounds.height) && ideViewBounds.height > 0
+    ? Math.min(ideViewBounds.height, height - y)
+    : height - y;
+  ideView.setBounds({ x, y, width: Math.max(0, viewWidth), height: Math.max(0, viewHeight) });
+}
+
+function startIdeSession({ cwd, cols, rows, args = [] }) {
+  disposeIdeSession();
+  const target = ideView && ideView.webContents;
+  if (!target || target.isDestroyed()) return false;
+
+  let binaryPath;
+  try {
+    binaryPath = locateClaude(store.get("codeWindow.claudePath") || undefined);
+  } catch (err) {
+    if (err instanceof ClaudeNotFoundError) {
+      target.send("ide:fatal", { message: err.message });
+      return false;
+    }
+    throw err;
+  }
+
+  const normalizeDimension = (value, fallback) => Number.isFinite(value)
+    ? Math.max(1, Math.min(1000, Math.floor(value)))
+    : fallback;
+  const finalCols = normalizeDimension(cols, normalizeDimension(ideLastTerm.cols, CODE_DEFAULT_COLS));
+  const finalRows = normalizeDimension(rows, normalizeDimension(ideLastTerm.rows, CODE_DEFAULT_ROWS));
+
+  try {
+    ideSession = new ClaudeSession({
+      binaryPath,
+      args,
+      cwd,
+      cols: finalCols,
+      rows: finalRows,
+    });
+  } catch (err) {
+    if (err instanceof PtySpawnError) {
+      target.send("ide:fatal", { message: `${err.message}\n\n${err.detail}` });
+      return false;
+    }
+    throw err;
+  }
+
+  store.set("codeWindow.ideLastCwd", cwd);
+  const session = ideSession;
+  session.on("data", (chunk) => {
+    if (!target.isDestroyed()) target.send("ide:data", chunk);
+  });
+  session.on("exit", ({ exitCode, signal }) => {
+    if (session === ideSession) ideSession = null;
+    if (!target.isDestroyed()) target.send("ide:exit", { exitCode, signal });
+  });
+  if (!target.isDestroyed()) target.send("ide:started", { cwd, binaryPath, pid: session.pid });
+  return true;
+}
+
+function setIdeViewShown(shown) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (shown === ideViewShown) return;
+  if (!ideView) createIdeView();
+  if (process.env.BC_DEBUG_CONSOLE) console.log(`[BetterClaude] Code IDE view -> ${shown ? "shown" : "hidden"}`);
+
+  if (shown) {
+    if (codeViewShown) setCodeViewShown(false);
+    if (!ideViewSuspended) {
+      mainWindow.contentView.addChildView(ideView);
+      layoutIdeView();
+      ideView.webContents.focus();
+    }
+  } else {
+    // Settings/overlay occlusion may already have detached the IDE. Electron
+    // throws when asked to remove a child view that is no longer attached.
+    if (!ideViewSuspended) mainWindow.contentView.removeChildView(ideView);
+    ideViewSuspended = false;
+    mainWindow.webContents.focus();
+  }
+  ideViewShown = shown;
+  if (!mainWindow.webContents.isDestroyed()) mainWindow.webContents.send("ide-tab:state", { shown });
+}
+
+function setIdeViewSuspended(suspended) {
+  if (suspended === ideViewSuspended) return;
+  ideViewSuspended = suspended;
+  if (!ideView || !ideViewShown || !mainWindow || mainWindow.isDestroyed()) return;
+  if (suspended) {
+    mainWindow.contentView.removeChildView(ideView);
+    mainWindow.webContents.focus();
+  } else {
+    mainWindow.contentView.addChildView(ideView);
+    layoutIdeView();
+  }
+}
+
+function openIdeView() {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  revealMainWindow();
+  setIdeViewShown(true);
+  if (process.env.BC_DEBUG_CONSOLE) console.log("[BetterClaude] Code IDE view opened");
+  if (!mainWindow.webContents.isDestroyed()) mainWindow.webContents.send("ide-tab:state", { shown: true });
+  return ideView;
+}
+
+/** Apply the current bounds, clamped to the window so the CLI pane can't overhang. */
 function layoutCodeView() {
   if (!codeView || !mainWindow || mainWindow.isDestroyed()) return;
   const { width, height } = mainWindow.getContentBounds();
@@ -1001,13 +1821,15 @@ function setCodeViewShown(shown) {
   if (!codeView) createCodeView();
 
   if (shown) {
+    if (ideViewShown) setIdeViewShown(false);
     if (!codeViewSuspended) {
       mainWindow.contentView.addChildView(codeView);
       layoutCodeView();
       codeView.webContents.focus();
     }
   } else {
-    mainWindow.contentView.removeChildView(codeView);
+    if (!codeViewSuspended) mainWindow.contentView.removeChildView(codeView);
+    codeViewSuspended = false;
     // Focus has to go somewhere deliberate. Left alone it stays with the
     // detached view, and the user's next keystroke lands in a terminal they
     // can no longer see.
@@ -1103,8 +1925,8 @@ function openCodeWindow(requestedCwd) {
   // has measured its real terminal size, so the very first pty is created at
   // the right dimensions instead of being spawned at a guess.
   if (firstRun) codePendingCwd = resolveCodeCwd(requestedCwd);
-  // Keep the in-page pill in step when something other than the pill opened the
-  // pane (menu, tray, accelerator, --code).
+  // Keep the page-side tab state in step when something other than the page
+  // opened the pane (menu, tray, accelerator, --code).
   if (!mainWindow.webContents.isDestroyed()) {
     mainWindow.webContents.send("code-tab:state", { shown: true });
   }
@@ -1116,6 +1938,10 @@ function openCodeWindow(requestedCwd) {
  * openCodeWindow so the plain "Open Claude Code" path never blocks on a dialog.
  * Reads a directory path only — nothing inside it is opened or inspected; it is
  * handed to the pty as its cwd.
+ *
+ * Multi-session: the picked folder applies to the pane's most recent tab when
+ * one exists (same behaviour as the old single-session pane); otherwise it
+ * becomes the first tab's cwd via codePendingCwd.
  */
 async function openCodeWindowInFolder() {
   const result = await dialog.showOpenDialog({
@@ -1134,12 +1960,12 @@ async function openCodeWindowInFolder() {
   // new folder is the honest way to honour the request, and it only ever
   // discards a session the user explicitly redirected.
   if (hadSession) {
-    codeView.webContents.send("code:restarting", { cwd: picked });
-    startCodeSession({
-      cwd: picked,
-      cols: codeLastTerm.cols || CODE_DEFAULT_COLS,
-      rows: codeLastTerm.rows || CODE_DEFAULT_ROWS,
-    });
+    const entry = codeSessions.get(codeLastSessionId) || [...codeSessions.values()].pop();
+    if (entry) {
+      codeView.webContents.send("code:restarting", { id: entry.id, cwd: picked });
+      startCodeSession({ id: entry.id, cwd: picked, cols: codeLastTerm.cols || CODE_DEFAULT_COLS, rows: codeLastTerm.rows || CODE_DEFAULT_ROWS });
+      return codeView;
+    }
   }
   return codeView;
 }
@@ -1159,38 +1985,84 @@ ipcMain.on("code:ready", (e, { cols, rows }) => {
   startCodeSession({ cwd, cols, rows });
 });
 
-// The user's own keystrokes, forwarded verbatim. This is the ONLY path into the
-// child's stdin, and it never synthesises, replays, or rewrites input.
-ipcMain.on("code:input", (e, data) => {
-  if (!codeSession) return;
+// The user's own keystrokes for ONE session, forwarded verbatim. This is the
+// ONLY renderer path into any child's stdin, and it never synthesises, replays,
+// or rewrites input. (Team message delivery writes into teammate ptys from the
+// MAIN process only — see deliverToTeammate — and never via this channel.)
+ipcMain.on("code:input", (e, payload) => {
   if (!isCodeSender(e.sender)) return;
-  if (typeof data !== "string") return;
-  codeSession.write(data);
+  if (!payload || typeof payload.data !== "string") return;
+  const entry = codeSessionEntry(payload.id);
+  if (entry && entry.session) entry.session.write(payload.data);
 });
 
-ipcMain.on("code:resize", (e, { cols, rows }) => {
+ipcMain.on("code:resize", (e, { id, cols, rows }) => {
   if (!isCodeSender(e.sender)) return;
   // Validate incoming dimensions to avoid NaN or non-numeric payloads reaching
   // the pty. Recorded even when there is no live session, so a restart after an
   // exit reuses the size the pane is actually drawn at.
   if (!Number.isFinite(cols) || !Number.isFinite(rows)) return;
   codeLastTerm = { cols, rows };
-  if (codeSession) codeSession.resize(cols, rows);
+  const entry = codeSessionEntry(id);
+  if (entry && entry.session) entry.session.resize(cols, rows);
 });
 
-// Restart after the child exits, so a finished or crashed session doesn't leave
-// a dead pane the user has to close and reopen.
-ipcMain.on("code:restart", (e, { cols, rows }) => {
+// Open a fresh tab. `team` opts the new session into the team protocol.
+ipcMain.handle("code:session:new", (e, opts) => {
+  if (!isCodeSender(e.sender) || !opts) return null;
+  const cols = Number.isFinite(opts.cols) ? opts.cols : codeLastTerm.cols;
+  const rows = Number.isFinite(opts.rows) ? opts.rows : codeLastTerm.rows;
+  let team = null;
+  if (opts.team) {
+    const cwd = resolveCodeCwd(opts.cwd);
+    try {
+      team = teamBindingFor(cwd);
+    } catch {
+      team = null; // unwritable folder: degrade to a plain session
+    }
+    const entry = startCodeSession({ cwd, cols, rows, team });
+    rebuildTeamWatchers();
+    sendTeamSnapshot();
+    return entry ? { id: entry.id, name: entry.team.name } : null;
+  }
+  const cwd = resolveCodeCwd(opts.cwd);
+  const entry = startCodeSession({ cwd, cols, rows });
+  return entry ? { id: entry.id } : null;
+});
+
+// Close one tab's session. Killing the child is the point — a tab is a real
+// process, and "close" that left it running would orphan exactly the thing the
+// old single-session pane guaranteed against.
+ipcMain.on("code:session:close", (e, id) => {
   if (!isCodeSender(e.sender)) return;
-  startCodeSession({ cwd: resolveCodeCwd(), cols, rows });
+  const entry = codeSessionEntry(id);
+  if (!entry) return;
+  disposeCodeSessionEntry(entry);
+});
+
+// Restart after the child exits or on demand, in the SAME tab. A plain restart
+// keeps the plain binding; a teammate restart keeps its team identity.
+ipcMain.handle("code:restart", (e, opts) => {
+  if (!isCodeSender(e.sender) || !opts) return false;
+  const entry = codeSessionEntry(opts.id);
+  if (!entry) return false;
+  startCodeSession({
+    id: entry.id,
+    cwd: resolveCodeCwd(opts.cwd),
+    cols: opts.cols,
+    rows: opts.rows,
+    args: [],
+    team: entry.team,
+  });
+  return true;
 });
 
 // Local CLI transcript metadata is enough to offer a safe resume picker. The
 // transcript itself remains owned by Claude Code; BetterClaude only passes the
 // selected ID back to the already-installed CLI as `claude --resume <id>`.
-ipcMain.handle("code:list-sessions", (e) => {
+ipcMain.handle("code:list-sessions", (e, cwd) => {
   if (!isCodeSender(e.sender)) return [];
-  return sessionBundle.listSessionsForCwd(resolveCodeCwd()).map(({ sessionId, firstTimestamp, lastTimestamp, messageCount }) => ({
+  return sessionBundle.listSessionsForCwd(resolveCodeCwd(cwd)).map(({ sessionId, firstTimestamp, lastTimestamp, messageCount }) => ({
     sessionId,
     firstTimestamp,
     lastTimestamp,
@@ -1198,14 +2070,16 @@ ipcMain.handle("code:list-sessions", (e) => {
   }));
 });
 
-ipcMain.handle("code:resume-session", (e, sessionId, cols, rows) => {
-  if (!isCodeSender(e.sender) || typeof sessionId !== "string") return false;
-  const cwd = resolveCodeCwd();
-  const known = sessionBundle.listSessionsForCwd(cwd).some((session) => session.sessionId === sessionId);
+ipcMain.handle("code:resume-session", (e, opts) => {
+  if (!isCodeSender(e.sender) || !opts || typeof opts.sessionId !== "string") return false;
+  const cwd = resolveCodeCwd(opts.cwd);
+  const known = sessionBundle.listSessionsForCwd(cwd).some((session) => session.sessionId === opts.sessionId);
   if (!known) return false;
+  const entry = codeSessionEntry(opts.id);
+  if (!entry) return false;
   const target = codeView && codeView.webContents;
-  if (target && !target.isDestroyed()) target.send("code:restarting", { cwd });
-  startCodeSession({ cwd, cols, rows, args: ["--resume", sessionId] });
+  if (target && !target.isDestroyed()) target.send("code:restarting", { id: entry.id, cwd });
+  startCodeSession({ id: entry.id, cwd, cols: opts.cols, rows: opts.rows, args: ["--resume", opts.sessionId] });
   return true;
 });
 
@@ -1231,12 +2105,175 @@ ipcMain.handle("code:list-agent-sessions", async (e) => {
 // sessionBundle transcripts — it just came straight from `claude agents
 // --json`, which is its own source of truth, and the session may legitimately
 // live in a different folder than the one this pane is currently running in.
-ipcMain.handle("code:attach-agent-session", (e, sessionId, cwd, cols, rows) => {
-  if (!isCodeSender(e.sender) || typeof sessionId !== "string" || typeof cwd !== "string") return false;
+ipcMain.handle("code:attach-agent-session", (e, opts) => {
+  if (!isCodeSender(e.sender) || !opts || typeof opts.sessionId !== "string" || typeof opts.cwd !== "string") return false;
+  const entry = codeSessionEntry(opts.id);
+  if (!entry) return false;
   const target = codeView && codeView.webContents;
-  if (target && !target.isDestroyed()) target.send("code:restarting", { cwd });
-  startCodeSession({ cwd, cols, rows, args: ["--resume", sessionId] });
+  if (target && !target.isDestroyed()) target.send("code:restarting", { id: entry.id, cwd: opts.cwd });
+  startCodeSession({ id: entry.id, cwd: opts.cwd, cols: opts.cols, rows: opts.rows, args: ["--resume", opts.sessionId] });
   return true;
+});
+
+// --- IPC: Team --------------------------------------------------------------
+
+// Full state for the sidebar. Also opportunistically refreshes the per-folder
+// git summaries so "what has everyone made" is current when the user opens it.
+ipcMain.handle("code:team:snapshot", async (e) => {
+  if (!isCodeSender(e.sender)) return null;
+  await refreshTeamDiffs();
+  const snapshot = buildTeamSnapshot();
+  sendTeamSnapshot(snapshot);
+  return snapshot;
+});
+
+// Spawn a new teammate tab. The teammate shares the requesting session's cwd
+// (or the pane default) and joins that folder's hub.
+ipcMain.handle("code:team:create-teammate", (e, opts) => {
+  if (!isCodeSender(e.sender) || !opts) return null;
+  const source = codeSessionEntry(opts.id);
+  const cwd = resolveCodeCwd(source ? source.cwd : undefined);
+  let team;
+  try {
+    team = teamBindingFor(cwd);
+  } catch {
+    sendTeamSnapshot();
+    return null;
+  }
+  const entry = startCodeSession({ cwd, cols: opts.cols, rows: opts.rows, team });
+  rebuildTeamWatchers();
+  refreshTeamDiffs().then(() => sendTeamSnapshot());
+  if (entry) {
+    // Seed the roster file immediately so the sidebar shows the new member
+    // before the agent has processed its first prompt.
+    try {
+      teamHub.writeAgentFile(team.hub, {
+        id: team.memberId,
+        name: team.name,
+        cwd,
+        status: "working",
+        currentTask: "Joining the team…",
+      });
+    } catch { /* best-effort */ }
+    broadcastTeamSnapshot();
+    return { id: entry.id, memberId: team.memberId, name: team.name };
+  }
+  return null;
+});
+
+// Bring an EXISTING plain session into the team: it gets the protocol typed
+// into its REPL as a pasted block (the same thing a user would paste), plus a
+// hub identity.
+ipcMain.handle("code:team:join", (e, opts) => {
+  if (!isCodeSender(e.sender) || !opts) return null;
+  const entry = codeSessionEntry(opts.id);
+  if (!entry || !entry.session || entry.team) return null;
+  const cwd = entry.cwd;
+  let team;
+  try {
+    team = teamBindingFor(cwd);
+  } catch {
+    return null;
+  }
+  entry.team = team;
+  deliverToTeammate(entry, {
+    from: "BetterClaude",
+    fromName: "BetterClaude",
+    kind: "task",
+    body: teamHub.buildJoinPrompt({ hub: team.hub, id: team.memberId, name: team.name }),
+  });
+  rebuildTeamWatchers();
+  refreshTeamDiffs().then(() => sendTeamSnapshot());
+  broadcastTeamSnapshot();
+  return { id: entry.id, memberId: team.memberId, name: team.name };
+});
+
+// User-authored chat from the sidebar composer. Written to the hub like any
+// agent message AND delivered straight into the target's pty when it's live,
+// so the conversation stays active in both directions. Pre-registering the
+// message id keeps relayHubMessages from typing it twice.
+ipcMain.handle("code:team:send", (e, opts) => {
+  if (!isCodeSender(e.sender) || !opts) return false;
+  const body = typeof opts.body === "string" ? opts.body.trim() : "";
+  if (!body) return false;
+  for (const cache of teamHubCache.values()) {
+    const msg = teamHub.addMessage(cache.hub, {
+      from: "you",
+      to: opts.to === "all" ? "all" : String(opts.to),
+      kind: "chat",
+      body,
+    });
+    if (!msg) continue;
+    deliveredMessageIds.add(msg.id);
+    if (opts.to !== "all") {
+      for (const entry of codeSessions.values()) {
+        if (entry.team && entry.team.memberId === opts.to) {
+          deliverToTeammate(entry, { ...msg, fromName: "you" });
+          break;
+        }
+      }
+    } else {
+      // Broadcast to the whole team: every live teammate gets it typed into
+      // its own terminal, same as an agent broadcast does.
+      for (const entry of codeSessions.values()) {
+        if (entry.team && entry.session) {
+          deliverToTeammate(entry, { ...msg, fromName: "you" });
+        }
+      }
+    }
+  }
+  broadcastTeamSnapshot();
+  return true;
+});
+
+// Task-board mutations from the sidebar. Main is the single writer for UI
+// edits; agents write through their own tools, and the watcher reconciles.
+ipcMain.handle("code:team:add-task", (e, opts) => {
+  if (!isCodeSender(e.sender) || !opts || !String(opts.title || "").trim()) return false;
+  for (const cache of teamHubCache.values()) {
+    const tasks = teamHub.listTasks(cache.hub);
+    tasks.push({
+      id: teamHub.newId("task"),
+      title: String(opts.title).trim(),
+      assignee: null,
+      state: "todo",
+    });
+    teamHub.saveTasks(cache.hub, tasks);
+  }
+  broadcastTeamSnapshot();
+  return true;
+});
+
+ipcMain.handle("code:team:update-task", (e, opts) => {
+  if (!isCodeSender(e.sender) || !opts || typeof opts.taskId !== "string") return false;
+  for (const cache of teamHubCache.values()) {
+    const tasks = teamHub.listTasks(cache.hub);
+    const task = tasks.find((t) => t.id === opts.taskId);
+    if (!task) continue;
+    if ("state" in opts) task.state = String(opts.state);
+    if ("assignee" in opts) task.assignee = opts.assignee == null ? null : String(opts.assignee);
+    teamHub.saveTasks(cache.hub, tasks);
+  }
+  broadcastTeamSnapshot();
+  return true;
+});
+
+// Ask one teammate for a status check-in. Delivered like a message; harmless
+// when they're mid-turn because the CLI queues input.
+ipcMain.handle("code:team:nudge", (e, opts) => {
+  if (!isCodeSender(e.sender) || !opts) return false;
+  for (const entry of codeSessions.values()) {
+    if (entry.team && entry.team.memberId === opts.memberId) {
+      deliverToTeammate(entry, {
+        from: "you",
+        fromName: "you",
+        kind: "chat",
+        body: "Status check-in requested: please update your status file (current task + status) and post a one-line update to the team feed.",
+      });
+      return true;
+    }
+  }
+  return false;
 });
 
 // --- In-window tab plumbing (sender: the claude.ai renderer) ---
@@ -1287,12 +2324,209 @@ ipcMain.on("code-tab:layout", (e, rect) => {
 
 ipcMain.handle("code:pick-folder", () => openCodeWindowInFolder());
 
-// claude.ai's own desktop bridge (window.claudeAppBindings, see preload.js)
-// calls this channel on boot to list connected MCP servers. BetterClaude
-// doesn't manage any, so an empty list is the honest answer — the point of
-// this handler existing at all is just to stop ipcRenderer.invoke from
-// rejecting with "No handler registered", which the page may not expect.
-ipcMain.handle("list-mcp-servers", async () => []);
+// A pure folder dialog for the pane's own "Change folder…" button: unlike
+// code:pick-folder this has no side effects — the renderer gets the path and
+// decides whether it restarts its active tab's session or opens a new one.
+// Reads a directory path only; nothing inside it is opened or inspected.
+ipcMain.handle("code:pick-folder-path", async () => {
+  const result = await dialog.showOpenDialog({
+    title: "Open Claude Code in Folder",
+    defaultPath: resolveCodeCwd(),
+    buttonLabel: "Open",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+  return result.filePaths[0];
+});
+
+function isIdeSender(sender) {
+  return !!(ideView && !ideView.webContents.isDestroyed() && sender === ideView.webContents);
+}
+
+function ideCwd(requested) {
+  return resolveCodeCwd(requested || store.get("codeWindow.ideLastCwd") || store.get("codeWindow.lastCwd"));
+}
+
+function ideRecentCwds() {
+  const configured = store.get("codeWindow.recentCwds", []);
+  return Array.isArray(configured) ? configured.filter((cwd) => typeof cwd === "string") : [];
+}
+
+function rememberIdeCwd(cwd) {
+  const resolved = ideWorkspace.realDirectory(cwd);
+  const next = [resolved, ...ideRecentCwds().filter((entry) => entry !== resolved)].slice(0, 12);
+  store.set("codeWindow.recentCwds", next);
+  store.set("codeWindow.ideLastCwd", resolved);
+  return resolved;
+}
+
+async function listClaudeConversationsFromHome() {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return [];
+  try {
+    const result = await mainWindow.webContents.executeJavaScript(`(() => {
+      const candidates = Array.from(document.querySelectorAll('a[href*="/chat/"], a[href*="/conversation/"], [data-testid*="conversation" i]'));
+      const seen = new Set();
+      return candidates.map((node) => {
+        const anchor = node.closest && node.closest('a[href]');
+        const url = anchor ? anchor.href : "";
+        const title = (node.getAttribute && (node.getAttribute("aria-label") || node.getAttribute("title"))) || node.textContent || "";
+        return { url, title: String(title).replaceAll(String.fromCharCode(10), " ").replaceAll(String.fromCharCode(13), " ").trim().slice(0, 120) };
+      }).filter((item) => {
+        let parsed;
+        try { parsed = new URL(item.url); } catch { return false; }
+        const validPath = parsed.pathname.startsWith("/chat/") || parsed.pathname.startsWith("/conversation/");
+        if (parsed.protocol !== "https:" || parsed.hostname !== "claude.ai" || !validPath || !item.title || seen.has(item.url)) return false;
+        seen.add(item.url);
+        return true;
+      }).slice(0, 50);
+    })()`);
+    return Array.isArray(result) ? result.map((item) => ({ ...item, source: "Claude conversation" })) : [];
+  } catch {
+    return [];
+  }
+}
+
+ipcMain.handle("ide:get-initial-state", async (e) => {
+  if (!isIdeSender(e.sender)) return { projects: [], agents: [], conversations: [], lastProject: null, cliVersion: null };
+  const binaryPath = (() => { try { return locateClaude(store.get("codeWindow.claudePath") || undefined); } catch { return null; } })();
+  const recent = ideRecentCwds();
+  const projects = ideWorkspace.listProjectIndex(recent);
+  const agents = binaryPath ? (await listAgentSessions(binaryPath)).map(({ sessionId, name, cwd, kind, startedAt }) => ({ sessionId, name, cwd, kind, startedAt })) : [];
+  const conversations = await listClaudeConversationsFromHome();
+  const cliVersion = await ideWorkspace.getCliVersion(binaryPath);
+  return { projects, agents, conversations, lastProject: store.get("codeWindow.ideLastCwd") || store.get("codeWindow.lastCwd") || null, cliVersion };
+});
+
+ipcMain.handle("ide:list-projects", (e) => isIdeSender(e.sender) ? ideWorkspace.listProjectIndex(ideRecentCwds()) : []);
+ipcMain.handle("ide:list-files", (e, cwd) => isIdeSender(e.sender) ? ideWorkspace.listProjectTree(rememberIdeCwd(cwd)) : { root: null, nodes: [], count: 0 });
+ipcMain.handle("ide:search-files", (e, cwd, query) => isIdeSender(e.sender) ? ideWorkspace.searchProjectFiles(rememberIdeCwd(cwd), query) : []);
+ipcMain.handle("ide:pick-files", async (e, cwd) => {
+  if (!isIdeSender(e.sender)) return [];
+  const resolved = rememberIdeCwd(cwd);
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Attach project files to Claude",
+    defaultPath: resolved,
+    buttonLabel: "Attach",
+    properties: ["openFile", "multiSelections"],
+  });
+  if (result.canceled || !result.filePaths.length) return [];
+  const relativePaths = result.filePaths.map((filePath) => {
+    const relative = path.relative(resolved, filePath).split(path.sep).join("/");
+    if (!relative || relative.startsWith("..")) throw new Error("Attachments must stay inside the selected project.");
+    return relative;
+  });
+  return ideWorkspace.readProjectFiles(resolved, relativePaths).map(({ path: relativePath, content, binary, size }) => ({ path: relativePath, content, binary, size }));
+});
+ipcMain.handle("ide:git-info", async (e, cwd) => isIdeSender(e.sender) ? ideWorkspace.getGitInfo(rememberIdeCwd(cwd)) : { isRepo: false, branch: null, changedFiles: 0, statusLines: [], diffStat: "" });
+ipcMain.handle("ide:chat", (e, payload = {}) => {
+  if (!isIdeSender(e.sender) || !payload || typeof payload.cwd !== "string") return false;
+  return startIdeChat({
+    cwd: rememberIdeCwd(payload.cwd),
+    prompt: payload.prompt,
+    attachments: Array.isArray(payload.attachments) ? payload.attachments.filter((file) => file && typeof file.path === "string" && typeof file.content === "string").slice(0, 12) : [],
+    sessionId: typeof payload.sessionId === "string" ? payload.sessionId : null,
+    // "claude" (or null) = subscription CLI; anything else is a free-model id
+    // from the picker ("stealth/ox-alpha", "keyless:pollinations-openai", ...).
+    model: typeof payload.model === "string" && payload.model !== "claude" ? payload.model : null,
+  });
+});
+ipcMain.handle("ide:chat-stop", (e) => {
+  if (!isIdeSender(e.sender)) return false;
+  disposeIdeChatProcess();
+  sendIdeChat({ type: "stopped" });
+  return true;
+});
+ipcMain.handle("ide:git-diff", async (e, cwd) => isIdeSender(e.sender) ? ideWorkspace.getGitDiff(rememberIdeCwd(cwd)) : { isRepo: false, diff: "" });
+ipcMain.handle("ide:list-sessions", (e, cwd) => {
+  if (!isIdeSender(e.sender)) return [];
+  const resolved = rememberIdeCwd(cwd);
+  return sessionBundle.listSessionsForCwd(resolved).map(({ sessionId, firstTimestamp, lastTimestamp, messageCount }) => ({ sessionId, firstTimestamp, lastTimestamp, messageCount }));
+});
+ipcMain.handle("ide:read-file", (e, cwd, relativePath) => isIdeSender(e.sender) ? ideWorkspace.readProjectFile(rememberIdeCwd(cwd), relativePath) : { binary: false, content: "" });
+ipcMain.handle("ide:write-file", (e, cwd, relativePath, content, expectedMtimeMs) => isIdeSender(e.sender) ? ideWorkspace.writeProjectFile(rememberIdeCwd(cwd), relativePath, content, expectedMtimeMs) : { ok: false, conflict: true });
+ipcMain.handle("ide:set-last-project", (e, cwd) => isIdeSender(e.sender) ? rememberIdeCwd(cwd) : null);
+ipcMain.handle("ide:pick-folder", async (e) => {
+  if (!isIdeSender(e.sender)) return null;
+  const result = await dialog.showOpenDialog(mainWindow, { title: "Choose Code project folder", defaultPath: ideCwd(), buttonLabel: "Open", properties: ["openDirectory", "createDirectory"] });
+  if (result.canceled || !result.filePaths.length) return null;
+  const cwd = rememberIdeCwd(result.filePaths[0]);
+  if (ideView && !ideView.webContents.isDestroyed()) ideView.webContents.send("ide:project-picked", { cwd });
+  return cwd;
+});
+ipcMain.handle("ide:start-session", (e, cwd, cols, rows) => {
+  if (!isIdeSender(e.sender)) return false;
+  return startIdeSession({ cwd: rememberIdeCwd(cwd), cols, rows });
+});
+ipcMain.handle("ide:resume-session", (e, cwd, sessionId, cols, rows) => {
+  if (!isIdeSender(e.sender) || typeof sessionId !== "string") return false;
+  const resolved = rememberIdeCwd(cwd);
+  const known = sessionBundle.listSessionsForCwd(resolved).some((session) => session.sessionId === sessionId);
+  if (!known) return false;
+  if (ideView && !ideView.webContents.isDestroyed()) ideView.webContents.send("ide:restarting", { cwd: resolved });
+  return startIdeSession({ cwd: resolved, cols, rows, args: ["--resume", sessionId] });
+});
+ipcMain.handle("ide:attach-agent-session", (e, sessionId, cwd, cols, rows) => {
+  if (!isIdeSender(e.sender) || typeof sessionId !== "string" || typeof cwd !== "string") return false;
+  const resolved = rememberIdeCwd(cwd);
+  if (ideView && !ideView.webContents.isDestroyed()) ideView.webContents.send("ide:restarting", { cwd: resolved });
+  return startIdeSession({ cwd: resolved, cols, rows, args: ["--resume", sessionId] });
+});
+ipcMain.handle("ide:list-agents", async (e) => {
+  if (!isIdeSender(e.sender)) return [];
+  try {
+    const binaryPath = locateClaude(store.get("codeWindow.claudePath") || undefined);
+    return (await listAgentSessions(binaryPath)).map(({ sessionId, name, cwd, kind, startedAt }) => ({ sessionId, name, cwd, kind, startedAt }));
+  } catch { return []; }
+});
+ipcMain.handle("ide:list-conversations", async (e) => isIdeSender(e.sender) ? listClaudeConversationsFromHome() : []);
+ipcMain.handle("ide:list-extensions", (e) => isIdeSender(e.sender) ? ideWorkspace.listInstalledExtensions() : []);
+ipcMain.handle("ide:search-extensions", (e, query, opts) => isIdeSender(e.sender) ? ideWorkspace.searchRegistryExtensions(query, opts || {}) : []);
+ipcMain.handle("ide:install-extension", async (e, id) => {
+  if (!isIdeSender(e.sender)) return { ok: false };
+  const result = await ideWorkspace.installExtension({ id });
+  return result;
+});
+ipcMain.handle("ide:uninstall-extension", (e, id) => isIdeSender(e.sender) ? ideWorkspace.uninstallExtension(id) : { ok: false });
+ipcMain.handle("ide:list-free-models", async (e) => {
+  if (!isIdeSender(e.sender)) return [];
+  try {
+    return await openrouter.listPickableModels();
+  } catch {
+    return [];
+  }
+});
+ipcMain.handle("ide:open-home", (e, url) => {
+  if (!isIdeSender(e.sender)) return false;
+  const target = typeof url === "string" && /^https:\/\/claude\.ai\/(chat|conversation)\//.test(url) ? url : "https://claude.ai";
+  setIdeViewShown(false);
+  setCodeViewShown(false);
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.loadURL(target);
+  return true;
+});
+ipcMain.handle("ide:open-cli", (e) => {
+  if (!isIdeSender(e.sender)) return false;
+  setIdeViewShown(false);
+  openCodeWindow();
+  return true;
+});
+// The IDE's gear opens CLAUDE's own settings page, not BetterClaude's panel
+// (that lives on the main window's title bar). Hiding the IDE first and
+// loading /settings directly means the user lands straight on the settings
+// surface — no chat composer in between.
+ipcMain.handle("ide:open-claude-settings", (e) => {
+  if (!isIdeSender(e.sender)) return false;
+  setIdeViewShown(false);
+  setCodeViewShown(false);
+  if (mainWindow && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.loadURL("https://claude.ai/settings");
+  return true;
+});
+ipcMain.on("ide:input", (e, data) => { if (isIdeSender(e.sender) && ideSession && typeof data === "string") ideSession.write(data); });
+ipcMain.on("ide:resize", (e, { cols, rows }) => { if (!isIdeSender(e.sender) || !Number.isFinite(cols) || !Number.isFinite(rows)) return; ideLastTerm = { cols, rows }; if (ideSession) ideSession.resize(cols, rows); });ipcMain.on("ide:settings-applied", (e) => { if (isIdeSender(e.sender)) {} });
+
+ipcMain.handle("ide-tab:show", (e) => { if (!isMainSender(e.sender)) return false; openIdeView(); return true; });
+ipcMain.handle("ide-tab:hide", (e) => { if (!isMainSender(e.sender)) return false; setIdeViewShown(false); return true; });
+ipcMain.handle("ide-tab:get-state", (e) => isMainSender(e.sender) ? { shown: ideViewShown } : { shown: false });
+ipcMain.on("ide-tab:suspend", (e, suspended) => { if (isMainSender(e.sender)) setIdeViewSuspended(!!suspended); });
 
 // Window controls the Code pane may ask for.
 //
@@ -1367,7 +2601,13 @@ function attachClaudeReloadRecovery(win) {
       win.contentView.addChildView(codeView);
       layoutCodeView();
     }
+    if (ideViewShown && ideView && !ideViewSuspended) {
+      win.contentView.removeChildView(ideView);
+      win.contentView.addChildView(ideView);
+      layoutIdeView();
+    }
     wc.send("code-tab:state", { shown: codeViewShown });
+    wc.send("ide-tab:state", { shown: ideViewShown });
     wc.send("betterclaude:reinject", { reason });
   };
 
@@ -1410,17 +2650,7 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false,
       partition: "persist:betterclaude",
-      // claude.ai's own frontend decides "is this the real desktop app" by
-      // checking window.desktopBootFeatures, which the official Claude.app
-      // populates from this exact --desktop-features= argv flag (reverse
-      // engineered from its app.asar — see preload.js for the matching
-      // parse side). Without it, claude.ai treats BetterClaude as a plain
-      // browser tab and hides desktop-only surfaces like local CLI session
-      // history under the Code tab. Only the one flag we actually need is
-      // set; unset flags just read as unsupported, same as before this.
-      additionalArguments: [
-        `--desktop-features=${JSON.stringify({ coworkLocalSessionProjects: { status: "supported" } })}`,
-      ],
+
     },
   });
 
@@ -1437,6 +2667,7 @@ function createWindow() {
   splashWindow = createSplashWindow();
   mainWindow.webContents.once("did-finish-load", closeSplashWindow);
   mainWindow.webContents.once("did-fail-load", closeSplashWindow);
+
   mainWindow.loadURL("https://claude.ai");
 
   if (process.env.BC_DEBUG_CONSOLE) {
@@ -1468,25 +2699,38 @@ function createWindow() {
     // Acceptance criterion inherited from the standalone window: closing must
     // leave no orphaned `claude`.
     disposeCodeSession();
+    rebuildTeamWatchers();
+    disposeIdeSession();
+    disposeIdeChatProcess();
     codeView = null;
     codeViewShown = false;
+    ideView = null;
+    ideViewShown = false;
   });
 
   // Same guarantee one beat earlier. "closed" is too late to be the only hook
   // on Windows/Linux, where the app may quit immediately after — kill the child
   // as the window starts closing and again once it is gone.
   mainWindow.on("close", () => {
-    if (isQuitting || process.platform !== "darwin") disposeCodeSession();
+    if (isQuitting || process.platform !== "darwin") {
+      disposeCodeSession();
+      rebuildTeamWatchers();
+      disposeIdeSession();
+      disposeIdeChatProcess();
+    }
   });
 
   // The pane is positioned in window coordinates, so it has to follow the
   // window. `resize` covers drags and maximise; `enter-full-screen` and its
   // partner fire without a resize event on macOS, where the window keeps its
   // size and only the content bounds change.
-  const relayoutCodeView = () => { if (codeViewShown) layoutCodeView(); };
-  mainWindow.on("resize", relayoutCodeView);
-  mainWindow.on("enter-full-screen", relayoutCodeView);
-  mainWindow.on("leave-full-screen", relayoutCodeView);
+  const relayoutViews = () => {
+    if (codeViewShown) layoutCodeView();
+    if (ideViewShown) layoutIdeView();
+  };
+  mainWindow.on("resize", relayoutViews);
+  mainWindow.on("enter-full-screen", relayoutViews);
+  mainWindow.on("leave-full-screen", relayoutViews);
 
   // Keep normal claude.ai link-clicking behavior (open externally for
   // non-claude.ai targets) instead of hijacking navigation.
@@ -1663,13 +2907,35 @@ ipcMain.handle("settings:set", (_e, keyPath, value) => {
   // would be a no-op anyway, but the guard keeps intent obvious.
   if (keyPath.startsWith("buddies.") && keyPath !== "buddies.position") syncBuddyWindow();
   const updated = mergeDefaults(store.store);
-  BrowserWindow.getAllWindows().forEach((w) => w.webContents.send("betterclaude:settings-changed", updated));
+  broadcastSettingsUpdated(updated);
   return updated;
 });
 
+/**
+ * One settings broadcast, everywhere it has to reach.
+ *
+ * BrowserWindow.getAllWindows() covers standalone windows only — the embedded
+ * Code pane and IDE workspace are WebContentsViews attached to the main
+ * window, and their webContents are separate from the window's own. Without
+ * forwarding to them explicitly, a theme or setting changed in the main window
+ * never reached the Code surfaces until they were reopened: the panes kept the
+ * previous theme's stylesheet (and every --bc-* value derived from it), which
+ * is why switching themes left them looking like the old default.
+ */
+function broadcastSettingsUpdated(updated) {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send("betterclaude:settings-changed", updated);
+  }
+  for (const view of [codeView, ideView]) {
+    if (view && view.webContents && !view.webContents.isDestroyed()) {
+      view.webContents.send("betterclaude:settings-changed", updated);
+    }
+  }
+}
+
 function broadcastSettings() {
   const updated = mergeDefaults(store.store);
-  BrowserWindow.getAllWindows().forEach((w) => w.webContents.send("betterclaude:settings-changed", updated));
+  broadcastSettingsUpdated(updated);
   return updated;
 }
 
@@ -1833,7 +3099,7 @@ ipcMain.handle("settings:import", async () => {
   store.set(merged);
   registerAllShortcuts();
   const updated = mergeDefaults(store.store);
-  BrowserWindow.getAllWindows().forEach((w) => w.webContents.send("betterclaude:settings-changed", updated));
+  broadcastSettingsUpdated(updated);
   return updated;
 });
 
@@ -1933,7 +3199,7 @@ ipcMain.handle("profiles:apply", (_e, id) => {
   store.set(merged);
   registerAllShortcuts();
   const updated = mergeDefaults(store.store);
-  BrowserWindow.getAllWindows().forEach((w) => w.webContents.send("betterclaude:settings-changed", updated));
+  broadcastSettingsUpdated(updated);
   return updated;
 });
 
@@ -2144,13 +3410,17 @@ ipcMain.handle("sessionBundle:pick-folder", async () => {
  * of this file), then writes the resume context as if the user had typed it.
  * The extra delay after that first chunk gives the CLI's own startup screen
  * time to finish painting before anything is typed into it.
+ *
+ * Multi-session: targets the most recently started tab (the one this flow just
+ * restarted, when it did).
  */
 function scheduleResumeInjection(text) {
   const attempt = () => {
-    if (!codeSession) return false;
-    codeSession.once("data", () => {
+    const entry = codeSessions.get(codeLastSessionId);
+    if (!entry || !entry.session) return false;
+    entry.session.once("data", () => {
       setTimeout(() => {
-        if (codeSession) codeSession.write(text);
+        if (entry.session) entry.session.write(text);
       }, 1500);
     });
     return true;
@@ -2177,12 +3447,16 @@ ipcMain.handle("sessionBundle:resume", async (_e, { bundlePath, sessionId, targe
   const hadSession = !!codeView;
   openCodeWindow(cwd);
   if (hadSession) {
-    codeView.webContents.send("code:restarting", { cwd });
-    startCodeSession({
-      cwd,
-      cols: codeLastTerm.cols || CODE_DEFAULT_COLS,
-      rows: codeLastTerm.rows || CODE_DEFAULT_ROWS,
-    });
+    const entry = codeSessions.get(codeLastSessionId) || [...codeSessions.values()].pop();
+    if (entry) {
+      codeView.webContents.send("code:restarting", { id: entry.id, cwd });
+      startCodeSession({
+        id: entry.id,
+        cwd,
+        cols: codeLastTerm.cols || CODE_DEFAULT_COLS,
+        rows: codeLastTerm.rows || CODE_DEFAULT_ROWS,
+      });
+    }
   }
   scheduleResumeInjection(prompt);
   return { ok: true, cwd };
@@ -2209,7 +3483,7 @@ ipcMain.handle("sessionBundle:open-panel", () => {
 // claude.ai's own Settings -> Capabilities UI.
 function broadcastSettings() {
   const updated = mergeDefaults(store.store);
-  BrowserWindow.getAllWindows().forEach((w) => w.webContents.send("betterclaude:settings-changed", updated));
+  broadcastSettingsUpdated(updated);
   return updated;
 }
 
@@ -2720,6 +3994,9 @@ app.whenReady().then(() => {
   if (process.argv.includes("--code")) {
     mainWindow.once("ready-to-show", () => openCodeWindow());
   }
+  if (process.argv.includes("--ide")) {
+    mainWindow.once("ready-to-show", () => openIdeView());
+  }
   if (isDev) startDevAutoReload();
   buildTray();
   buildAppMenu();
@@ -2788,6 +4065,9 @@ app.on("before-quit", () => {
 });
 
 app.on("will-quit", () => {
+  disposeCodeSession();
+  disposeIdeSession();
+  disposeIdeChatProcess();
   destroyBuddyWindow();
   globalShortcut.unregisterAll();
   fileWatchers.forEach((w) => w.close());

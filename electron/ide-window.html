@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'"
+    />
+    <title>BetterClaude Code</title>
+    <link rel="stylesheet" href="../build/xterm.bundle.css" />
+  </head>
+  <body>
+    <div id="bc-ide-shell" data-source="local" data-state="starting" data-activity="explorer">
+      <div class="bc-ide-layout">
+        <aside class="bc-ide-activitybar" aria-label="Code tools">
+          <button class="bc-ide-activity-btn active" data-activity="explorer" type="button" title="Explorer" aria-label="Explorer" aria-pressed="true"><span data-bc-icon="FOLDER"></span></button>
+          <button class="bc-ide-activity-btn" data-activity="source" type="button" title="Source control" aria-label="Source control" aria-pressed="false"><span data-bc-icon="GIT_BRANCH"></span></button>
+          <button class="bc-ide-activity-btn" data-activity="extensions" type="button" title="Extensions" aria-label="Extensions" aria-pressed="false"><span data-bc-icon="EXTENSIONS"></span></button>
+          <span class="bc-ide-activity-spacer"></span>
+          <button class="bc-ide-activity-btn" data-activity="claude" type="button" title="Claude assistant" aria-label="Toggle Claude assistant" aria-pressed="false"><span data-bc-icon="CHAT_BOX"></span></button>
+          <button class="bc-ide-activity-btn" data-activity="settings" type="button" title="Claude settings" aria-label="Open Claude settings" aria-pressed="false"><span data-bc-icon="SETTINGS_GEAR"></span></button>
+        </aside>
+
+        <aside class="bc-ide-sidebar" aria-label="Code workspace sidebar">
+          <!-- The full BetterClaude view switcher. The IDE pane covers
+             claude.ai's own Home / Code / CLI row, so this is the way between
+             all three surfaces while the Code tab is up — not just a way back
+             to Home. -->
+          <div class="bc-ide-viewchip" role="group" aria-label="BetterClaude views">
+            <button id="bc-ide-view-home" type="button" title="Back to Claude Home"><span data-bc-icon="HOME"></span>Home</button>
+            <button id="bc-ide-view-code" type="button" aria-pressed="true" title="Code workspace"><span data-bc-icon="CODE"></span>Code</button>
+            <button id="bc-ide-view-cli" type="button" title="Switch to the CLI terminal pane"><span data-bc-icon="TERMINAL"></span>CLI</button>
+          </div>
+          <div class="bc-ide-sidebar-head">
+            <div class="bc-ide-eyebrow">Workspace</div>
+            <div class="bc-ide-sidebar-title">
+              <span id="bc-ide-sidebar-heading">Explorer</span>
+              <span class="bc-ide-sidebar-title-actions">
+                <button id="bc-ide-sidebar-refresh" class="bc-ide-icon-btn" type="button" title="Refresh workspace" aria-label="Refresh workspace"><span data-bc-icon="REFRESH"></span></button>
+                <button id="bc-ide-new" class="bc-ide-icon-btn" type="button" title="Start a new Claude Code session" aria-label="Start a new Claude Code session"><span data-bc-icon="PLUS"></span></button>
+              </span>
+            </div>
+            <div class="bc-ide-segmented" role="group" aria-label="Session source">
+              <button id="bc-ide-local" type="button" aria-pressed="true">Local</button>
+              <button id="bc-ide-cloud" type="button" aria-pressed="false">Cloud</button>
+            </div>
+          </div>
+
+          <div id="bc-ide-local-sidebar" class="bc-ide-sidebar-scroll">
+            <div id="bc-ide-explorer-panel">
+              <section class="bc-ide-side-section">
+                <div class="bc-ide-section-label"><span>Projects</span><button id="bc-ide-add-project" type="button" title="Add project folder" aria-label="Add project folder"><span data-bc-icon="PLUS"></span></button></div>
+                <div id="bc-ide-project-list"></div>
+              </section>
+              <section class="bc-ide-side-section">
+                <div class="bc-ide-section-label"><span>Local sessions</span><span id="bc-ide-session-count">0</span></div>
+                <div id="bc-ide-session-list"></div>
+              </section>
+            </div>
+            <section id="bc-ide-source-panel" class="bc-ide-tool-panel" hidden>
+              <div class="bc-ide-tool-title"><span>Changes</span><button id="bc-ide-source-refresh" class="bc-ide-icon-btn" type="button" title="Refresh source control" aria-label="Refresh source control"><span data-bc-icon="REFRESH"></span></button></div>
+              <div id="bc-ide-source-summary" class="bc-ide-source-summary">Select a project to inspect Git changes.</div>
+              <button id="bc-ide-source-diff" class="bc-ide-command" type="button">Open diff</button>
+            </section>
+            <section id="bc-ide-extensions-panel" class="bc-ide-tool-panel" hidden>
+              <div class="bc-ide-tool-title"><span>Extensions</span><span id="bc-ide-extension-count" class="bc-ide-muted-count">0</span></div>
+              <div id="bc-ide-extension-tabs" class="bc-ide-segmented bc-ide-ext-tabs" role="group" aria-label="Extension source">
+                <button id="bc-ide-ext-tab-installed" type="button" aria-pressed="true">Installed</button>
+                <button id="bc-ide-ext-tab-browse" type="button" aria-pressed="false">Browse</button>
+              </div>
+              <!-- Browse searches the Open VSX registry live (the same catalog
+                   VS Code-family editors use); an empty box shows a built-in
+                   curated list, so there is something here before any network
+                   call. -->
+              <input id="bc-ide-extension-search" class="bc-ide-ext-search" type="search" placeholder="Search extensions…" aria-label="Search extensions" hidden />
+              <div id="bc-ide-extension-status" class="bc-ide-ext-status" hidden></div>
+              <div id="bc-ide-extension-list"><div class="bc-ide-empty-row">Loading installed extensions…</div></div>
+            </section>
+          </div>
+
+          <div id="bc-ide-cloud-sidebar" class="bc-ide-sidebar-scroll" hidden>
+            <section class="bc-ide-side-section">
+              <div class="bc-ide-section-label"><span>Claude Code agents</span><span id="bc-ide-agent-count">0</span></div>
+              <div id="bc-ide-agent-list"></div>
+            </section>
+          </div>
+          <div class="bc-ide-sidebar-foot"><strong>Claude Code</strong><span id="bc-ide-sidebar-status">&middot; local workspace</span></div>
+        </aside>
+        <div id="bc-ide-sidebar-resize" class="bc-ide-resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" tabindex="0"></div>
+
+        <main class="bc-ide-main">
+          <section id="bc-ide-local-main" class="bc-ide-local-main">
+            <header class="bc-ide-project-head">
+              <div class="bc-ide-crumbs"><span>Projects</span><span>/</span><strong id="bc-ide-project-crumb">Loading</strong></div>
+              <div class="bc-ide-title-line"><h1 id="bc-ide-project-title">Loading project</h1><span id="bc-ide-branch" class="bc-ide-branch">No git branch</span><div class="bc-ide-head-actions"><button id="bc-ide-open-diff" class="bc-ide-command" type="button">Diff</button><button id="bc-ide-open-terminal" class="bc-ide-command" type="button">Terminal</button><button id="bc-ide-new-session" class="bc-ide-command bc-ide-primary" type="button">+ New session</button></div></div>
+              <div class="bc-ide-stats" aria-label="Workspace stats">
+                <div class="bc-ide-stat"><span>Saved sessions</span><strong id="bc-ide-stat-sessions">0</strong></div>
+                <div class="bc-ide-stat"><span>Active agents</span><strong id="bc-ide-stat-agents">0</strong></div>
+                <div class="bc-ide-stat"><span>Project files</span><strong id="bc-ide-stat-files">0</strong></div>
+                <div class="bc-ide-stat"><span>Claude Code</span><strong id="bc-ide-stat-cli">Detecting</strong></div>
+              </div>
+            </header>
+
+            <div class="bc-ide-content">
+              <aside class="bc-ide-file-panel" aria-label="Project files">
+                <div class="bc-ide-file-head"><strong>Files</strong><button id="bc-ide-collapse-files" class="bc-ide-icon-btn bc-ide-chevron-left" type="button" title="Toggle file tree" aria-label="Toggle file tree"><span data-bc-icon="CHEVRON"></span></button></div>
+                <div id="bc-ide-file-tree" class="bc-ide-tree"></div>
+              </aside>
+              <div id="bc-ide-file-resize" class="bc-ide-resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize file panel" tabindex="0"></div>
+              <section class="bc-ide-editor-column">
+                <div id="bc-ide-editor-tabs" class="bc-ide-editor-tabs"></div>
+                <div id="bc-ide-editor-host" class="bc-ide-editor-host"><div class="bc-ide-editor-empty">Choose a file to open it in the editor.</div></div>
+                <section id="bc-ide-diff-panel" class="bc-ide-diff-panel" hidden><div class="bc-ide-diff-head"><strong>Git diff</strong><button id="bc-ide-close-diff" class="bc-ide-icon-btn" type="button" title="Close Git diff" aria-label="Close Git diff"><span data-bc-icon="CLOSE"></span></button></div><pre id="bc-ide-diff-output" class="bc-ide-diff-output"></pre></section>
+                <section id="bc-ide-terminal" class="bc-ide-terminal">
+                  <div class="bc-ide-terminal-head"><span id="bc-ide-terminal-dot" class="bc-ide-status-dot"></span><strong>Terminal</strong><span id="bc-ide-terminal-cwd">Starting Claude Code...</span><span class="bc-ide-spacer"></span><button id="bc-ide-clear-terminal" class="bc-ide-icon-btn" type="button" title="Clear terminal" aria-label="Clear terminal"><span data-bc-icon="CLOSE"></span></button><button id="bc-ide-toggle-terminal" class="bc-ide-icon-btn bc-ide-chevron-down" type="button" title="Hide terminal" aria-label="Hide terminal"><span data-bc-icon="CHEVRON"></span></button></div><div id="bc-ide-terminal-host" class="bc-ide-terminal-host"></div></section>
+              </section>
+              <div id="bc-ide-chat-resize" class="bc-ide-resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize Claude assistant panel" tabindex="0"></div>
+              <aside id="bc-ide-chat-panel" class="bc-ide-chat-panel" aria-label="Claude assistant">
+                <header class="bc-ide-chat-head"><div><strong>Claude</strong><small>Project-aware assistant</small></div><button id="bc-ide-close-chat" class="bc-ide-icon-btn" type="button" title="Hide Claude assistant" aria-label="Hide Claude assistant"><span data-bc-icon="CLOSE"></span></button></header>
+                <div id="bc-ide-chat-messages" class="bc-ide-chat-messages"><div class="bc-ide-chat-welcome"><strong>Ask Claude about this project</strong><p>Use your Claude subscription to reason about code, explain files, and plan changes. Attach project files for focused context.</p></div></div>
+                <div id="bc-ide-chat-attachments" class="bc-ide-chat-attachments" hidden></div>
+                <form id="bc-ide-chat-form" class="bc-ide-chat-composer">
+                  <textarea id="bc-ide-chat-input" rows="3" placeholder="Ask Claude about your code..." aria-label="Ask Claude about your code"></textarea>
+                  <div class="bc-ide-chat-composer-foot"><button id="bc-ide-chat-attach" class="bc-ide-icon-btn" type="button" title="Attach project files" aria-label="Attach project files"><span data-bc-icon="ATTACH"></span></button><!-- Model picker: Claude subscription or any currently-free provider --><div class="bc-ide-model-picker"><button id="bc-ide-model-btn" class="bc-ide-model-btn" type="button" aria-haspopup="listbox" aria-expanded="false" title="Choose who answers this chat">Claude</button><div id="bc-ide-model-menu" class="bc-ide-model-menu" hidden></div></div><button id="bc-ide-chat-stop" class="bc-ide-command bc-ide-chat-stop" type="button" hidden>Stop</button><button class="bc-ide-send-btn" type="submit" title="Send to Claude" aria-label="Send to Claude"><span data-bc-icon="SEND"></span></button></div>
+                </form>
+              </aside>
+            </div>
+            <footer class="bc-ide-statusbar"><span><strong id="bc-ide-status-dot">&#9679;</strong> <span id="bc-ide-status-state">Starting</span></span><span id="bc-ide-status-cwd"></span><span>UTF-8</span><span>Spaces: 2</span><span class="bc-ide-status-right" id="bc-ide-status-message">Local workspace</span></footer>
+          </section>
+
+          <section id="bc-ide-cloud-main" class="bc-ide-cloud-main" hidden>
+            <header class="bc-ide-project-head">
+              <div class="bc-ide-crumbs"><span>Workspace</span><span>/</span><strong>Cloud</strong></div>
+              <div class="bc-ide-title-line"><h1>Cloud sessions</h1><div class="bc-ide-head-actions"><button id="bc-ide-cloud-refresh" class="bc-ide-command" type="button">Refresh</button><button id="bc-ide-cloud-home" class="bc-ide-command bc-ide-primary" type="button">Open Home</button></div></div>
+              <div class="bc-ide-stats"><div class="bc-ide-stat"><span>Claude Code agents</span><strong id="bc-ide-cloud-stat-agents">0</strong></div><div class="bc-ide-stat"><span>Last synced</span><strong id="bc-ide-cloud-stat-synced">Never</strong></div><div class="bc-ide-stat"><span>Source</span><strong>Local CLI + Home</strong></div></div>
+            </header>
+            <div id="bc-ide-cloud-empty" class="bc-ide-cloud-empty"><h2>Cloud workspace</h2><p>Choose an agent from the left. Claude Code agents attach to the local terminal.</p><div class="bc-ide-source-note"><span class="bc-ide-status-dot cloud"></span><span>Showing connected agents</span></div></div>
+            <div id="bc-ide-cloud-detail" class="bc-ide-cloud-detail" hidden><span id="bc-ide-detail-source" class="bc-ide-source-pill">Claude Code agent</span><h2 id="bc-ide-detail-title"></h2><p id="bc-ide-detail-copy"></p><dl><div><dt>Project</dt><dd id="bc-ide-detail-project"></dd></div><div><dt>Location</dt><dd id="bc-ide-detail-location"></dd></div><div><dt>Activity</dt><dd id="bc-ide-detail-activity"></dd></div></dl><button id="bc-ide-detail-action" class="bc-ide-command bc-ide-primary" type="button"></button></div>
+            <footer class="bc-ide-statusbar"><span><strong>&#9679;</strong> Connected</span><span>Claude Code agents</span><span class="bc-ide-status-right">Cloud view</span></footer>
+          </section>
+        </main>
+      </div>
+    </div>
+    <script src="../build/xterm.bundle.js"></script>
+    <script src="../build/snake.bundle.js"></script>
+    <script src="../build/ide-editor.bundle.js"></script>
+    <script src="../ui/code-window/ide-workspace.js"></script>
+  </body>
+</html>

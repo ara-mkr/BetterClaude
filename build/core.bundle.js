@@ -294,7 +294,7 @@ var BetterClaudeCore = (() => {
         },
         modeSwitch: {
           label: "Home / Code mode switch",
-          why: "Anthropic's own segmented control. BetterClaude mounts its Code tab adjacent to it; it is never repurposed or intercepted.",
+          why: "Anthropic's own segmented control. Nothing of ours is mounted inside it; core/code-tab.js scopes its native Home/Code click interception to this group so color-mode controls sharing the data-mode attribute can never be mistaken for it.",
           absenceIsNormal: ({ signedIn }) => !signedIn,
           strategies: [
             // `data-segmented` + `data-pills` are developer-authored and semantic;
@@ -1030,7 +1030,7 @@ ${lines.join("\n")}`);
         }
         return relativeLuminance(composerBg) > 0.5 ? "#6b6b6b" : "#9a9a9a";
       }
-      var OWN_CHROME_IDS = ["betterclaude-titlebar", "betterclaude-settings-panel", "betterclaude-hud", "betterclaude-plugin-dock", "bc-code-tab-pill"];
+      var OWN_CHROME_IDS = ["betterclaude-titlebar", "betterclaude-settings-panel", "betterclaude-hud", "betterclaude-plugin-dock", "bc-code-tab-pill", "bc-ide-shell"];
       var OWN_CHROME_EXCLUDE = OWN_CHROME_IDS.map((id) => `:not(#${id}):not(#${id} *)`).join("");
       var PAGE_ROOT_SCOPE = `body *${OWN_CHROME_EXCLUDE}`;
       function buildScaffoldCSS(vars = {}, opts = {}) {
@@ -1964,7 +1964,7 @@ ${animate ? `
         }
         return tag;
       }
-      var PAGE_BTN = `button:not(#bc-code-tab-pill):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel *):not(#betterclaude-hud *):not(#betterclaude-plugin-dock *)`;
+      var PAGE_BTN = `button:not(#bc-code-tab-pill):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel *):not(#betterclaude-hud *):not(#betterclaude-plugin-dock *):not(#bc-ide-shell *)`;
       var PAINTED_BUTTON_ATTRS = [
         ...SCAFFOLD_PAINTED_BUTTON_ATTRS.primary,
         ...SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive
@@ -3111,7 +3111,7 @@ ${text}` : text;
         },
         // Embedded Claude Code window (electron/main.js's createCodeWindow +
         // electron/claude-cli.js). Nothing here is auth-related and nothing here is
-        // read from Claude Code's own config — these are BetterClaude's own three
+        // read from Claude Code's own config — these are BetterClaude's own
         // preferences for the window it draws around the CLI.
         codeWindow: {
           // Whether the CLI pill appears next to Anthropic's own Home / Code
@@ -3130,17 +3130,53 @@ ${text}` : text;
           // Re-validated with statSync before use (a stored folder can be renamed or
           // deleted between sessions), falling back to $HOME.
           lastCwd: null,
+          // Last project selected in the IDE Code workspace. Kept separate from
+          // lastCwd so opening the terminal CLI does not unexpectedly change the IDE
+          // project the user returns to.
+          ideLastCwd: null,
+          // Recent folders surfaced in the IDE's Local project list. Paths only;
+          // project contents are never stored in settings.
+          recentCwds: [],
           // Escape hatch for a version-managed or non-standard install that isn't on
           // the PATH a GUI app inherits. null = resolve `claude` the way a shell
           // would. This is a path to an EXECUTABLE, never to a config or credential
           // file.
           claudePath: null,
+          // Session mesh: every CLI session in the Code pane automatically joins the
+          // shared .bc-team/ hub for its folder (electron/team-hub.js), so all of
+          // them learn the coordination protocol, can read each other's status,
+          // exchange messages, and hand work to one another — not just sessions
+          // explicitly started as teammates. Off = the old opt-in behaviour where
+          // only "+ Teammate" sessions participate.
+          teamMesh: true,
           // Terminal font size in px. Separate from fonts.baseSizePx (which sizes
           // claude.ai's prose): a comfortable reading size for chat is usually too
           // large for a terminal that has to fit 100+ columns. The font FAMILY is
           // shared — it reuses fonts.codeFont, so picking a coding font in Settings
           // applies here too.
-          fontSizePx: 13
+          fontSizePx: 13,
+          // Free-model fallback for the Code workspace chat (electron/openrouter.js).
+          // When the Claude subscription hits its usage limit, the chat can keep
+          // going on whatever models are free right now — scraped live from
+          // OpenRouter's public catalog, plus one genuinely keyless provider so the
+          // "no login" case still has somewhere to land.
+          freeModels: {
+            // Master switch for the whole feature. The picker is hidden while off.
+            enabled: true,
+            // When Claude Code dies with a usage/limit error mid-chat, automatically
+            // re-run the same prompt on the next free provider instead of surfacing
+            // an error bubble and stopping there.
+            autoFailover: true,
+            // The model chosen in the Code tab's picker, or null = "Claude only".
+            // Free ids are OpenRouter ids ("stealth/ox-alpha") or keyless:*
+            // builtins; they rotate constantly so nothing validates this against a
+            // fixed list.
+            preferredModelId: null,
+            // Optional OpenRouter API key. Empty string = keyless attempts only;
+            // OpenRouter's free tier needs a key to run inference today, so without
+            // this the chain usually lands on the keyless providers at the end.
+            openRouterKey: ""
+          }
         }
       };
       function isPlainObject(v) {
@@ -3248,6 +3284,7 @@ ${text}` : text;
   var require_extras_css = __commonJS({
     "core/extras-css.js"(exports, module) {
       var { clampNumber, BOUNDS } = require_tokens();
+      var { cssSelectorList } = require_claude_dom();
       var OVERLAY_SELECTORS = `
 #betterclaude-settings-panel, #betterclaude-settings-panel *,
 #betterclaude-hud, .bc-dock-btn, .bc-color-popover,
@@ -3373,6 +3410,13 @@ body.bc-zen-mode #betterclaude-plugin-dock {
   display: none !important;
 }
 `;
+      function sidebarSpinnerCSS() {
+        return `
+${cssSelectorList("sidebar", { suffix: ' [class*="animate-spin"]' })} {
+  display: none !important;
+}
+`;
+      }
       function buildExtrasCSS(settings = {}) {
         const parts = [
           cursorCSS(settings.cursor, settings.appearance && settings.appearance.accentColor),
@@ -3382,7 +3426,8 @@ body.bc-zen-mode #betterclaude-plugin-dock {
           colorBlindSafeCSS(settings.appearance && settings.appearance.colorBlindSafe),
           motionCSS(settings.motion),
           moodTintCSS(),
-          ZEN_MODE_CSS
+          ZEN_MODE_CSS,
+          sidebarSpinnerCSS()
         ];
         return parts.filter(Boolean).join("\n").trim();
       }
@@ -3428,7 +3473,21 @@ body.bc-zen-mode #betterclaude-plugin-dock {
         BOOK: `<svg ${ATTRS}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`,
         UPLOAD: `<svg ${ATTRS}><path d="M12 16V4"/><path d="M6 9l6-6 6 6"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>`,
         FLIP_H: `<svg ${ATTRS}><path d="M12 3v18"/><path d="M17 8l3 4-3 4"/><path d="M7 8l-3 4 3 4"/></svg>`,
-        TERMINAL: `<svg ${ATTRS}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>`
+        TERMINAL: `<svg ${ATTRS}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/></svg>`,
+        FOLDER: `<svg ${ATTRS}><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>`,
+        FILE: `<svg ${ATTRS}><path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><path d="M14 2v6h6"/></svg>`,
+        GIT_BRANCH: `<svg ${ATTRS}><circle cx="6" cy="5" r="2.3"/><circle cx="6" cy="19" r="2.3"/><circle cx="18" cy="8" r="2.3"/><path d="M6 7.3V16.7"/><path d="M6 11c0-3.5 2.5-3 6-4.4 2-.8 3.5-1.6 4.6-2.3"/><path d="M18 10.3V13"/></svg>`,
+        EXTENSIONS: `<svg ${ATTRS}><path d="M10 3.5a1.5 1.5 0 0 1 3 0V5h2.5A1.5 1.5 0 0 1 17 6.5V9h1.5a1.5 1.5 0 0 1 0 3H17v2.5a1.5 1.5 0 0 1-1.5 1.5H13v1.5a1.5 1.5 0 0 1-3 0V16H6.5A1.5 1.5 0 0 1 5 14.5V12H3.5a1.5 1.5 0 0 1 0-3H5V6.5A1.5 1.5 0 0 1 6.5 5H10V3.5z"/></svg>`,
+        REFRESH: `<svg ${ATTRS}><path d="M3 12a9 9 0 0 1 15.3-6.4L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.3 6.4L3 16"/><path d="M3 21v-5h5"/></svg>`,
+        PLUS: `<svg ${ATTRS}><path d="M12 5v14"/><path d="M5 12h14"/></svg>`,
+        CHEVRON: `<svg ${ATTRS}><path d="M6 9l6 6 6-6"/></svg>`,
+        CLOSE: `<svg ${ATTRS}><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg>`,
+        ATTACH: `<svg ${ATTRS}><path d="M21 11.5 12.5 20a4.5 4.5 0 0 1-6.4-6.4L14.6 5a3 3 0 0 1 4.3 4.3l-8.5 8.5a1.5 1.5 0 0 1-2.1-2.1l7.8-7.8"/></svg>`,
+        SEND: `<svg ${ATTRS}><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>`,
+        CHECK: `<svg ${ATTRS}><path d="M5 13l4 4L19 7"/></svg>`,
+        HOME: `<svg ${ATTRS}><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V21h13V9.5"/></svg>`,
+        CODE: `<svg ${ATTRS}><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`,
+        CHAT_BOX: `<svg ${ATTRS}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`
       };
     }
   });
@@ -8299,8 +8358,8 @@ ${content}
             title.textContent = `Downloading v${version || ""}`.trim();
             blurb.textContent = `${percent || 0}%`;
           } else {
-            title.textContent = `Update available: v${version}`;
-            blurb.textContent = notes || "New version available";
+            title.textContent = `New release available: v${version}`;
+            blurb.textContent = notes || "A new version is ready \u2014 restart to update.";
           }
           text.appendChild(title);
           text.appendChild(blurb);
@@ -8318,6 +8377,7 @@ ${content}
           actions.className = "bc-update-actions";
           if (state === "available") {
             actions.appendChild(this._button("Download & Install", "bc-update-primary", () => this.onDownload()));
+            actions.appendChild(this._button("View on GitHub", "bc-update-ghost", () => this.onOpenReleases()));
             actions.appendChild(this._button("Later", "bc-update-ghost", () => {
               this.onDismiss(version);
               this.dismissedVersion = version;
@@ -8325,6 +8385,7 @@ ${content}
             }));
           } else if (state === "downloaded") {
             actions.appendChild(this._button("Restart & Install", "bc-update-primary", () => this.onInstall()));
+            actions.appendChild(this._button("View on GitHub", "bc-update-ghost", () => this.onOpenReleases()));
             actions.appendChild(this._button("Later", "bc-update-ghost", () => {
               this.status = { state: "idle" };
               this.render();
@@ -8503,8 +8564,20 @@ ${content}
       var PILL_ID = "bc-code-tab-pill";
       var PILL_LABEL = "CLI";
       var FLOATING_CLASS = "bc-code-tab-floating";
+      var SPLIT_BODY_CLASS = "bc-code-split";
+      var SPLIT_PANE_CLASS = "bc-split-squeezed";
+      var CHAT_LINK_SELECTOR = 'a[href*="/chat/"], a[href*="/conversation/"]';
+      function isConversationPath(pathname) {
+        return /^\/(chat|conversation)\//.test(pathname || "");
+      }
+      var SQUEEZE_PROPERTIES = [
+        ["width", "50%"],
+        ["max-width", "50%"],
+        ["flex", "0 1 50%"],
+        ["min-width", "0"]
+      ];
       var railAllowance = 0;
-      function measureContentArea({ titleBarHeight = 0, sidebarOnRight = false } = {}) {
+      function measureBaseContentArea({ titleBarHeight = 0, sidebarOnRight = false } = {}) {
         const top = Math.round(titleBarHeight);
         if (sidebarOnRight) {
           const sidebar = resolveTarget("sidebar");
@@ -8542,6 +8615,18 @@ ${content}
           anchoredTo: paneBox ? "contentPane" : "sidebar"
         };
       }
+      function measureContentArea({ titleBarHeight = 0, sidebarOnRight = false, split = false } = {}) {
+        const base = measureBaseContentArea({ titleBarHeight, sidebarOnRight });
+        if (!split || base.width <= 1) return base;
+        const half = Math.round(base.width / 2);
+        return {
+          x: base.x + half,
+          y: base.y,
+          width: base.width - half,
+          height: base.height,
+          anchoredTo: base.anchoredTo
+        };
+      }
       function createPill({ onActivate }) {
         const btn = document.createElement("button");
         btn.type = "button";
@@ -8557,8 +8642,12 @@ ${content}
         });
         return btn;
       }
-      function mountCodeTab({ onActivate, onDeactivate, onLayout, titleBarHeight = 0, getSidebarOnRight = () => false } = {}) {
+      function mountCodeTab({ onActivate, onDeactivate, onLayout, onNativeCode, onNativeHome, titleBarHeight = 0, getSidebarOnRight = () => false, showPill = true } = {}) {
         let active = false;
+        let split = false;
+        let splitPendingPath = null;
+        let splitPendingTimer = null;
+        let pillVisible = showPill !== false;
         let pill = null;
         let resizeObserver = null;
         let observedPane = null;
@@ -8568,11 +8657,34 @@ ${content}
         function publishLayout() {
           if (!onLayout) return;
           if (!active) return;
-          const rect = measureContentArea({ titleBarHeight, sidebarOnRight: getSidebarOnRight() });
+          const rect = measureContentArea({ titleBarHeight, sidebarOnRight: getSidebarOnRight(), split });
           const signature = `${rect.x}:${rect.y}:${rect.width}:${rect.height}`;
           if (signature === lastPublished) return;
           lastPublished = signature;
           onLayout(rect);
+        }
+        function setSplit(next) {
+          if (next === split) return;
+          split = next;
+          if (!next && splitPendingTimer) {
+            clearTimeout(splitPendingTimer);
+            splitPendingTimer = null;
+          }
+          if (next) lastPublished = "";
+          document.body.classList.toggle(SPLIT_BODY_CLASS, split);
+          sync();
+        }
+        function applySplitSqueeze() {
+          const pane = resolveTarget("contentPane");
+          const el = pane ? pane.element : null;
+          if (!el) return;
+          if (active && split) {
+            for (const [prop, value] of SQUEEZE_PROPERTIES) el.style.setProperty(prop, value, "important");
+            el.classList.add(SPLIT_PANE_CLASS);
+          } else {
+            for (const [prop] of SQUEEZE_PROPERTIES) el.style.removeProperty(prop);
+            el.classList.remove(SPLIT_PANE_CLASS);
+          }
         }
         function watchLayout() {
           if (typeof ResizeObserver !== "function") return;
@@ -8598,6 +8710,23 @@ ${content}
           sidebarResizeObserver.observe(sidebarEl);
         }
         function sync() {
+          if (split) {
+            const path = window.location.pathname;
+            if (isConversationPath(path)) {
+              splitPendingPath = null;
+            } else if (!splitPendingPath) {
+              setSplit(false);
+              return;
+            }
+          }
+          if (!pillVisible) {
+            if (pill && pill.parentElement) pill.parentElement.removeChild(pill);
+            pill = null;
+            watchLayout();
+            applySplitSqueeze();
+            publishLayout();
+            return;
+          }
           if (!pill) pill = createPill({ onActivate: () => setActive(!active) });
           const group = resolveTarget("modeSwitch");
           if (group) {
@@ -8610,16 +8739,48 @@ ${content}
           pill.setAttribute("aria-pressed", active ? "true" : "false");
           pill.toggleAttribute("data-bc-active", active);
           watchLayout();
+          applySplitSqueeze();
           publishLayout();
         }
         function onDocumentClick(event) {
-          if (!active) return;
           const target = event.target;
           if (!target || !target.closest) return;
           if (target.closest(`#${PILL_ID}`)) return;
+          const chatLink = target.closest(CHAT_LINK_SELECTOR);
+          if (chatLink && active) {
+            const sidebar = resolveTarget("sidebar");
+            if (!sidebar || sidebar.element.contains(chatLink)) {
+              try {
+                splitPendingPath = new URL(chatLink.href).pathname;
+              } catch {
+                splitPendingPath = null;
+              }
+              if (splitPendingTimer) clearTimeout(splitPendingTimer);
+              splitPendingTimer = setTimeout(() => {
+                splitPendingPath = null;
+                splitPendingTimer = null;
+                sync();
+              }, 2e3);
+              setSplit(true);
+            }
+            return;
+          }
+          const nativeMode = target.closest('[data-mode="code"], [data-mode="cowork"], [data-mode="home"]');
+          if (!nativeMode) return;
           const group = resolveTarget("modeSwitch");
-          if (!group || !group.element.contains(target)) return;
-          if (target.closest("[data-mode]")) setActive(false);
+          if (group && !group.element.contains(nativeMode)) return;
+          const mode = nativeMode.getAttribute("data-mode");
+          if (mode === "code" && onNativeCode) {
+            if (active) setActive(false);
+            event.preventDefault();
+            event.stopPropagation();
+            onNativeCode();
+            return;
+          }
+          if (mode === "cowork" || mode === "home") {
+            if (active) setActive(false);
+            if (onNativeHome) onNativeHome();
+          }
         }
         function setActive(next) {
           if (next === active) {
@@ -8627,20 +8788,27 @@ ${content}
             return;
           }
           active = next;
+          if (!active && split) setSplit(false);
           document.body.classList.toggle("bc-code-tab-active", active);
           sync();
           if (active) {
+            if (isConversationPath(window.location.pathname)) setSplit(true);
             if (onActivate) onActivate();
           } else if (onDeactivate) {
             onDeactivate();
           }
         }
-        document.addEventListener("click", onDocumentClick, { capture: true, passive: true });
+        document.addEventListener("click", onDocumentClick, { capture: true });
         window.addEventListener("resize", publishLayout);
         sync();
         return {
           sync,
           setActive,
+          isSplit: () => split,
+          setPillVisible(next) {
+            pillVisible = next !== false;
+            sync();
+          },
           isActive: () => active,
           publishLayout,
           unmount() {
@@ -8648,6 +8816,9 @@ ${content}
             window.removeEventListener("resize", publishLayout);
             if (resizeObserver) resizeObserver.disconnect();
             if (sidebarResizeObserver) sidebarResizeObserver.disconnect();
+            if (splitPendingTimer) clearTimeout(splitPendingTimer);
+            applySplitSqueeze();
+            document.body.classList.remove(SPLIT_BODY_CLASS);
             if (pill && pill.parentElement) pill.parentElement.removeChild(pill);
             pill = null;
           }

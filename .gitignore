@@ -4,3 +4,7 @@ build/*.bundle.js
 *.map
 .DS_Store
 __pycache__/
+.freebuff/
+BETTERCLAUDE OFFICIAL/
+BetterClaudeExtension/
+Add a heading.png
