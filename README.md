@@ -48,7 +48,17 @@ Prebuilt installers live on the [GitHub Releases page](https://github.com/ara-mk
 | `BetterClaude-<version>-x64.dmg` | macOS, Intel |
 | `BetterClaude.Setup.<version>.exe` | Windows 10/11, 64-bit |
 
-Each release also carries `.zip` copies of the macOS builds if you'd rather skip the DMG. The builds are ad-hoc signed but not notarized, so first launch takes one extra step: on macOS, right-click the app and choose **Open**, and if macOS still refuses, go to System Settings → Privacy & Security and click **Open Anyway** there. On Windows, click **More info → Run anyway** on the SmartScreen prompt. After that the app checks this repo's Releases on launch and offers updates in-app (Windows updates in place; macOS users reinstall from a new DMG until the build gets a Developer ID certificate).
+Each release also carries `.zip` copies of the macOS builds if you'd rather skip the DMG.
+
+**macOS first launch:** the builds are ad-hoc signed but not notarized (notarization requires Apple's paid Developer Program), so the first open of a downloaded copy hits the *"BetterClaude not opened — Apple could not verify it"* dialog. That's Gatekeeper, not a broken file. The one-time way past it:
+
+1. Drag BetterClaude to `/Applications`, try to open it, click **Done** on the dialog (don't move it to trash).
+2. Open **System Settings → Privacy & Security**, scroll to the Security section, and click **Open Anyway** next to the BetterClaude message. Authenticate, then click **Open**.
+3. Done — it opens normally from then on.
+
+Terminal-inclined users can skip the settings page with `xattr -cr /Applications/BetterClaude.app`.
+
+**Windows first launch:** click **More info → Run anyway** on the SmartScreen prompt. After that the app checks this repo's Releases on launch and offers updates in-app (Windows updates in place; macOS users reinstall from a new DMG until the build gets a Developer ID certificate).
 
 ## How it actually works
 
