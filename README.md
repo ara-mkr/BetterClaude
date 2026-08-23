@@ -25,8 +25,10 @@ An Electron desktop app that loads the real claude.ai and injects a layer of UI 
 
 ## Contents
 
+- [Download](#download)
 - [How it actually works](#how-it-actually-works)
 - [Productivity modules](#productivity-modules)
+- [The Code workspace](#the-code-workspace)
 - [Themes & the Appearance Editor](#themes--the-appearance-editor)
 - [Plugins](#plugins)
 - [Buddies](#buddies)
@@ -35,6 +37,18 @@ An Electron desktop app that loads the real claude.ai and injects a layer of UI 
 - [Building it yourself](#building-it-yourself)
 - [Releasing & auto-update](#releasing--auto-update)
 - [Contributing](#contributing)
+
+## Download
+
+Prebuilt installers live on the [GitHub Releases page](https://github.com/ara-mkr/BetterClaude/releases/latest). That is the only place they're distributed; there's no App Store build and no mirror.
+
+| File | What it's for |
+| --- | --- |
+| `BetterClaude-<version>-arm64.dmg` | macOS, Apple Silicon (M-series) |
+| `BetterClaude-<version>-x64.dmg` | macOS, Intel |
+| `BetterClaude.Setup.<version>.exe` | Windows 10/11, 64-bit |
+
+Each release also carries `.zip` copies of the macOS builds if you'd rather skip the DMG. The builds are unsigned, so first launch takes one extra click: on macOS, right-click the app in Finder and choose **Open** (Gatekeeper warns about an unidentified developer), and on Windows click **More info → Run anyway** on the SmartScreen prompt. After that the app checks this repo's Releases on launch and offers updates in-app (Windows updates in place; macOS users reinstall from a new DMG until the build is signed).
 
 ## How it actually works
 
@@ -78,13 +92,71 @@ Nine productivity modules, each independently toggleable from its own section in
 
 **Command Palette** (Cmd/Ctrl+K, Settings → Command Palette) — the connective tissue across everything above, built last on purpose so there was a settled surface area to index. One fuzzy-search overlay covers app actions, every settings page (jumping straight to the right section via `SettingsPanel.openSection`), installed plugins (toggle on/off inline), Prompt Library entries (insert directly), and both installed and cached-marketplace Skills. Matching runs through a small hand-rolled fuzzy subsequence scorer (`core/command-palette.js`'s `fuzzyScore`) rather than a plain substring filter, so abbreviations and scattered-letter queries still rank sensibly instead of just failing to match; each result carries a small group tag — Action / Settings / Plugins / Prompts / Skills / Analytics — so you can tell at a glance what kind of thing you're about to trigger.
 
-**Embedded Claude Code window** (tray → "Open Claude Code", File → "Open Claude Code" / "Open Claude Code in Folder…", Cmd/Ctrl+Shift+K, or launched with `--code`) — opens your real, already-installed Claude Code CLI inside a BetterClaude-owned window instead of handing you off to Terminal.app. The relationship is the same one `lazygit` has with `git`: `electron/claude-cli.js` resolves the `claude` executable the way a login shell would (PATH first, then the usual user-level install locations, because a Dock-launched `.app` inherits a stripped-down PATH that wouldn't otherwise find it) and spawns it in a real pseudo-terminal via `node-pty`; `ui/code-window/terminal.js` renders that pty with `xterm.js`. Nothing about the CLI itself is reimplemented, wrapped, or intercepted — it is the authentic binary, and BetterClaude supplies only the window chrome around it. Because the terminal reads the same `--bc-*` theme variables as the rest of the app, switching your active theme restyles it live without disturbing the running session, and the title bar's settings button opens the real settings panel scoped down to just the appearance sections (`electron/code-preload.js`'s `CODE_WINDOW_SECTIONS`). The renderer runs with `nodeIntegration: false`: every byte of pty output crosses exactly one `contextBridge` surface, the only thing ever written to the child process's stdin is your own keystrokes forwarded verbatim, terminal output is never parsed to auto-trigger anything, and no auth token, session file, or credential is ever read anywhere along that path. Closing the window kills the child process. The spawn logic itself is a compliant port from the standalone `BETTERCLAUDE OFFICIAL` terminal-wrapper project, not a cross-import between the two.
+**Embedded Claude Code window** (tray → "Open Claude Code", File → "Open Claude Code" / "Open Claude Code in Folder…", Cmd/Ctrl+Shift+K, or launched with `--code`) — opens your real, already-installed Claude Code CLI inside a BetterClaude-owned window instead of handing you off to Terminal.app. The relationship is the same one `lazygit` has with `git`: `electron/claude-cli.js` resolves the `claude` executable the way a login shell would (PATH first, then the usual user-level install locations, because a Dock-launched `.app` inherits a stripped-down PATH that wouldn't otherwise find it) and spawns it in a real pseudo-terminal via `node-pty`; `ui/code-window/terminal.js` renders that pty with `xterm.js`. Nothing about the CLI itself is reimplemented, wrapped, or intercepted — it is the authentic binary, and BetterClaude supplies only the window chrome around it. Because the terminal reads the same `--bc-*` theme variables as the rest of the app, switching your active theme restyles it live without disturbing the running session, and the title bar's settings button opens the real settings panel scoped down to just the appearance sections (`electron/code-preload.js`'s `CODE_WINDOW_SECTIONS`). The renderer runs with `nodeIntegration: false`: every byte of pty output crosses exactly one `contextBridge` surface, the only thing ever written to the child process's stdin is your own keystrokes forwarded verbatim, terminal output is never parsed to auto-trigger anything, and no auth token, session file, or credential is ever read anywhere along that path. Closing the window kills the child process. The spawn logic itself is a compliant port from the standalone `BETTERCLAUDE OFFICIAL` terminal-wrapper project, not a cross-import between the two. Since 0.4 this pane is tabbed, shares a Team Hub with other sessions in the same folder, and has an IDE-shaped sibling — see [The Code workspace](#the-code-workspace).
 
 ![BetterClaude Appearance Editor with live token values](.github/readme-assets/appearance-editor.png)
 
 ![The real Claude Code CLI running inside a BetterClaude-owned window](.github/readme-assets/claude-code-window.png)
 
 Full technical detail on every module above — exact file paths, IPC handler names, and what's persisted where — lives in [docs/DESKTOP-APP.md](docs/DESKTOP-APP.md).
+
+## The Code workspace
+
+Version 0.4 turned the Code tab from "a terminal in a pane" into a real workspace with three surfaces sharing one window. The chip at the top of the sidebar (Home | Code | CLI) moves between them, and claude.ai's own **Code** pill now opens the IDE too, instead of leading to a gated route:
+
+![The Home, Code and CLI pills above claude.ai's sidebar](.github/readme-assets/code-tabs.png)
+
+- **Home** is claude.ai exactly as Anthropic ships it.
+- **Code** opens the IDE workspace described below.
+- **CLI** is the plain embedded terminal from before, still your real `claude` binary in a real pty.
+
+A nice side effect: open a conversation while a Code surface is showing and claude.ai squeezes into the left half of the window, so you can read the conversation and watch the terminal at the same time.
+
+### The IDE workspace
+
+![The IDE workspace: file tree, editor, terminal, and the Claude assistant chat](.github/readme-assets/ide-workspace.png)
+
+The workspace wraps your project in the pieces you'd expect from an editor:
+
+- **Explorer** with a project file tree (capped at 700 entries / 7 levels deep, skipping `.git`, `node_modules`, and other noise) plus a **Cloud** tab that lists your live `claude agents --all` sessions and claude.ai conversations, and attaches to them.
+- **A tabbed CodeMirror 6 editor** with line numbers, undo history, and active-line highlighting. `Cmd/Ctrl+S` saves, and refuses to clobber a file that changed on disk since you opened it. CSS gets syntax highlighting; other files edit as plain text for now.
+- **Source control** with a real diff view of the project's changes.
+- **Extensions** (below).
+- **A bottom terminal** running the actual Claude Code CLI in the selected project, same genuine pty as the CLI pane.
+- **A Claude assistant chat panel** that can attach project files for context and spawns `claude --print` under the hood, with the model picker described [below](#free-models-through-openrouter).
+- A project header (branch, saved sessions, active agents, Claude Code version) and a status bar, and the whole thing is themed by the same `--bc-*` tokens as everything else.
+
+### Extensions
+
+![The Extensions panel listing installed extensions across VS Code, Cursor and Antigravity](.github/readme-assets/ide-extensions.png)
+
+The Extensions panel reads what you actually have installed across **VS Code, Cursor, Antigravity, and VS Code Insiders**. The Browse tab searches the [Open VSX registry](https://open-vsx.org) live, and Install downloads the `.vsix` and unpacks it into the first of those editors it finds on your machine. With an empty search box you get a built-in, hand-curated catalog of about 100 extensions to start from, no network required.
+
+### Free models through OpenRouter
+
+![The model picker showing Claude plus free OpenRouter models with context sizes](.github/readme-assets/ide-free-models.png)
+
+The assistant chat's model picker has a **"Free right now · OpenRouter"** section: every zero-cost model on OpenRouter, pulled live from their public catalog, longest context first. Below that, a **"No login needed"** tier that tries a local Ollama install first and then Pollinations, keyless. Two ways to use it:
+
+1. Pick a free model from the picker and chat with it directly, no subscription touched.
+2. Stay on Claude. If a prompt dies to a usage limit, the same prompt re-runs on the free chain automatically ("Auto-switch when Claude hits its limit", on by default).
+
+An OpenRouter key is optional; paste one into the picker footer if you want higher rate limits. Requests go from the app straight to the provider you picked — there is no BetterClaude server in the middle, because there is no BetterClaude server.
+
+### Team Hub
+
+![The Agent team sidebar: roster, team chat, work board, and the Live wire](.github/readme-assets/code-team-hub.png)
+
+Every session working in the same folder shares a hub at `<project>/.bc-team/`: plain JSON files (roster, messages, task board, work log) that the agents read and write with their ordinary file tools. No server, no ports, nothing to host.
+
+- The **Team sidebar** shows who's doing what (status dots, work-log excerpts, an "Ask for update" nudge), a **team chat** feed with per-recipient or broadcast sending, a **work board** (todo / doing / done, assignable), and **Made so far**, a real git summary of everything the team has touched.
+- The **Live wire** is a thin rail on the right edge streaming messages and hand-offs as they happen: claims, assignments, completions.
+- **+ Teammate** spawns another real `claude` session into the same hub. Teammates get codenames (Atlas, Nova, Orion, Vega…) and messages you send are delivered straight into their terminal.
+- **Session Mesh** (on by default) puts every ordinary CLI tab into the folder's hub too, so two terminals open on one project can already see each other without you configuring anything. Turn it off in Settings if you only want explicit teammates to cooperate.
+
+### Multi-session tabs
+
+The CLI pane is tabbed now: **+** opens another session, every tab keeps its own pty with its own Local/Cloud resume picker, a finished session shows its exit code with Restart / New session / Close tab instead of a dead pane, and changing folder restarts the tab in place. The while-you-wait Snake lives here too and now reacts to real terminal activity.
 
 ## Themes & the Appearance Editor
 
