@@ -147,7 +147,11 @@ button:focus-visible { outline: 2px solid var(--bc-ide-accent); outline-offset: 
 .bc-ide-tree .indent-1 { padding-left: 24px; }
 .bc-ide-tree .indent-2 { padding-left: 41px; }
 
-.bc-ide-editor-column { display: flex; flex: 1 1 0; flex-direction: column; min-width: 120px; min-height: 0; }
+/* The editor is the workspace's primary surface, so it holds a real working
+   floor: below this the code area wraps character-by-character and the terminal
+   under it turns to noise. Kept in sync with EDITOR_MIN_W in ide-workspace.js,
+   which stops the chat panel's drag from ever squeezing the editor past it. */
+.bc-ide-editor-column { display: flex; flex: 1 1 0; flex-direction: column; min-width: 340px; min-height: 0; }
 .bc-ide-editor-tabs { display: flex; flex: 0 0 38px; min-width: 0; overflow: auto; border-bottom: 1px solid var(--bc-ide-line); background: color-mix(in srgb, var(--bc-ide-sidebar) 50%, var(--bc-ide-bg)); }
 .bc-ide-editor-tab { position: relative; display: inline-flex; align-items: center; gap: 7px; min-width: 112px; padding: 0 12px; border: 0; border-right: 1px solid var(--bc-ide-line); color: var(--bc-ide-muted); background: transparent; cursor: pointer; }
 .bc-ide-editor-tab:hover { color: var(--bc-ide-text); background: var(--bc-ide-panel); }
@@ -270,7 +274,7 @@ div.bc-ide-extension-row:hover { background: color-mix(in srgb, var(--bc-ide-pan
 /* Absolute right-of-way: while this panel is visible it keeps its full width
    (shrink: 0) and the rest of the workspace reflows around it — nothing
    slides underneath or gets covered. Users resize it via its handle. */
-.bc-ide-chat-panel { display: flex; flex: 0 0 var(--bc-ide-chat-w, 500px); flex-direction: column; min-height: 0; border-left: 1px solid var(--bc-ide-line); background: var(--bc-ide-sidebar); }
+.bc-ide-chat-panel { display: flex; flex: 0 0 var(--bc-ide-chat-w, 420px); flex-direction: column; min-height: 0; border-left: 1px solid var(--bc-ide-line); background: var(--bc-ide-sidebar); }
 .bc-ide-chat-panel[hidden] { display: none !important; }
 .bc-ide-chat-head { display: flex; flex: 0 0 53px; align-items: center; justify-content: space-between; gap: 10px; padding: 0 13px; border-bottom: 1px solid var(--bc-ide-line); }
 .bc-ide-chat-head strong, .bc-ide-chat-head small { display: block; }

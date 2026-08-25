@@ -1171,11 +1171,45 @@
   // document-level mousemove pair silently stops whenever a fast drag leaves
   // the window or a text/editor surface swallows the event stream, which is
   // exactly what made these handles look decorative before.
+  // Editor's working floor, mirrored in .bc-ide-editor-column min-width
+  // (ide-workspace.css). Below this the code area wraps per-character.
+  const EDITOR_MIN_W = 340;
+  // Chat panel's default width, mirrored in .bc-ide-chat-panel's flex-basis
+  // fallback (ide-workspace.css). Used when nothing has been dragged/persisted.
+  const CHAT_DEFAULT_W = 420;
+
+  // Live ceiling for the chat panel: how wide it can be dragged before the
+  // editor column would be squeezed under EDITOR_MIN_W. Reserves the file
+  // panel's current width and the two resize handles, and keeps a sane absolute
+  // range so a very large or very small window still behaves.
+  function chatPanelMaxWidth() {
+    const content = document.querySelector(".bc-ide-content");
+    // Before first layout clientWidth is 0; don't let that clamp the panel to
+    // its floor. The real ceiling applies once the workspace has been measured.
+    if (!content || !content.clientWidth) return 820;
+    const filePanel = document.querySelector(".bc-ide-file-panel");
+    // Reserve the file panel's INTENDED width (its persisted/default basis), not
+    // its measured width: when the chat is already over-wide the file panel has
+    // been squeezed to its min, and measuring that would compute a falsely large
+    // ceiling that fails to protect the editor.
+    let fileReserve = 0;
+    if (filePanel && !filePanel.hidden) {
+      const storedFile = parseInt(localStorage.getItem("bc-ide-file-w"), 10);
+      fileReserve = Number.isFinite(storedFile) ? storedFile : 226;
+    }
+    const room = content.clientWidth - fileReserve - EDITOR_MIN_W - 16;
+    return Math.max(320, Math.min(820, room));
+  }
+
   function wirePanelResize({ handleId, storageKey, cssVar, targetSelector, minWidth, maxWidth, invert = false }) {
     const handle = $(handleId);
     const target = document.querySelector(targetSelector);
     if (!handle || !target) return;
-    const clamp = (width) => Math.round(Math.min(maxWidth, Math.max(minWidth, width)));
+    // maxWidth may be a function so a panel's ceiling can track the live window
+    // size — the chat panel uses this so it can never be dragged wide enough to
+    // starve the editor below its floor, at any window size.
+    const resolveMax = () => (typeof maxWidth === "function" ? maxWidth() : maxWidth);
+    const clamp = (width) => Math.round(Math.min(resolveMax(), Math.max(minWidth, width)));
     const apply = (width) => document.documentElement.style.setProperty(cssVar, `${clamp(width)}px`);
     const restore = () => {
       const stored = parseInt(localStorage.getItem(storageKey), 10);
@@ -1240,17 +1274,49 @@
       maxWidth: 520,
     });
     // The assistant docks on the right, so its edge drags inverted: pulling
-    // right makes the panel narrower. It always keeps this width while open
-    // (the rest of the workspace yields), so the max is generous.
+    // right makes the panel narrower. Its ceiling is computed live rather than
+    // fixed: the panel may grow only until the editor column would hit its
+    // floor (EDITOR_MIN_W, mirrored in ide-workspace.css), so a wide chat can
+    // never crush the editor into an unreadable character-wrapped strip — the
+    // exact failure a persisted over-wide drag used to leave behind.
     wirePanelResize({
       handleId: "bc-ide-chat-resize",
       storageKey: "bc-ide-chat-w",
       cssVar: "--bc-ide-chat-w",
       targetSelector: "#bc-ide-chat-panel",
       minWidth: 280,
-      maxWidth: 820,
+      maxWidth: chatPanelMaxWidth,
       invert: true,
     });
+
+    // Keep the chat panel within the live editor-preserving ceiling without
+    // ever corrupting the user's chosen width. The persisted (or default) value
+    // is the source of truth; this only re-derives the *applied* width from it,
+    // clamped to whatever the current window allows — so a previously over-wide
+    // drag can't load the editor crushed, and the panel grows back to the
+    // intended width once the window is wide enough again. Deliberately does not
+    // write to localStorage: a transient narrow measurement during load or a
+    // temporary small window must not overwrite what the user actually dragged.
+    const applyChatWidthWithinCap = () => {
+      const panel = document.querySelector("#bc-ide-chat-panel");
+      if (!panel || panel.hidden) return;
+      const stored = parseInt(localStorage.getItem("bc-ide-chat-w"), 10);
+      const intended = Number.isFinite(stored) ? stored : CHAT_DEFAULT_W;
+      const capped = Math.max(280, Math.min(chatPanelMaxWidth(), intended));
+      document.documentElement.style.setProperty("--bc-ide-chat-w", `${Math.round(capped)}px`);
+    };
+    // Driven by a ResizeObserver on the content row rather than a single rAF:
+    // the IDE lives in a WebContentsView whose real bounds can land a few frames
+    // after load, and the observer fires exactly when the row finally has its
+    // true width (and on every later window resize) — so the panel settles at
+    // the intended width instead of sticking at a transient early measurement.
+    const contentRow = document.querySelector(".bc-ide-content");
+    if (contentRow && typeof ResizeObserver === "function") {
+      new ResizeObserver(applyChatWidthWithinCap).observe(contentRow);
+    } else {
+      requestAnimationFrame(applyChatWidthWithinCap);
+      window.addEventListener("resize", applyChatWidthWithinCap);
+    }
   }
 
   try {

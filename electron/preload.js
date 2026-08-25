@@ -590,6 +590,28 @@ async function bootstrap() {
 
   // Never show auxiliary chrome on Claude's public sign-in/marketing route.
   // Presence of the composer is the signal — no conversation content is read.
+  // claude.ai stamps a small "Beta" pill into its pane-header actions (the
+  // Code/Cowork surface labels itself that way). Inside BetterClaude — a
+  // finished product wrapped around the site — that stray "Beta" reads as if
+  // the whole app were pre-release, so it is removed outright, exactly like the
+  // sidebar burst-spinner in core/extras-css.js. CSS cannot match on text, so
+  // the badge is found by its exact label within the header actions and hidden
+  // in place; React re-mounting a fresh node just re-fires this handler (it
+  // runs on the same chromeObserver) and the replacement is hidden again.
+  function hideNativeBetaBadges() {
+    const actions = document.querySelectorAll(".dframe-header .dframe-pane-actions");
+    for (const group of actions) {
+      for (const span of group.querySelectorAll("span")) {
+        if (span.childElementCount === 0 && span.textContent.trim() === "Beta") {
+          // Hide the styled pill wrapper, not just the bare text node, so no
+          // empty bordered chip is left behind.
+          const pill = span.closest(".inline-flex") || span;
+          if (pill.style.display !== "none") pill.style.display = "none";
+        }
+      }
+    }
+  }
+
   function syncContextualChrome() {
     // Signed-in state comes from the probe (account button OR composer), not
     // from the composer alone, and `bc-signed-out` is applied by
@@ -616,6 +638,7 @@ async function bootstrap() {
     // all, and that is precisely when a new Anthropic build first lands.
     layoutProbe.checkSoon();
     topStripGuard.checkSoon();
+    hideNativeBetaBadges();
     applySidebarPositionOffset(settings);
     // Idempotent and cheap: re-resolves the observed elements (React can swap
     // them wholesale on a route change) and republishes geometry only when it
