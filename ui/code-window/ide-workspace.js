@@ -425,7 +425,7 @@
         api.gitInfo(activeProject.cwd),
       ]);
       renderFiles(tree);
-      $("bc-ide-stat-files").textContent = String(tree.count || 0);
+      $("bc-ide-stat-files").textContent = String(tree.fileCount != null ? tree.fileCount : (tree.count || 0)) + (tree.truncated ? "+" : "");
       renderSourceControl(info);
       $("bc-ide-branch").innerHTML = info && info.branch
         ? `${icon("GIT_BRANCH")}<span>${info.branch}</span>`
@@ -1013,7 +1013,7 @@
       sessions = nextSessions || [];
       renderSessions();
       renderFiles(tree);
-      $("bc-ide-stat-files").textContent = String(tree.count || 0);
+      $("bc-ide-stat-files").textContent = String(tree.fileCount != null ? tree.fileCount : (tree.count || 0)) + (tree.truncated ? "+" : "");
       $("bc-ide-stat-sessions").textContent = String(sessions.length);
       $("bc-ide-branch").innerHTML = info && info.branch
         ? `${icon("GIT_BRANCH")}<span>${info.branch}</span>`

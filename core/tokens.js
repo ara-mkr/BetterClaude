@@ -1041,6 +1041,35 @@ ${buildClaudeTokenBridge({ bg, bgElevated, bgSidebar, text, textMuted: textMuted
 body {
   background: var(--bc-bg) !important;
 }
+
+/* The area behind the composer, plus claude's cards, pills and popovers, is
+   painted by the cds design system's bg-surface-N utilities, which read plain
+   color tokens (--cds-surface-0..3, measured live #0b0b0b -> #20201f) — NOT the
+   hsl(var(--bg-*)) tokens the bridge above retints. That is why the chat
+   surface stayed near-black on every theme and only a scrim overlay could fake
+   it. Retinting the tokens themselves recolors every consumer at once.
+
+   Two live-verified cascade facts drive the selector choice:
+   - claude declares these tokens on the descendant .cds-root (div.dframe-root),
+     not on :root/<html>. Setting them at :root loses to that closer .cds-root
+     declaration, so the override must also sit on .cds-root.
+   - claude re-declares the tokens on BOTH the outer html.cds-root AND the inner
+     div.dframe-root.cds-root, the latter at (0,2,0). A plain .cds-root override
+     only wins by source order, and BetterClaude's stylesheet is injected early,
+     so it must win by specificity instead. .cds-root.cds-root.cds-root is
+     (0,3,0) — it out-specifies every claude declaration on either element, so
+     the retint holds regardless of who is appended last.
+   Elevation is preserved: surface-0 is the deepest well, surface-3 the most
+   raised (the composer), mapped onto this palette's sidebar -> bg -> elevated
+   ramp. (Everything above consumes these via var(--cds-surface-N) directly, so
+   there is a ~200ms background-color transition on the composer card — expected,
+   claude ships that transition on the element itself.) */
+.cds-root.cds-root.cds-root {
+  --cds-surface-0: var(--bc-bg-sidebar) !important;
+  --cds-surface-1: var(--bc-bg) !important;
+  --cds-surface-2: color-mix(in srgb, var(--bc-bg) 55%, var(--bc-bg-elevated)) !important;
+  --cds-surface-3: var(--bc-bg-elevated) !important;
+}
 /* Text color has to reach every real leaf node: Claude's signed-out page
    assigns dark utility colors directly to its headings and Google button.
    On a dark preset, a zero-specificity :where() rule loses that cascade and

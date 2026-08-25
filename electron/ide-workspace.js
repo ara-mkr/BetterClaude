@@ -57,10 +57,13 @@ function sortEntries(entries) {
 
 function listProjectTree(cwd) {
   const root = realDirectory(cwd);
-  let count = 0;
+  let count = 0;      // total entries (files + folders) — the walk's perf budget
+  let fileCount = 0;  // files only — what the "Project files" stat actually means
+  let truncated = false; // true once the walk stops early, so the count is a floor
 
   function walk(directory, depth) {
-    if (depth > MAX_TREE_DEPTH || count >= MAX_TREE_ENTRIES) return [];
+    if (depth > MAX_TREE_DEPTH) { truncated = true; return []; }
+    if (count >= MAX_TREE_ENTRIES) { truncated = true; return []; }
     let entries;
     try {
       entries = fs.readdirSync(directory, { withFileTypes: true });
@@ -70,7 +73,7 @@ function listProjectTree(cwd) {
 
     const nodes = [];
     for (const entry of entries) {
-      if (count >= MAX_TREE_ENTRIES) break;
+      if (count >= MAX_TREE_ENTRIES) { truncated = true; break; }
       if (entry.name === ".DS_Store" || entry.name.startsWith(".")) continue;
       const absolute = path.join(directory, entry.name);
       const relative = path.relative(root, absolute).split(path.sep).join("/");
@@ -81,13 +84,19 @@ function listProjectTree(cwd) {
         nodes.push({ name: entry.name, path: relative, kind: "folder", children: walk(absolute, depth + 1) });
       } else if (entry.isFile()) {
         count += 1;
+        fileCount += 1;
         nodes.push({ name: entry.name, path: relative, kind: "file" });
       }
     }
     return sortEntries(nodes);
   }
 
-  return { root, nodes: walk(root, 0), count };
+  const nodes = walk(root, 0);
+  // count is kept for backward compatibility; fileCount + truncated are what the
+  // "Project files" stat reads so a large tree reports e.g. "612+" instead of a
+  // flat, misleading "700" (the walk's MAX_TREE_ENTRIES cap) that counted
+  // folders as files.
+  return { root, nodes, count, fileCount, truncated };
 }
 
 function readFirstCwd(filePath) {
