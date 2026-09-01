@@ -47,6 +47,67 @@ const BG_STYLE_ID = "betterclaude-background";
 // builds where the pane-primary class doesn't exist.
 const MAIN_PANE = 'main .dframe-pane-primary, main [class*="pane-primary" i], [data-testid="conversation"], [role="main"], main';
 
+// Every scope above is a selector LIST, and that is the whole reason these two
+// helpers exist.
+//
+// THE BUG THEY PREVENT (shipped in 0.4.1, and it bricked the app). The rules
+// below used to be written as plain interpolation:
+//
+//     ${scope} > .bc-bg-layer,
+//     ${scope}::before { pointer-events: none; position: absolute; inset: 0; ... }
+//
+// A comma binds looser than anything else in a selector, so with a multi-part
+// scope that does NOT mean "(each of these) > .bc-bg-layer". It flattens to:
+//
+//     main .dframe-pane-primary,          <- bare! gets the whole block
+//     main [class*="pane-primary" i],     <- bare!
+//     [data-testid="conversation"],       <- bare!
+//     [role="main"],                      <- bare!
+//     main > .bc-bg-layer,                <- the only intended one
+//     ...                                 <- then the same again for ::before
+//
+// So the decorative layer's own properties landed on the real content
+// elements: `pointer-events: none` (which INHERITS, so the whole app under it
+// went click-dead — clicks fell through to <html>, which still fired the click
+// sound while no button ever received them) plus `position: absolute; inset: 0;
+// z-index: -2`, which pulled <main> out of flow and collapsed the page so
+// sidebar rows painted on top of each other.
+//
+// Splitting is bracket/paren/quote aware rather than a bare `.split(",")` so a
+// future scope containing `:is(a, b)` or `[attr="x,y"]` cannot silently
+// reintroduce the same class of failure.
+function splitSelectorList(list) {
+  const out = [];
+  let depth = 0;
+  let quote = null;
+  let current = "";
+  for (const ch of String(list)) {
+    if (quote) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === "(" || ch === "[") {
+      depth++;
+    } else if (ch === ")" || ch === "]") {
+      depth--;
+    } else if (ch === "," && depth === 0) {
+      out.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  out.push(current.trim());
+  return out.filter(Boolean);
+}
+
+/** `scoped("a, b", "::before")` -> `"a::before,\nb::before"`. */
+function scoped(list, suffix) {
+  return splitSelectorList(list)
+    .map((sel) => sel + suffix)
+    .join(",\n");
+}
+
 function fitToBackgroundProps(fit, position) {
   switch (fit) {
     case "contain":
@@ -111,7 +172,13 @@ function buildBackgroundCSS(bg = {}) {
   const opacity = clampNumber(bg.opacity, BOUNDS["background.opacity"]);
   const scrimOpacity = clampNumber(bg.scrimOpacity, BOUNDS["background.scrimOpacity"]);
   const blurPx = clampNumber(bg.blurPx, BOUNDS["background.blurPx"]);
-  const scope = bg.unifyAllSurfaces ? "body, #__next" : MAIN_PANE;
+  // `#root` and `.bc-claude-root` alongside the legacy `#__next`: claude.ai
+  // ships its app root as #root on the current build (confirmed by the live
+  // DOM audit), and core/layout-probe.js tags whatever it resolves at runtime
+  // with .bc-claude-root. Naming only #__next meant "unify all surfaces"
+  // silently painted body alone — the same stale-id failure core/theme-engine.js
+  // documents for `:where(#__next, #root) *`.
+  const scope = bg.unifyAllSurfaces ? "body, #root, #__next, .bc-claude-root" : MAIN_PANE;
   const value = backgroundValue(bg);
   // Image mode drives position from the numeric offsetX/offsetY editor
   // fields (percent) rather than the old free-text `position`, which only
@@ -136,8 +203,8 @@ ${scope} {
    a long conversation stays smooth (no fixed-viewport repaint). The
    overflow:hidden above (image mode only) keeps a zoomed/flipped layer's
    transform from bleeding past the pane's own edges. */
-${scope} > .bc-bg-layer,
-${scope}::before {
+${scoped(scope, " > .bc-bg-layer")},
+${scoped(scope, "::before")} {
   content: "";
   position: absolute;
   inset: 0;
@@ -153,7 +220,7 @@ ${scope}::before {
 }
 /* Scrim/overlay between background and text. Its opacity is what the contrast
    check is computed against. */
-${scope}::after {
+${scoped(scope, "::after")} {
   content: "";
   position: absolute;
   inset: 0;
@@ -170,7 +237,7 @@ ${animate ? `
 }
 /* Static frame for users who asked the OS to reduce motion (§4.1). */
 @media (prefers-reduced-motion: reduce) {
-  ${scope}::before { animation: none !important; }
+  ${scoped(scope, "::before")} { animation: none !important; }
 }` : ""}
 `.trim();
 }

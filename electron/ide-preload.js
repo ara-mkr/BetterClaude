@@ -23,6 +23,9 @@ contextBridge.exposeInMainWorld("betterClaudeIDE", {
   gitInfo: (cwd) => ipcRenderer.invoke("ide:git-info", cwd),
   gitDiff: (cwd) => ipcRenderer.invoke("ide:git-diff", cwd),
   listSessions: (cwd) => ipcRenderer.invoke("ide:list-sessions", cwd),
+  readSession: (cwd, sessionId) => ipcRenderer.invoke("ide:read-session", cwd, sessionId),
+  sttAvailable: () => ipcRenderer.invoke("ide:stt-available"),
+  transcribe: (arrayBuffer) => ipcRenderer.invoke("ide:transcribe", arrayBuffer),
   readFile: (cwd, relativePath) => ipcRenderer.invoke("ide:read-file", cwd, relativePath),
   writeFile: (cwd, relativePath, content, expectedMtimeMs) => ipcRenderer.invoke("ide:write-file", cwd, relativePath, content, expectedMtimeMs),
   setLastProject: (cwd) => ipcRenderer.invoke("ide:set-last-project", cwd),
@@ -46,7 +49,7 @@ contextBridge.exposeInMainWorld("betterClaudeIDE", {
   // live on the title bar's logo button in the main window.
   openSettings: () => ipcRenderer.invoke("ide:open-claude-settings"),
   chat: (payload) => ipcRenderer.invoke("ide:chat", payload),
-  stopChat: () => ipcRenderer.invoke("ide:chat-stop"),
+  stopChat: (tabId) => ipcRenderer.invoke("ide:chat-stop", tabId),
   minimize: () => ipcRenderer.invoke("ide:window-minimize"),
   maximizeToggle: () => ipcRenderer.invoke("ide:window-maximize-toggle"),
   close: () => ipcRenderer.invoke("ide:window-close"),

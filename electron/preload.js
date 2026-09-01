@@ -480,19 +480,21 @@ async function bootstrap() {
 
   // --- BetterClaude-owned Code surfaces ---
   // The IDE is a WebContentsView owned by main.js and replaces only the native
-  // Claude Code content area. The existing CLI pane remains a separate,
-  // optional BetterClaude pill and title-bar action. This side owns the
-  // semantic Home/Code interception and the CLI pane's geometry measurement;
-  // the IDE itself uses the full content area below the shared title bar.
-  // Settings -> the CLI pill can be switched off (codeWindow.tabEnabled). Only
-  // the pill is gated: the tray item, app menu, Cmd-Shift-K and `--code` keep
-  // working either way, so turning this off declutters Anthropic's nav without
-  // taking the terminal away. See core/settings-schema.js for the reasoning.
+  // Claude Code content area. The CLI pane is a second WebContentsView. Both
+  // are switched from the ONE nav rail in the shared title bar (ui/title-bar.js);
+  // this module no longer mounts an in-page pill of its own. What stays here is
+  // the CLI pane's geometry measurement, the split-mode logic, and the capture-
+  // phase interception of claude.ai's own (now hidden) Home/Code control as a
+  // belt-and-suspenders fallback.
+  // Settings -> the CLI surface can be switched off (codeWindow.tabEnabled),
+  // which just hides the rail's CLI button: the tray item, app menu,
+  // Cmd-Shift-K and `--code` keep working. See core/settings-schema.js.
   function syncCodeTabEnabled() {
-    const enabled = !(settings.codeWindow && settings.codeWindow.tabEnabled === false);
+    const cliEnabled = !(settings.codeWindow && settings.codeWindow.tabEnabled === false);
+    if (titleBarHandle && titleBarHandle.setCliEnabled) titleBarHandle.setCliEnabled(cliEnabled);
     if (!codeTab) {
       codeTab = mountCodeTab({
-        showPill: enabled,
+        showPill: false,
         titleBarHeight: TITLE_BAR_HEIGHT,
         getSidebarOnRight: () => !!(settings.layout && settings.layout.sidebarPosition === "right"),
         onActivate: () => ipcRenderer.invoke("code-tab:show").catch(() => {}),
@@ -508,15 +510,10 @@ async function bootstrap() {
         onLayout: (rect) => ipcRenderer.send("code-tab:layout", rect),
       });
       // The pane can already be open (tray/menu/accelerator, or a claude.ai
-      // reload that the pane outlived), so adopt main.js's truth rather than
-      // assuming a freshly mounted pill means a closed pane.
+      // reload that the pane outlived), so adopt main.js's truth.
       ipcRenderer.invoke("code-tab:get-state").then(({ shown }) => {
         if (codeTab && shown) codeTab.setActive(true);
       }).catch(() => {});
-    } else {
-      // Keep the listener alive even when the optional CLI pill is hidden: the
-      // native Claude Code tab still needs to open the BetterClaude IDE.
-      codeTab.setPillVisible(enabled);
     }
   }
   syncCodeTabEnabled();
@@ -537,15 +534,38 @@ async function bootstrap() {
   function syncPaneCoverClass() {
     document.body.classList.toggle("bc-native-pane-shown", codePaneShown || idePaneShown);
   }
+  // The title-bar nav rail's pressed state follows main.js's pane truth, not
+  // the other way round — the tray, menu, accelerator and `--code` can all open
+  // or close a pane without the rail being touched.
+  function updateNavMode() {
+    const mode = idePaneShown ? "code" : codePaneShown ? "cli" : "home";
+    if (titleBarHandle && titleBarHandle.setNavMode) titleBarHandle.setNavMode(mode);
+  }
   ipcRenderer.on("code-tab:state", (_e, { shown }) => {
     codePaneShown = !!shown;
     syncPaneCoverClass();
+    updateNavMode();
+    // Opening the pane means the user is now looking at it — clear its dot.
+    if (shown && titleBarHandle && titleBarHandle.setStatus) titleBarHandle.setStatus("cli", "idle");
     if (codeTab && codeTab.isActive() !== shown) codeTab.setActive(shown);
   });
   ipcRenderer.on("ide-tab:state", (_e, { shown }) => {
     idePaneShown = !!shown;
     syncPaneCoverClass();
+    updateNavMode();
+    if (shown && titleBarHandle && titleBarHandle.setStatus) titleBarHandle.setStatus("code", "idle");
     if (codeTab && codeTab.isActive() && shown) codeTab.setActive(false);
+  });
+  // Heuristic Claude Code activity from main.js (electron/claude-activity.js) ->
+  // the nav rail's status dot. The dot shows even while the user is in chat, so
+  // "your CLI session needs approval" is visible without switching to it.
+  ipcRenderer.on("code-tab:activity", (_e, { state }) => {
+    if (codePaneShown) return; // looking at it already
+    if (titleBarHandle && titleBarHandle.setStatus) titleBarHandle.setStatus("cli", state);
+  });
+  ipcRenderer.on("ide-tab:activity", (_e, { state }) => {
+    if (idePaneShown) return;
+    if (titleBarHandle && titleBarHandle.setStatus) titleBarHandle.setStatus("code", state);
   });
   // Adopt main.js's truth after this page (re)loads with a pane already open.
   Promise.all([
@@ -555,6 +575,7 @@ async function bootstrap() {
     codePaneShown = !!(codeState && codeState.shown);
     idePaneShown = !!(ideState && ideState.shown);
     syncPaneCoverClass();
+    updateNavMode();
   });
 
   // The embedded pane is a native view composited above this page, so it also
@@ -1614,7 +1635,27 @@ async function bootstrap() {
     toggleAlwaysOnTop: () => ipcRenderer.invoke("window:toggle-always-on-top"),
     isAlwaysOnTop: () => ipcRenderer.invoke("window:is-always-on-top"),
     openSettings: () => settingsPanel.toggle(),
+    // The nav rail. "Home" only detaches the panes — claude.ai's page is left
+    // exactly where it was underneath, so revealing it is instant with no
+    // reload. "Code"/"CLI" show the matching pane (main.js hides the other).
+    onHome: () => {
+      ipcRenderer.invoke("ide-tab:hide").catch(() => {});
+      ipcRenderer.invoke("code-tab:hide").catch(() => {});
+    },
+    onCode: () => ipcRenderer.invoke("ide-tab:show").catch(() => {}),
+    onCli: () => ipcRenderer.invoke("code-tab:show").catch(() => {}),
     logoSrc,
+  });
+  // The rail exists now — push it the current CLI-enabled setting and pane
+  // truth (syncCodeTabEnabled ran before the bar was mounted).
+  syncCodeTabEnabled();
+  Promise.all([
+    ipcRenderer.invoke("code-tab:get-state").catch(() => ({ shown: false })),
+    ipcRenderer.invoke("ide-tab:get-state").catch(() => ({ shown: false })),
+  ]).then(([codeState, ideState]) => {
+    codePaneShown = !!(codeState && codeState.shown);
+    idePaneShown = !!(ideState && ideState.shown);
+    updateNavMode();
   });
 
   // --- Menu / accelerator bridges from main.js ---

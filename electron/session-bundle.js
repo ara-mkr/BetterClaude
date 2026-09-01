@@ -61,6 +61,54 @@ function encodeCwdToProjectSlug(cwd) {
   return String(cwd).replace(/[^a-zA-Z0-9]/g, "-");
 }
 
+/**
+ * Pulls the human-readable text out of one transcript line's
+ * `message.content` (string, or an array of Anthropic content blocks).
+ * Tool-result blocks are deliberately skipped — they are machine chatter,
+ * not something a person typed or read. Shared by the title deriver, the
+ * on-disk message reader, and formatMessagesAsPlainText below.
+ */
+function extractMessageText(line) {
+  const content = line && line.message && line.message.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((block) => block && block.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("\n");
+}
+
+function collapseTitle(text) {
+  const flat = String(text).replace(/\s+/g, " ").trim();
+  return flat.length > 64 ? `${flat.slice(0, 63)}…` : flat;
+}
+
+/**
+ * A short, human-readable name for a session, for lists that would otherwise
+ * show a raw id. Prefers Claude Code's own `{type:"summary"}` line when the
+ * transcript has one; otherwise the first thing the person actually typed —
+ * the first `type:"user"` line that carries real text (not a tool_result,
+ * not an isMeta/compact-summary bookkeeping line).
+ */
+function deriveSessionTitle(lines) {
+  for (const line of lines || []) {
+    if (line && line.type === "summary" && typeof line.summary === "string" && line.summary.trim()) {
+      return collapseTitle(line.summary);
+    }
+  }
+  for (const line of lines || []) {
+    if (!line || line.type !== "user") continue;
+    if (line.isMeta || line.isCompactSummary) continue;
+    const content = line.message && line.message.content;
+    // A user line whose content is entirely tool_result blocks is the CLI
+    // feeding tool output back in, not a typed prompt.
+    if (Array.isArray(content) && content.length && content.every((b) => b && b.type === "tool_result")) continue;
+    const text = extractMessageText(line).trim();
+    if (text) return collapseTitle(text);
+  }
+  return "";
+}
+
 function readJsonlLines(filePath) {
   let text;
   try {
@@ -126,7 +174,7 @@ function listSessionsForCwd(cwd) {
       // Leave at 0 — sort falls back to timestamp field order below.
     }
 
-    sessions.push({ sessionId, filePath, firstTimestamp, lastTimestamp, messageCount, mtimeMs });
+    sessions.push({ sessionId, filePath, firstTimestamp, lastTimestamp, messageCount, mtimeMs, title: deriveSessionTitle(lines) });
   }
 
   sessions.sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
@@ -399,10 +447,53 @@ function formatMessagesAsPlainText(messages, { maxChars = 20000 } = {}) {
   return joined;
 }
 
+/**
+ * Parsed message list for one on-disk session, straight from
+ * ~/.claude/projects/<slug>/<sessionId>.jsonl. The on-disk analog of
+ * readBundleSessionMessages (which only reads inside a .bcbundle zip).
+ * Confirms the file belongs to `cwd` the same way listSessionsForCwd does.
+ */
+function readSessionMessagesFromDisk(cwd, sessionId) {
+  if (!sessionId || /[^a-zA-Z0-9._-]/.test(String(sessionId))) {
+    throw new Error("Bad session id.");
+  }
+  const filePath = path.join(projectsDir(), encodeCwdToProjectSlug(cwd), `${sessionId}.jsonl`);
+  const lines = readJsonlLines(filePath);
+  if (lines.length === 0) throw new Error(`No transcript on disk for session ${sessionId}.`);
+  const withCwd = lines.find((l) => typeof l.cwd === "string");
+  if (withCwd && path.resolve(withCwd.cwd) !== path.resolve(cwd)) {
+    throw new Error(`Session ${sessionId} does not belong to this project.`);
+  }
+  return lines;
+}
+
+/**
+ * Flattens transcript lines to the minimal shape the chat panel renders:
+ * one entry per human/assistant turn that carries visible text. Tool calls,
+ * tool results and bookkeeping lines are dropped.
+ */
+function messagesToChatTurns(lines) {
+  const turns = [];
+  for (const line of lines || []) {
+    if (line.type !== "user" && line.type !== "assistant") continue;
+    if (line.isMeta || line.isCompactSummary) continue;
+    const content = line.message && line.message.content;
+    if (Array.isArray(content) && content.length && content.every((b) => b && b.type === "tool_result")) continue;
+    const text = extractMessageText(line).trim();
+    if (!text) continue;
+    turns.push({ role: line.type === "user" ? "user" : "assistant", text, ts: line.timestamp || null });
+  }
+  return turns;
+}
+
 module.exports = {
   BUNDLE_VERSION,
   encodeCwdToProjectSlug,
   listSessionsForCwd,
+  deriveSessionTitle,
+  extractMessageText,
+  readSessionMessagesFromDisk,
+  messagesToChatTurns,
   SECRET_PATTERNS,
   scanTextForSecrets,
   scanSessions,

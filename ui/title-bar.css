@@ -138,6 +138,112 @@
   }
 }
 
+/* --- Nav rail: the app's ONE Chat / Code / CLI switch ---
+   Three icon-only squares, same size and position in every mode. Centred by a
+   draggable flex spacer on each side (the right one is slightly narrower so the
+   rail sits a touch right of dead-centre). NOT position:absolute + transform:
+   Chromium computes an element's -webkit-app-region rectangle in pre-transform
+   coordinates, so a translated rail leaves the OS drag/no-drag hole offset from
+   where the buttons paint and every click is swallowed as a window drag.
+   The Code IDE and CLI panes are composited BELOW this bar, so the rail stays
+   put whether you're looking at claude.ai chat, the IDE, or the terminal.
+   Replaces core/code-tab.js's roaming CLI pill, the IDE sidebar's labelled
+   chip, and claude.ai's own sidebar mode switch (hidden below). */
+#betterclaude-titlebar .bc-tb-spacer-right {
+  /* < 1 so the centred rail lands a little right of the window centre. */
+  flex-grow: 0.92;
+}
+#betterclaude-titlebar .bc-tb-nav {
+  flex: 0 0 auto;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+/* Belt-and-suspenders: -webkit-app-region does not inherit, so a bare child
+   (the icon <span>/<svg>) sits at the default `none` and, inside the bar's
+   `drag` region, can still read as draggable and eat the click. Force every
+   descendant to no-drag and let pointer events fall straight through the icon
+   to the button. */
+#betterclaude-titlebar .bc-tb-nav * {
+  -webkit-app-region: no-drag;
+}
+
+#betterclaude-titlebar .bc-tb-nav-btn {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 22%;
+  clip-path: var(--bc-squircle-clip);
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  color: var(--bc-text-muted, #a99bd1);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  -webkit-app-region: no-drag;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+#betterclaude-titlebar .bc-tb-nav-btn[hidden] { display: none; }
+
+#betterclaude-titlebar .bc-tb-nav-icon {
+  display: flex;
+  width: 17px;
+  height: 17px;
+  pointer-events: none;
+}
+#betterclaude-titlebar .bc-tb-nav-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  #betterclaude-titlebar .bc-tb-nav-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--bc-text, #ece7fb);
+  }
+}
+
+#betterclaude-titlebar .bc-tb-nav-btn:focus-visible {
+  outline: 2px solid var(--bc-accent, #6c63ff);
+  outline-offset: 2px;
+}
+
+/* Active mode — the pressed button. A quiet neutral fill plus full-strength
+   foreground, the same restrained treatment claude.ai's own segmented control
+   uses for its selected item; no accent glow, no ring. */
+#betterclaude-titlebar .bc-tb-nav-btn.bc-tb-nav-active {
+  background: color-mix(in srgb, var(--bc-text, #ece7fb) 13%, transparent);
+  color: var(--bc-text, #ece7fb);
+}
+
+/* Claude Code status dot — top-right corner of whichever button owns the
+   session. Set by ui/title-bar.js setStatus() from electron/claude-activity.js:
+   amber = waiting on your approval, red = stopped/errored, green = just
+   finished. The ring is the bar's own background so the dot reads as a badge
+   sitting on the icon. */
+#betterclaude-titlebar .bc-tb-nav-btn[data-nav-status]::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--bc-bg-sidebar, #100c1c);
+  background: var(--bc-text-muted, #a99bd1);
+}
+#betterclaude-titlebar .bc-tb-nav-btn[data-nav-status="waiting"]::after { background: #f5a623; }
+#betterclaude-titlebar .bc-tb-nav-btn[data-nav-status="stopped"]::after { background: #f0506e; }
+#betterclaude-titlebar .bc-tb-nav-btn[data-nav-status="done"]::after { background: #35c759; }
+
 #betterclaude-titlebar .bc-tb-logo-btn {
   background: transparent !important;
   border: 0 !important;
@@ -443,133 +549,26 @@ body.bc-layout-unrecognized #betterclaude-titlebar .bc-tb-btn {
 }
 
 /* ------------------------------------------------------------------ *
- * BetterClaude's Code tab (core/code-tab.js)
+ * claude.ai's own sidebar mode switch — superseded, hidden.
  *
- * One pill mounted next to Anthropic's own Home / Code segmented control —
- * THE Home/Code/CLI switch for the whole app: claude.ai's own two pills are
- * left exactly as Anthropic draws them, and ours is styled to disappear into
- * that row rather than compete with it as a second, chrome-drawn copy of the
- * same navigation.
+ * BetterClaude's nav rail (the .bc-tb-nav buttons above) is now THE
+ * Home / Code / CLI switch for the whole app, in one fixed spot that every
+ * mode shares. claude.ai still renders its own Home/Code segmented control at
+ * the top of its sidebar; leaving it visible would put two navigation
+ * controls on the same screen saying almost the same thing. Hide it.
  *
- * Everything here is expressed in --bc-* tokens and inherited metrics rather
- * than in copies of Anthropic's numbers. Hardcoding their pill height is the
- * same class of mistake as hardcoding their selectors: it looks right on the
- * build it was measured against and drifts silently on the next one.
+ * claude.ai's current build renders it as `div.df-app-switch` (also carrying
+ * `data-compact-mode-switcher`) inside `.df-titlebar` at the top of the
+ * sidebar — a `[role="radiogroup"]` of `span[role="radio"][data-mode]` items,
+ * NOT the `[data-segmented]` group an older audit saw. Both hooks are matched.
+ * A build where this misses just falls back to core/code-tab.js's click
+ * interception, which still turns a native Code click into the BetterClaude
+ * IDE. Nothing here touches claude.ai's router or its own state machine.
  * ------------------------------------------------------------------ */
-
-.bc-code-tab-pill {
-  /* flex:1 with a zero basis makes the three pills share the row evenly, so
-     adding ours re-splits the group instead of overflowing it — and it keeps
-     working if Anthropic ships a fourth. */
-  flex: 1 1 0;
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  /* Match the row's height rather than naming a number: the pills are laid out
-     by their own container, and inheriting from it is what keeps ours on the
-     same baseline when Anthropic re-tunes the row. */
-  align-self: stretch;
-  padding: 0 10px;
-  border: 1px solid transparent;
-  /* !important on both of these because the injected theme scaffold outranks
-     us on claude.ai's own DOM, and it was quietly winning:
-       - core/theme-engine.js forces `background: transparent` onto every button
-         it does not itself paint, which flattened this pill's selected fill to
-         nothing and left the glow ringing an empty box;
-       - the scaffold's `button { border-radius: var(--bc-radius) }` applies the
-         page-wide corner-shape preference, so on a "sharp" setting this pill
-         squared off to 0 while Anthropic's own pills kept their 7px (their
-         utility CSS outranks the scaffold). The one square control in a row of
-         rounded ones is most of what read as a "harsh box".
-     This pill is BetterClaude chrome that happens to live inside Anthropic's
-     nav, so it follows the ROW it sits in, not the page's shape preference —
-     the same reasoning that already excludes #betterclaude-titlebar from those
-     rules; it just isn't reachable by that id, hence !important here. */
-  border-radius: 7px !important;
-  background: transparent !important;
-  color: var(--bc-text-muted, #a99bd1);
-  font: inherit;
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease,
-    box-shadow 160ms ease;
-}
-
-/* The brand mark is the only thing that distinguishes our pill from Anthropic's
-   two at a glance, and that distinction is the point: the user should be able
-   to tell whose Code they are about to open. */
-.bc-code-tab-pill::before {
-  content: "";
-  flex: 0 0 auto;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--bc-accent, #6c63ff);
-  opacity: 0.9;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .bc-code-tab-pill:hover {
-    background: var(--nav-item-bg-hover, rgba(255, 255, 255, 0.06)) !important;
-    color: var(--bc-text, #ece7fb);
-  }
-}
-
-.bc-code-tab-pill:focus-visible {
-  outline: 2px solid var(--bc-accent, #6c63ff);
-  outline-offset: 2px;
-}
-
-/* Active state: the SAME treatment Anthropic's own row uses for its selected
-   pill — a quiet soft fill, nothing else — and explicitly NOT a filled accent
-   glow or an outlined box.
-   Measured against Anthropic's two pills on the live page: their selection is
-   drawn by a separate sliding indicator (a soft filled segment, no edge), with
-   border-width 0 and box-shadow none on the pills themselves. The earlier
-   inset hairline ring read as a boxed outline — a different, louder control
-   parked next to two quiet ones. There is deliberately NO ring and NO outer
-   glow of any kind: fill only, exactly like their indicator. */
-.bc-code-tab-pill[data-bc-active] {
-  background: color-mix(in srgb, var(--bc-text, #ece7fb) 8%, transparent) !important;
-  border-color: transparent;
-  color: var(--bc-text, #ece7fb);
-}
-
-/* The brand dot stays lit while active but no longer glows — same rule as the
-   container: read as selected, not as a lamp. */
-.bc-code-tab-pill[data-bc-active]::before {
-  opacity: 1;
-}
-
-/* While OUR pane owns the content area, Anthropic's segmented control must not
-   still look selected.
-   Their selection is not a style on the pill — it is a separate absolutely
-   positioned element that slides between them (div.df-pill-indicator, inline
-   `transform: translateX(...)`, also identifiable by its data-at attribute).
-   Clicking our pill deliberately does not navigate claude.ai, so their
-   indicator stays parked under Home or Code and the row reads as two selected
-   tabs at once, which is exactly what it looked like.
-   Matched as a DESCENDANT rather than a direct child, with !important: the
-   indicator carries an inline opacity of its own on some builds, and a build
-   that nests the element one level deeper would otherwise keep it lit — which
-   read as the native Code pill permanently filled and selected while our pane
-   was up.
-   Hidden with opacity rather than display/visibility so their own slide
-   transition is untouched and the indicator fades back the instant the class
-   comes off (core/code-tab.js toggles body.bc-code-tab-active in setActive) —
-   nothing about their state machine is modified, so their navigation still
-   behaves exactly as it would without us.
-   pointer-events stays untouched: their pills remain fully clickable, which is
-   how the user switches back. */
-body.bc-code-tab-active [data-segmented] .df-pill-indicator,
-body.bc-code-tab-active [data-segmented] [data-at] {
-  opacity: 0 !important;
+.df-titlebar .df-app-switch,
+[data-compact-mode-switcher],
+[data-testid="sidebar"] [role="group"][data-segmented]:has([data-mode]) {
+  display: none !important;
 }
 
 /* While a native pane (the IDE workspace or the CLI terminal) is composited
@@ -589,21 +588,4 @@ body.bc-code-tab-active [data-segmented] [data-at] {
 body.bc-native-pane-shown .df-titlebar,
 body.bc-native-pane-shown [class~="draggable"] {
   -webkit-app-region: no-drag !important;
-}
-
-/* Fallback position: the adapter could not resolve Anthropic's pill container,
-   so core/code-tab.js parked the pill on <body> instead of dropping it. A
-   control in a slightly odd place is a far better failure than a feature that
-   silently disappears. Anchored just under the title bar on the left, which is
-   clear of Claude's own chrome on every route the audit covered. */
-.bc-code-tab-pill.bc-code-tab-floating {
-  position: fixed;
-  top: calc(var(--bc-tb-h) + 8px);
-  left: 12px;
-  z-index: 2147483400;
-  flex: 0 0 auto;
-  height: 28px;
-  background: var(--bc-bg-elevated, #1c1630);
-  border-color: var(--bc-border, #2c2347);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }

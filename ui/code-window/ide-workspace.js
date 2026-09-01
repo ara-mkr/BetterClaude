@@ -58,9 +58,32 @@
   let lastWorkspaceActivity = "explorer";
   window.__bcDebugActivity = () => ({ activity, last: lastWorkspaceActivity });
   let selectedAttachments = [];
-  let chatSessionId = null;
-  let chatBusy = false;
-  let activeAssistantMessage = null;
+
+  // --- Multi-session chat -------------------------------------------------
+  // Each open session is one tab. Several can stream at once — every
+  // ide:chat-event carries a `tabId` that routes it back to its record.
+  // A record: { tabId, sessionId|null, title, permMode, transcriptEl,
+  //             busy, activeAssistantMessage, seeded }
+  // `sessionId` is null until the CLI reports one (a brand-new chat); once
+  // set, the next turn resumes it with --resume.
+  let openSessions = [];
+  let activeTabId = null;
+  let tabSeq = 0;
+  // "chat" = the transcript is the main column; "editor" = the classic
+  // file-tree + editor + terminal workspace, chat back to a right rail.
+  let view = "chat";
+  try {
+    const storedView = localStorage.getItem("bc-ide-view");
+    if (storedView === "chat" || storedView === "editor") view = storedView;
+  } catch {}
+  let permMode = "normal";
+  try {
+    const storedPerm = localStorage.getItem("bc-ide-perm-mode");
+    if (["plan", "normal", "auto"].includes(storedPerm)) permMode = storedPerm;
+  } catch {}
+
+  const activeSession = () => openSessions.find((s) => s.tabId === activeTabId) || null;
+  const sessionByTab = (tabId) => openSessions.find((s) => s.tabId === tabId) || null;
 
   // Latest merged settings, kept fresh by the workspace-settings broadcast so
   // every BetterClaude preference (themes aside, those restyle through CSS)
@@ -93,7 +116,7 @@
   function pollWaitingBusy() {
     if (!waitingGame) return;
     const terminalActive = terminalReady && Date.now() - lastPtyDataAt < 2500;
-    const busy = chatBusy || terminalActive;
+    const busy = openSessions.some((s) => s.busy) || terminalActive;
     if (busy !== wasWaitingBusy) {
       wasWaitingBusy = busy;
       waitingGame.setWorking(busy);
@@ -220,15 +243,17 @@
       sessionList.innerHTML = '<div class="bc-ide-empty-row">No saved sessions in this folder</div>';
       return;
     }
-    sessions.slice(0, 30).forEach((session, index) => {
+    sessions.slice(0, 30).forEach((session) => {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "bc-ide-session-row";
-      button.innerHTML = `<span class="bc-ide-status-dot ${index === 0 ? "live" : ""}"></span><span class="bc-ide-row-copy"><span class="bc-ide-row-name"></span><span class="bc-ide-row-meta"></span></span>`;
-      button.querySelector(".bc-ide-row-name").textContent = session.sessionId.slice(0, 12);
+      const open = openSessions.some((s) => s.sessionId === session.sessionId);
+      button.innerHTML = `<span class="bc-ide-status-dot ${open ? "live" : ""}"></span><span class="bc-ide-row-copy"><span class="bc-ide-row-name"></span><span class="bc-ide-row-meta"></span></span>`;
+      button.querySelector(".bc-ide-row-name").textContent = session.title || `Session ${session.sessionId.slice(0, 8)}`;
       const stamp = session.lastTimestamp ? new Date(session.lastTimestamp).toLocaleString() : "saved";
       button.querySelector(".bc-ide-row-meta").textContent = `${stamp} · ${session.messageCount || 0} messages`;
-      button.addEventListener("click", () => resumeLocalSession(session.sessionId, button));
+      button.title = session.title || session.sessionId;
+      button.addEventListener("click", () => openSessionInChat({ sessionId: session.sessionId, title: session.title }));
       sessionList.appendChild(button);
     });
   }
@@ -359,50 +384,62 @@
     }
   }
 
-  function scrollChatToEnd() {
-    const messages = $("bc-ide-chat-messages");
-    messages.scrollTop = messages.scrollHeight;
+  // The scrollable host holds one .bc-ide-chat-transcript per open session;
+  // only the active one is shown. A message goes into the transcript element
+  // its session owns, so background sessions keep filling in while hidden.
+  function transcriptFor(target) {
+    if (target && target.transcriptEl) return target.transcriptEl;
+    const s = activeSession();
+    return s ? s.transcriptEl : null;
   }
 
-  function appendChatMessage(role, text = "") {
-    const messages = $("bc-ide-chat-messages");
-    const welcome = messages.querySelector(".bc-ide-chat-welcome");
+  function scrollChatToEnd() {
+    // #bc-ide-chat-messages is the single scroll container; the per-session
+    // transcript divs inside it are not independently scrollable.
+    const host = $("bc-ide-chat-messages");
+    host.scrollTop = host.scrollHeight;
+  }
+
+  function appendChatMessage(role, text = "", target = null) {
+    const host = transcriptFor(target);
+    if (!host) return null;
+    const welcome = host.querySelector(".bc-ide-chat-welcome");
     if (welcome) welcome.remove();
     const item = document.createElement("article");
     item.className = "bc-ide-chat-message";
     item.dataset.role = role;
     const label = document.createElement("div");
     label.className = "bc-ide-chat-label";
-    // The answer's author is whoever actually produced it — Claude, or the
-    // free provider that took over after a usage limit.
     label.textContent = role === "user" ? "You" : activeModelLabel || "Claude";
     const bubble = document.createElement("div");
     bubble.className = "bc-ide-chat-bubble";
     bubble.textContent = text;
     item.append(label, bubble);
-    messages.appendChild(item);
-    scrollChatToEnd();
+    host.appendChild(item);
+    if (!target || target.tabId === activeTabId) scrollChatToEnd(host);
     return bubble;
   }
 
-  /** One-line status note inside the transcript ("continuing with X…"). */
-  function appendChatSystemNote(text) {
-    const messages = $("bc-ide-chat-messages");
-    const welcome = messages.querySelector(".bc-ide-chat-welcome");
+  /** One-line status note inside a session's transcript. */
+  function appendChatSystemNote(text, target = null) {
+    const host = transcriptFor(target);
+    if (!host) return;
+    const welcome = host.querySelector(".bc-ide-chat-welcome");
     if (welcome) welcome.remove();
     const note = document.createElement("div");
     note.className = "bc-ide-chat-system";
     note.textContent = text;
-    messages.appendChild(note);
-    scrollChatToEnd();
+    host.appendChild(note);
+    if (!target || target.tabId === activeTabId) scrollChatToEnd(host);
   }
 
-  function setChatBusy(next) {
-    chatBusy = next;
-    $("bc-ide-chat-stop").hidden = !next;
-    $("bc-ide-chat-input").disabled = next;
-    $("bc-ide-chat-attach").disabled = next;
-    $("bc-ide-chat-form").dataset.busy = next ? "true" : "false";
+  // Composer chrome reflects the ACTIVE session only. Input and attach stay
+  // usable while a background session streams, so you can queue work in
+  // another tab.
+  function syncComposerBusy() {
+    const s = activeSession();
+    $("bc-ide-chat-stop").hidden = !(s && s.busy);
+    $("bc-ide-chat-form").dataset.busy = s && s.busy ? "true" : "false";
   }
 
   function renderAttachments() {
@@ -436,106 +473,420 @@
     }
   }
 
+  function endSessionTurn(s) {
+    if (!s) return;
+    s.busy = false;
+    s.activeAssistantMessage = null;
+    renderSessionTabs();
+    if (s.tabId === activeTabId) syncComposerBusy();
+  }
+
   function handleChatEvent(event = {}) {
+    // Route to the tab that owns this turn; fall back to the active one for
+    // pre-tab error payloads.
+    const s = sessionByTab(event.tabId) || activeSession();
+    if (!s) return;
+
     if (event.type === "start") {
       activeModelLabel = event.modelLabel || (selectedModel === "claude" ? "Claude" : modelLabelFor(selectedModel));
-      setChatBusy(true);
+      s.busy = true;
+      renderSessionTabs();
+      if (s.tabId === activeTabId) syncComposerBusy();
       return;
     }
     if (event.type === "model-switch") {
-      // A free provider took over (chosen manually or after a usage limit).
-      // Say so in the transcript so the answer's provenance is never a mystery.
       activeModelLabel = event.modelLabel || event.modelId;
-      if (!activeAssistantMessage || !activeAssistantMessage.textContent) {
-        appendChatSystemNote(`Answering with ${activeModelLabel}${event.keyless ? " (no login)" : ""}${event.total > 1 ? ` · free provider ${event.attempt}/${event.total}` : ""}…`);
+      if (!s.activeAssistantMessage || !s.activeAssistantMessage.textContent) {
+        appendChatSystemNote(`Answering with ${activeModelLabel}${event.keyless ? " (no login)" : ""}${event.total > 1 ? ` · free provider ${event.attempt}/${event.total}` : ""}…`, s);
       }
       setStatus(`${activeModelLabel} is thinking...`);
       return;
     }
     if (event.type === "session" && event.sessionId) {
-      chatSessionId = event.sessionId;
+      s.sessionId = event.sessionId;
       return;
     }
     if (event.type === "delta" && event.text) {
-      if (!activeAssistantMessage) activeAssistantMessage = appendChatMessage("assistant");
-      activeAssistantMessage.textContent += event.text;
-      scrollChatToEnd();
+      if (!s.activeAssistantMessage) s.activeAssistantMessage = appendChatMessage("assistant", "", s);
+      s.activeAssistantMessage.textContent += event.text;
+      if (s.tabId === activeTabId) scrollChatToEnd(s.transcriptEl);
       return;
     }
     if (event.type === "diagnostic") {
-      // Diagnostics are deliberately kept out of the conversation transcript;
-      // they belong in the status line while Claude is working.
-      setStatus(event.message.slice(0, 180));
+      setStatus(String(event.message || "").slice(0, 180));
       return;
     }
     if (event.type === "error") {
-      if (!activeAssistantMessage) activeAssistantMessage = appendChatMessage("assistant");
-      activeAssistantMessage.textContent = event.message || "Claude could not complete that request.";
-      // If that failure looks like a usage limit and auto-failover is off,
-      // tell the user the one toggle that fixes it instead of leaving them
-      // stuck at the limit.
+      if (!s.activeAssistantMessage) s.activeAssistantMessage = appendChatMessage("assistant", "", s);
+      s.activeAssistantMessage.textContent = event.message || "Claude could not complete that request.";
       const failoverOff = !(latestSettings && latestSettings.codeWindow && latestSettings.codeWindow.freeModels && latestSettings.codeWindow.freeModels.autoFailover !== false);
       if (/usage limit|rate.?limit|credit|quota/i.test(event.message || "") && failoverOff) {
-        appendChatSystemNote("Free-model auto-failover is off — open the model picker to switch providers or turn it on.");
+        appendChatSystemNote("Free-model auto-failover is off — open the model picker to switch providers or turn it on.", s);
       }
-      setChatBusy(false);
-      activeAssistantMessage = null;
+      endSessionTurn(s);
       setStatus("Claude request failed");
       return;
     }
     if (event.type === "stopped") {
-      setChatBusy(false);
-      activeAssistantMessage = null;
+      endSessionTurn(s);
       setStatus("Claude request stopped");
       return;
     }
     if (event.type === "done") {
-      if (!chatBusy) return;
-      setChatBusy(false);
-      activeAssistantMessage = null;
+      if (!s.busy) return;
+      endSessionTurn(s);
       setStatus(event.modelLabel && event.modelLabel !== "Claude" ? `${event.modelLabel} response ready` : "Claude response ready");
       refreshProjectAfterChat();
+      refreshSessionList();
     }
   }
 
   async function sendChatMessage(event) {
-    event.preventDefault();
-    if (chatBusy || !activeProject) return;
+    if (event) event.preventDefault();
+    if (!activeProject) return;
     const input = $("bc-ide-chat-input");
     const prompt = input.value.trim();
     if (!prompt) return;
+
+    let s = activeSession();
+    if (!s) s = newChatSession();
+    if (s.busy) { setStatus("This session is still answering — open a new tab to ask something else."); return; }
+
     const attachments = selectedAttachments.slice();
-    appendChatMessage("user", prompt + (attachments.length ? `\n\nAttached: ${attachments.map((file) => file.path).join(", ")}` : ""));
-    activeAssistantMessage = null;
+    appendChatMessage("user", prompt + (attachments.length ? `\n\nAttached: ${attachments.map((file) => file.path).join(", ")}` : ""), s);
+    if (!s.title || s.title === "New session") {
+      s.title = prompt.replace(/\s+/g, " ").slice(0, 48);
+    }
+    s.activeAssistantMessage = null;
+    s.busy = true;
     input.value = "";
+    autosizeComposer();
     selectedAttachments = [];
     renderAttachments();
+    renderSessionTabs();
+    syncComposerBusy();
     activeModelLabel = selectedModel === "claude" ? "Claude" : modelLabelFor(selectedModel);
     setStatus(`${activeModelLabel} is thinking...`);
-    setChatBusy(true);
     try {
       const started = await api.chat({
         cwd: activeProject.cwd,
         prompt,
         attachments,
-        sessionId: chatSessionId,
-        // "claude" routes to the subscription CLI; a free-model id routes to
-        // the OpenRouter/keyless chain in the main process.
+        sessionId: s.sessionId,
         model: selectedModel,
+        permissionMode: s.permMode || permMode,
+        tabId: s.tabId,
       });
       if (!started) {
-        if (activeAssistantMessage) {
-          activeAssistantMessage.textContent = "Claude Code could not start. Check that the Claude CLI is installed and signed in.";
-          activeAssistantMessage = null;
-        }
-        setChatBusy(false);
+        appendChatMessage("assistant", "Claude Code could not start. Check that the Claude CLI is installed and signed in.", s);
+        endSessionTurn(s);
       }
     } catch (error) {
-      if (activeAssistantMessage) activeAssistantMessage.textContent = error.message || "Claude Code could not start.";
-      activeAssistantMessage = null;
-      setChatBusy(false);
+      appendChatMessage("assistant", error.message || "Claude Code could not start.", s);
+      endSessionTurn(s);
       setStatus("Claude request failed");
     }
+  }
+
+  // --- Session tabs + views --------------------------------------------
+
+  function setView(next) {
+    view = next === "editor" ? "editor" : "chat";
+    shell.dataset.view = view;
+    try { localStorage.setItem("bc-ide-view", view); } catch {}
+    if (view === "chat") {
+      $("bc-ide-chat-panel").hidden = false;
+      $("bc-ide-chat-input").focus();
+    }
+  }
+
+  function renderSessionTabs() {
+    const strip = $("bc-ide-session-tabs");
+    strip.textContent = "";
+    openSessions.forEach((s) => {
+      const tab = document.createElement("button");
+      tab.type = "button";
+      tab.className = "bc-ide-session-tab" + (s.tabId === activeTabId ? " active" : "");
+      tab.dataset.tabId = s.tabId;
+      tab.setAttribute("role", "tab");
+      tab.innerHTML = `<span class="bc-ide-session-tab-dot${s.busy ? " live" : ""}"></span><span class="bc-ide-session-tab-name"></span><span class="bc-ide-session-tab-close" role="button" aria-label="Close session">${icon("CLOSE")}</span>`;
+      tab.querySelector(".bc-ide-session-tab-name").textContent = s.title || "New session";
+      tab.title = s.title || "New session";
+      tab.addEventListener("click", (event) => {
+        if (event.target.closest(".bc-ide-session-tab-close")) { closeSession(s.tabId); return; }
+        showTranscript(s.tabId);
+      });
+      strip.appendChild(tab);
+    });
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "bc-ide-session-tab-add";
+    add.title = "New Claude session";
+    add.setAttribute("aria-label", "New Claude session");
+    add.innerHTML = icon("PLUS");
+    add.addEventListener("click", () => { newChatSession(); });
+    strip.appendChild(add);
+  }
+
+  function showTranscript(tabId) {
+    const s = sessionByTab(tabId);
+    if (!s) return;
+    activeTabId = tabId;
+    const host = $("bc-ide-chat-messages");
+    host.querySelectorAll(".bc-ide-chat-transcript").forEach((el) => {
+      el.classList.toggle("active", el === s.transcriptEl);
+    });
+    // Composer reflects this session.
+    permMode = s.permMode || permMode;
+    syncPermModeButtons();
+    syncComposerBusy();
+    renderSessionTabs();
+    $("bc-ide-chat-subtitle").textContent = s.sessionId ? `Resuming ${s.sessionId.slice(0, 8)}` : "New session";
+    scrollChatToEnd(s.transcriptEl);
+  }
+
+  function makeSessionRecord({ sessionId = null, title = "New session" } = {}) {
+    const tabId = `tab-${++tabSeq}-${Date.now().toString(36)}`;
+    const transcriptEl = document.createElement("div");
+    transcriptEl.className = "bc-ide-chat-transcript";
+    transcriptEl.dataset.tabId = tabId;
+    $("bc-ide-chat-messages").appendChild(transcriptEl);
+    const record = { tabId, sessionId, title, permMode, transcriptEl, busy: false, activeAssistantMessage: null };
+    openSessions.push(record);
+    return record;
+  }
+
+  function newChatSession() {
+    const record = makeSessionRecord();
+    record.transcriptEl.innerHTML = '<div class="bc-ide-chat-welcome"><strong>New Claude session</strong><p>Ask about this project, or type / for commands. This starts a fresh session — it will appear in the sidebar once it has a first reply.</p></div>';
+    setView("chat");
+    showTranscript(record.tabId);
+    return record;
+  }
+
+  async function openSessionInChat(sessionMeta) {
+    if (!activeProject || !sessionMeta || !sessionMeta.sessionId) return;
+    const existing = openSessions.find((s) => s.sessionId === sessionMeta.sessionId);
+    if (existing) { setView("chat"); showTranscript(existing.tabId); return; }
+
+    const record = makeSessionRecord({ sessionId: sessionMeta.sessionId, title: sessionMeta.title || `Session ${sessionMeta.sessionId.slice(0, 8)}` });
+    record.transcriptEl.innerHTML = '<div class="bc-ide-chat-welcome">Loading transcript…</div>';
+    setView("chat");
+    showTranscript(record.tabId);
+    setStatus(`Opening ${record.title}…`);
+    try {
+      const result = await api.readSession(activeProject.cwd, sessionMeta.sessionId);
+      record.transcriptEl.textContent = "";
+      const turns = (result && result.turns) || [];
+      if (!turns.length) {
+        appendChatSystemNote(result && result.error ? result.error : "This session's transcript is empty.", record);
+      } else {
+        turns.forEach((turn) => appendChatMessage(turn.role === "user" ? "user" : "assistant", turn.text, record));
+      }
+      setStatus(`${record.title} · ${turns.length} message${turns.length === 1 ? "" : "s"}`);
+      scrollChatToEnd(record.transcriptEl);
+    } catch (error) {
+      record.transcriptEl.textContent = "";
+      appendChatSystemNote(error.message || "Could not load that session.", record);
+    }
+  }
+
+  function closeSession(tabId) {
+    const idx = openSessions.findIndex((s) => s.tabId === tabId);
+    if (idx === -1) return;
+    const s = openSessions[idx];
+    if (s.busy) api.stopChat(tabId);
+    s.transcriptEl.remove();
+    openSessions.splice(idx, 1);
+    if (activeTabId === tabId) {
+      const next = openSessions[idx] || openSessions[idx - 1] || null;
+      if (next) showTranscript(next.tabId);
+      else { activeTabId = null; renderSessionTabs(); $("bc-ide-chat-subtitle").textContent = "Project-aware assistant"; }
+    } else {
+      renderSessionTabs();
+    }
+  }
+
+  async function refreshSessionList() {
+    if (!activeProject) return;
+    try {
+      sessions = (await api.listSessions(activeProject.cwd)) || [];
+      renderSessions();
+    } catch {}
+  }
+
+  function autosizeComposer() {
+    const input = $("bc-ide-chat-input");
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, 200)}px`;
+  }
+
+  function syncPermModeButtons() {
+    document.querySelectorAll("#bc-ide-perm-mode button[data-perm]").forEach((btn) => {
+      btn.setAttribute("aria-pressed", String(btn.dataset.perm === permMode));
+    });
+  }
+
+  function setPermMode(next) {
+    if (!["plan", "normal", "auto"].includes(next)) return;
+    permMode = next;
+    try { localStorage.setItem("bc-ide-perm-mode", next); } catch {}
+    const s = activeSession();
+    if (s) s.permMode = next;
+    syncPermModeButtons();
+    setStatus(next === "plan" ? "Plan mode — Claude will not edit files" : next === "auto" ? "Auto mode — Claude runs edits and commands" : "Normal mode");
+  }
+
+  // --- Slash-command menu ----------------------------------------------
+  const SLASH_COMMANDS = [
+    { name: "/clear", blurb: "Start a fresh context in this session" },
+    { name: "/compact", blurb: "Summarise the conversation so far" },
+    { name: "/review", blurb: "Review the current changes" },
+    { name: "/model", blurb: "Switch the Claude model" },
+    { name: "/cost", blurb: "Show token usage and cost" },
+    { name: "/context", blurb: "Show what's in the context window" },
+    { name: "/init", blurb: "Generate or refresh CLAUDE.md" },
+    { name: "/pr", blurb: "Open a pull request for this branch" },
+  ];
+
+  function slashCandidates(fragment) {
+    const q = fragment.replace(/^\//, "").toLowerCase();
+    const prompts = ((latestSettings && latestSettings.promptLibrary && latestSettings.promptLibrary.prompts) || [])
+      .map((p) => ({ name: `/${(p.title || "prompt").replace(/\s+/g, "-").toLowerCase()}`, blurb: "Prompt library", body: p.body || p.text || "" }));
+    return [...SLASH_COMMANDS, ...prompts].filter((c) => !q || c.name.toLowerCase().includes(q)).slice(0, 8);
+  }
+
+  let slashIndex = 0;
+  function refreshSlashMenu() {
+    const input = $("bc-ide-chat-input");
+    const menu = $("bc-ide-slash-menu");
+    const value = input.value;
+    if (!value.startsWith("/") || value.includes("\n")) { menu.hidden = true; return; }
+    const items = slashCandidates(value);
+    if (!items.length) { menu.hidden = true; return; }
+    if (slashIndex >= items.length) slashIndex = 0;
+    menu.textContent = "";
+    items.forEach((item, i) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "bc-ide-slash-row" + (i === slashIndex ? " active" : "");
+      row.innerHTML = `<strong></strong><small></small>`;
+      row.querySelector("strong").textContent = item.name;
+      row.querySelector("small").textContent = item.blurb;
+      row.addEventListener("mousedown", (e) => { e.preventDefault(); pickSlash(item); });
+      menu.appendChild(row);
+    });
+    menu.hidden = false;
+    menu.dataset.count = String(items.length);
+  }
+
+  function pickSlash(item) {
+    const input = $("bc-ide-chat-input");
+    if (item.body) input.value = item.body;
+    else input.value = `${item.name} `;
+    $("bc-ide-slash-menu").hidden = true;
+    input.focus();
+    autosizeComposer();
+  }
+
+  // --- Push-to-talk voice (macOS; see electron/speech.js) --------------
+  let micStream = null;
+  let micNodes = null;
+  let micChunks = [];
+  let micRecording = false;
+
+  async function startMic() {
+    if (micRecording) return;
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (error) {
+      setStatus(error && error.name === "NotAllowedError" ? "Microphone access was denied." : "No microphone available.");
+      return;
+    }
+    micRecording = true;
+    micChunks = [];
+    $("bc-ide-mic").classList.add("recording");
+    setStatus("Listening…");
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = ctx.createMediaStreamSource(micStream);
+    const processor = ctx.createScriptProcessor(4096, 1, 1);
+    processor.onaudioprocess = (e) => {
+      if (!micRecording) return;
+      micChunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+    };
+    source.connect(processor);
+    processor.connect(ctx.destination);
+    micNodes = { ctx, source, processor, sampleRate: ctx.sampleRate };
+  }
+
+  async function stopMic() {
+    if (!micRecording) return;
+    micRecording = false;
+    $("bc-ide-mic").classList.remove("recording");
+    const nodes = micNodes;
+    micNodes = null;
+    if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
+    if (nodes) {
+      try { nodes.processor.disconnect(); nodes.source.disconnect(); nodes.ctx.close(); } catch {}
+    }
+    const wav = encodeWav(micChunks, nodes ? nodes.sampleRate : 48000);
+    micChunks = [];
+    if (!wav || wav.byteLength < 4096) { setStatus("Didn't catch that."); return; }
+    setStatus("Transcribing…");
+    try {
+      const result = await api.transcribe(wav);
+      if (result && result.text) {
+        const input = $("bc-ide-chat-input");
+        input.value = (input.value ? input.value.replace(/\s*$/, " ") : "") + result.text;
+        autosizeComposer();
+        input.focus();
+        setStatus("Transcribed");
+      } else {
+        setStatus((result && result.error) || "Could not transcribe that.");
+      }
+    } catch (error) {
+      setStatus(error.message || "Transcription failed.");
+    }
+  }
+
+  // Downsample the captured 32-bit float PCM to 16 kHz mono and wrap it in a
+  // WAV container — the shape whisper.cpp expects. Kept in the renderer so the
+  // main process only ever receives a ready-to-transcribe file.
+  function encodeWav(chunks, inputRate) {
+    let length = 0;
+    chunks.forEach((c) => { length += c.length; });
+    const merged = new Float32Array(length);
+    let offset = 0;
+    chunks.forEach((c) => { merged.set(c, offset); offset += c.length; });
+
+    const targetRate = 16000;
+    const ratio = inputRate / targetRate;
+    const outLength = Math.floor(merged.length / ratio);
+    const out = new Int16Array(outLength);
+    for (let i = 0; i < outLength; i++) {
+      const sample = merged[Math.floor(i * ratio)] || 0;
+      const clamped = Math.max(-1, Math.min(1, sample));
+      out[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+    }
+
+    const buffer = new ArrayBuffer(44 + out.length * 2);
+    const dv = new DataView(buffer);
+    const writeStr = (pos, str) => { for (let i = 0; i < str.length; i++) dv.setUint8(pos + i, str.charCodeAt(i)); };
+    writeStr(0, "RIFF");
+    dv.setUint32(4, 36 + out.length * 2, true);
+    writeStr(8, "WAVE");
+    writeStr(12, "fmt ");
+    dv.setUint32(16, 16, true);
+    dv.setUint16(20, 1, true);
+    dv.setUint16(22, 1, true);
+    dv.setUint32(24, targetRate, true);
+    dv.setUint32(28, targetRate * 2, true);
+    dv.setUint16(32, 2, true);
+    dv.setUint16(34, 16, true);
+    writeStr(36, "data");
+    dv.setUint32(40, out.length * 2, true);
+    for (let i = 0; i < out.length; i++) dv.setInt16(44 + i * 2, out[i], true);
+    return buffer;
   }
 
   // --- Model picker -------------------------------------------------------
@@ -734,7 +1085,7 @@
   }
 
   async function attachProjectFiles() {
-    if (!activeProject || chatBusy) return;
+    if (!activeProject) return;
     try {
       const files = await api.pickFiles(activeProject.cwd);
       selectedAttachments = files.filter((file) => !file.binary && typeof file.content === "string");
@@ -769,43 +1120,43 @@
   }
 
   function setActivity(next) {
-    // The assistant button is a TOGGLE: clicking it while the chat panel is
-    // already up collapses it and returns to the last real sidebar panel,
-    // instead of re-focusing an open panel forever.
+    // Claude = the chat-first main view. It leaves the sidebar on whatever
+    // workspace panel is up (so the session list stays in reach) and only
+    // flips the main column. The other buttons return to the editor view.
     if (next === "claude") {
-      const chatPanel = $("bc-ide-chat-panel");
-      if (activity === "claude" && !chatPanel.hidden) {
-        chatPanel.hidden = true;
-        next = lastWorkspaceActivity;
-      } else {
-        chatPanel.hidden = false;
-      }
-    } else {
-      lastWorkspaceActivity = next;
+      document.querySelectorAll(".bc-ide-activity-btn[data-activity]").forEach((button) => {
+        const active = button.dataset.activity === "claude";
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+      activity = "claude";
+      shell.dataset.activity = "claude";
+      setView("chat");
+      return;
     }
+    if (next === "settings") { api.openSettings(); return; }
+
+    lastWorkspaceActivity = next;
     activity = next;
     shell.dataset.activity = next;
+    setView("editor");
     document.querySelectorAll(".bc-ide-activity-btn[data-activity]").forEach((button) => {
       const active = button.dataset.activity === next;
       button.classList.toggle("active", active);
       button.setAttribute("aria-pressed", String(active));
     });
-    const labels = { explorer: "Explorer", source: "Source Control", extensions: "Extensions", claude: "Claude", settings: "Settings" };
+    const labels = { explorer: "Explorer", source: "Source Control", extensions: "Extensions" };
     $("bc-ide-sidebar-heading").textContent = labels[next] || "Explorer";
     ["explorer", "source", "extensions"].forEach((panel) => {
       const element = $(`bc-ide-${panel}-panel`);
       if (element) element.hidden = panel !== next;
     });
-    if (next === "claude") {
-      $("bc-ide-chat-input").focus();
-    }
     if (next === "source") refreshSourceControl();
     if (next === "extensions") {
       setExtensionTab(extensionTab);
       loadExtensions();
       if (extensionTab === "browse") runBrowse($("bc-ide-extension-search").value);
     }
-    if (next === "settings") api.openSettings();
   }
 
   // --- Extensions panel ----------------------------------------------------
@@ -983,9 +1334,14 @@
     }
     const projectChanged = !activeProject || activeProject.cwd !== project.cwd;
     if (projectChanged) {
-      chatSessionId = null;
-      activeAssistantMessage = null;
-      setChatBusy(false);
+      // Drop every open chat session — their transcripts and --resume ids
+      // belong to the project we're leaving.
+      openSessions.forEach((s) => { if (s.busy) api.stopChat(s.tabId); });
+      openSessions = [];
+      activeTabId = null;
+      $("bc-ide-chat-messages").textContent = "";
+      renderSessionTabs();
+      syncComposerBusy();
       activeFile = null;
       openedFiles = [];
       currentFileMtime = null;
@@ -1027,10 +1383,18 @@
         if (firstFile) await openFile(firstFile);
       }
       await api.setLastProject(project.cwd);
+      if (view === "chat" && !openSessions.length) ensureChatSession();
       await startTerminal(project.cwd);
     } catch (error) {
       showError(error.message || "Could not load project.");
     }
+  }
+
+  // Chat-first landing: show the newest saved session, or a fresh one.
+  function ensureChatSession() {
+    if (openSessions.length) return;
+    if (sessions.length) openSessionInChat({ sessionId: sessions[0].sessionId, title: sessions[0].title });
+    else newChatSession();
   }
 
   function findFirstFile(nodes) {
@@ -1040,14 +1404,6 @@
       if (nested) return nested;
     }
     return null;
-  }
-
-  async function resumeLocalSession(sessionId, button) {
-    if (!activeProject) return;
-    document.querySelectorAll(".bc-ide-session-row").forEach((row) => row.classList.toggle("active", row === button));
-    setStatus(`Resuming ${sessionId.slice(0, 12)}...`);
-    const ok = await api.resumeSession(activeProject.cwd, sessionId, terminalSize.cols, terminalSize.rows);
-    setStatus(ok ? "Local session attached" : "That local session is no longer available.");
   }
 
   async function startNewSession() {
@@ -1350,12 +1706,10 @@
       $("bc-ide-collapse-files").classList.toggle("collapsed", panel.hidden);
     });
     $("bc-ide-cloud-refresh").addEventListener("click", loadCloudSources);
+    // Home / Code / CLI navigation is the shared title-bar rail (ui/title-bar.js),
+    // visible above this pane in every mode. The Cloud view keeps its own
+    // "Open Home" button as an in-context shortcut.
     $("bc-ide-cloud-home").addEventListener("click", () => api.openHome());
-    // The IDE pane covers claude.ai's own Home / Code / CLI row, so the view
-    // chip in this sidebar is the way between all three surfaces while the
-    // Code tab is up.
-    $("bc-ide-view-home").addEventListener("click", () => api.openHome());
-    $("bc-ide-view-cli").addEventListener("click", () => api.openCli());
     document.querySelectorAll(".bc-ide-activity-btn[data-activity]").forEach((button) => {
       button.addEventListener("click", () => setActivity(button.dataset.activity));
     });
@@ -1382,17 +1736,62 @@
     });
     $("bc-ide-chat-form").addEventListener("submit", sendChatMessage);
     $("bc-ide-chat-attach").addEventListener("click", attachProjectFiles);
-    $("bc-ide-chat-stop").addEventListener("click", () => api.stopChat());
-    $("bc-ide-close-chat").addEventListener("click", () => {
-      $("bc-ide-chat-panel").hidden = true;
-      // Keep the activity bar honest: the assistant is no longer the active
-      // surface, so fall back to the last real sidebar panel (same state a
-      // toggle-click on its button produces).
-      if (activity === "claude") setActivity(lastWorkspaceActivity);
-      else setStatus("Claude assistant hidden");
+    $("bc-ide-chat-stop").addEventListener("click", () => {
+      const s = activeSession();
+      api.stopChat(s ? s.tabId : undefined);
     });
+    $("bc-ide-close-chat").addEventListener("click", () => {
+      if (view === "chat") setActivity(lastWorkspaceActivity || "explorer");
+      else $("bc-ide-chat-panel").hidden = true;
+    });
+    $("bc-ide-view-editor").addEventListener("click", () => setActivity(lastWorkspaceActivity || "explorer"));
+
+    // Enter sends; Shift+Enter is a newline. Also drives the slash menu.
+    const chatInput = $("bc-ide-chat-input");
+    chatInput.addEventListener("input", () => { autosizeComposer(); refreshSlashMenu(); });
+    chatInput.addEventListener("keydown", (event) => {
+      const menu = $("bc-ide-slash-menu");
+      if (!menu.hidden) {
+        const count = Number(menu.dataset.count || 0);
+        if (event.key === "ArrowDown") { event.preventDefault(); slashIndex = (slashIndex + 1) % count; refreshSlashMenu(); return; }
+        if (event.key === "ArrowUp") { event.preventDefault(); slashIndex = (slashIndex - 1 + count) % count; refreshSlashMenu(); return; }
+        if (event.key === "Escape") { menu.hidden = true; return; }
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          const rows = menu.querySelectorAll(".bc-ide-slash-row");
+          if (rows[slashIndex]) rows[slashIndex].dispatchEvent(new MouseEvent("mousedown"));
+          return;
+        }
+      }
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendChatMessage();
+      }
+    });
+    chatInput.addEventListener("blur", () => { setTimeout(() => { $("bc-ide-slash-menu").hidden = true; }, 120); });
+    $("bc-ide-slash").addEventListener("click", () => {
+      if (!chatInput.value.startsWith("/")) chatInput.value = "/";
+      chatInput.focus();
+      slashIndex = 0;
+      refreshSlashMenu();
+    });
+    document.querySelectorAll("#bc-ide-perm-mode button[data-perm]").forEach((btn) => {
+      btn.addEventListener("click", () => setPermMode(btn.dataset.perm));
+    });
+
+    // Push-to-talk: hold the mic button.
+    const mic = $("bc-ide-mic");
+    mic.addEventListener("pointerdown", (event) => { event.preventDefault(); startMic(); });
+    mic.addEventListener("pointerup", () => stopMic());
+    mic.addEventListener("pointerleave", () => { if (micRecording) stopMic(); });
+    Promise.resolve(api.sttAvailable()).then((info) => {
+      if (info && info.available) mic.hidden = false;
+      else mic.title = (info && info.reason) || "Voice input unavailable";
+    }).catch(() => {});
+
     wirePanelResizers();
     api.onChatEvent(handleChatEvent);
+    syncPermModeButtons();
     window.addEventListener("keydown", (event) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
@@ -1432,6 +1831,8 @@
     $("bc-ide-stat-cli").textContent = initial.cliVersion || "Unavailable";
     renderProjects();
     renderCloudRows();
+    shell.dataset.view = view;
+    renderSessionTabs();
     // Warm the model picker so the button shows a real name rather than an
     // id if the user already picked a free provider.
     activeModelLabel = modelLabelFor(selectedModel);

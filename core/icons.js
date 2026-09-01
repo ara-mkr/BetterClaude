@@ -15,6 +15,7 @@ module.exports = {
   WARNING: `<svg ${ATTRS}><path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4"/><path d="M12 17h.01"/></svg>`,
   FLAME: `<svg ${ATTRS}><path d="M12 2c1 3-2 4.5-2 7.5a4 4 0 0 0 8 0c0-1.5-.6-2.3-1-3 .8 3-1 4.5-2 3 .6-2-1-3.5-1-5-1 1-2 2.5-2 4.5-1-1-1-4 0-7z"/><path d="M8.5 14.5a3.5 3.5 0 1 0 7 0c0-1-.5-1.8-1-2.5-.3 1.5-1.3 2-1.5 1-1 1-1.5 0-1-1.5-1.6.7-2.5 1.8-3.5 3z"/></svg>`,
   SPARKLE: `<svg ${ATTRS}><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/></svg>`,
+  MIC: `<svg ${ATTRS}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>`,
   SHUFFLE: `<svg ${ATTRS}><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>`,
   MUTE: `<svg ${ATTRS}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>`,
   ZEN: `<svg ${ATTRS}><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg>`,
@@ -44,4 +45,10 @@ module.exports = {
   HOME: `<svg ${ATTRS}><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V21h13V9.5"/></svg>`,
   CODE: `<svg ${ATTRS}><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`,
   CHAT_BOX: `<svg ${ATTRS}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
+  // Nav-rail chat glyph: two overlapping speech bubbles, matching claude.ai's
+  // own "Chat / Cowork" mode icon (a double bubble, not the single one).
+  CHAT: `<svg ${ATTRS}><path d="M14 9a2 2 0 0 1-2 2H6l-4 3.5V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M17.5 9H18a2 2 0 0 1 2 2v10.5L16.5 18H11a2 2 0 0 1-2-2v-.5"/></svg>`,
+  // Nav-rail code glyph: angle brackets around a slash — the conventional
+  // "code" mark, matching the </> claude.ai uses.
+  CODE_SLASH: `<svg ${ATTRS}><path d="M8.5 7 3 12l5.5 5"/><path d="M15.5 7 21 12l-5.5 5"/><path d="M13.5 4.5 10.5 19.5"/></svg>`,
 };

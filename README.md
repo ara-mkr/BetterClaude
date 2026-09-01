@@ -114,7 +114,7 @@ Full technical detail on every module above — exact file paths, IPC handler na
 
 ## The Code workspace
 
-Version 0.4 turned the Code tab from "a terminal in a pane" into a real workspace with three surfaces sharing one window. The chip at the top of the sidebar (Home | Code | CLI) moves between them, and claude.ai's own **Code** pill now opens the IDE too, instead of leading to a gated route:
+Version 0.4 turned the Code tab from "a terminal in a pane" into a real workspace with three surfaces sharing one window. Navigation is **one fixed rail of icon buttons — Home / Code / CLI — centred in the title bar**, in the same spot in every mode (0.5 replaced three older, inconsistent controls that used to hop between claude.ai's row, the sidebar, and a floating box — which is also what used to eat clicks near the window edges). claude.ai's own **Code** pill opens the IDE too, instead of leading to a gated route:
 
 ![The Home, Code and CLI pills above claude.ai's sidebar](.github/readme-assets/code-tabs.png)
 
@@ -128,15 +128,13 @@ A nice side effect: open a conversation while a Code surface is showing and clau
 
 ![The IDE workspace: file tree, editor, terminal, and the Claude assistant chat](.github/readme-assets/ide-workspace.png)
 
-The workspace wraps your project in the pieces you'd expect from an editor:
+As of 0.5 the workspace is **chat-first**, like the Claude Code desktop app. The Claude conversation is the main surface; the editor tooling is one click away when you want it.
 
-- **Explorer** with a project file tree (capped at 700 entries / 7 levels deep, skipping `.git`, `node_modules`, and other noise) plus a **Cloud** tab that lists your live `claude agents --all` sessions and claude.ai conversations, and attaches to them.
-- **A tabbed CodeMirror 6 editor** with line numbers, undo history, and active-line highlighting. `Cmd/Ctrl+S` saves, and refuses to clobber a file that changed on disk since you opened it. CSS gets syntax highlighting; other files edit as plain text for now.
-- **Source control** with a real diff view of the project's changes.
-- **Extensions** (below).
-- **A bottom terminal** running the actual Claude Code CLI in the selected project, same genuine pty as the CLI pane.
-- **A Claude assistant chat panel** that can attach project files for context and spawns `claude --print` under the hood, with the model picker described [below](#free-models-through-openrouter).
-- A project header (branch, saved sessions, active agents, Claude Code version) and a status bar, and the whole thing is themed by the same `--bc-*` tokens as everything else.
+- **Sessions are the primary list.** The sidebar shows your saved `claude` sessions for the project with **real names** (taken from the first prompt, not a raw id). Click one and its **entire transcript loads into the chat** — every turn, exactly as it happened. Resuming an old session happens here, in the chat, and never disturbs the terminal.
+- **Multiple sessions open at once.** A tab strip across the top of the chat holds every open session, each streaming its own reply independently; **+** starts a fresh one. New sessions can still be started from the CLI/terminal too.
+- **The composer** takes slash commands (type `/` for a menu of `claude` commands plus your prompt-library entries), sends on **Enter** (Shift+Enter for a newline), and has a **Plan / Normal / Auto** switch that maps to Claude Code's permission modes (`plan` = read-only planning, `auto` = run edits and commands unattended). On macOS, a **hold-to-talk mic button** dictates into the composer via a local whisper.cpp — nothing leaves the machine, and it only appears if `whisper-cli` is on your PATH (`brew install whisper-cpp`; the ~142 MB model downloads itself on first use).
+- **Editor view** (the Explorer / Source / Extensions buttons, or the editor icon in the chat header) brings back the classic arrangement: a project **file tree** (capped at 700 entries / 7 levels, skipping `.git`, `node_modules`, and other noise), a **tabbed CodeMirror 6 editor** (`Cmd/Ctrl+S` saves and refuses to clobber a file changed on disk; CSS gets syntax highlighting), **source control** with a real diff view, **Extensions** (below), a **bottom terminal** running the actual Claude Code CLI in the project, and a **Cloud** tab listing your live `claude agents --all` sessions.
+- The model picker described [below](#free-models-through-openrouter) rides on the chat composer, and everything is themed by the same `--bc-*` tokens as the rest of the app.
 
 ### Extensions
 

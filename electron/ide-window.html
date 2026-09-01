@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="../build/xterm.bundle.css" />
   </head>
   <body>
-    <div id="bc-ide-shell" data-source="local" data-state="starting" data-activity="explorer">
+    <div id="bc-ide-shell" data-source="local" data-state="starting" data-activity="explorer" data-view="chat">
       <div class="bc-ide-layout">
         <aside class="bc-ide-activitybar" aria-label="Code tools">
           <button class="bc-ide-activity-btn active" data-activity="explorer" type="button" title="Explorer" aria-label="Explorer" aria-pressed="true"><span data-bc-icon="FOLDER"></span></button>
@@ -22,15 +22,9 @@
         </aside>
 
         <aside class="bc-ide-sidebar" aria-label="Code workspace sidebar">
-          <!-- The full BetterClaude view switcher. The IDE pane covers
-             claude.ai's own Home / Code / CLI row, so this is the way between
-             all three surfaces while the Code tab is up — not just a way back
-             to Home. -->
-          <div class="bc-ide-viewchip" role="group" aria-label="BetterClaude views">
-            <button id="bc-ide-view-home" type="button" title="Back to Claude Home"><span data-bc-icon="HOME"></span>Home</button>
-            <button id="bc-ide-view-code" type="button" aria-pressed="true" title="Code workspace"><span data-bc-icon="CODE"></span>Code</button>
-            <button id="bc-ide-view-cli" type="button" title="Switch to the CLI terminal pane"><span data-bc-icon="TERMINAL"></span>CLI</button>
-          </div>
+          <!-- Home / Code / CLI navigation lives in the shared BetterClaude
+               title bar (ui/title-bar.js), which stays visible above this pane
+               in every mode — no per-surface copy of it here. -->
           <div class="bc-ide-sidebar-head">
             <div class="bc-ide-eyebrow">Workspace</div>
             <div class="bc-ide-sidebar-title">
@@ -116,12 +110,27 @@
               </section>
               <div id="bc-ide-chat-resize" class="bc-ide-resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize Claude assistant panel" tabindex="0"></div>
               <aside id="bc-ide-chat-panel" class="bc-ide-chat-panel" aria-label="Claude assistant">
-                <header class="bc-ide-chat-head"><div><strong>Claude</strong><small>Project-aware assistant</small></div><button id="bc-ide-close-chat" class="bc-ide-icon-btn" type="button" title="Hide Claude assistant" aria-label="Hide Claude assistant"><span data-bc-icon="CLOSE"></span></button></header>
-                <div id="bc-ide-chat-messages" class="bc-ide-chat-messages"><div class="bc-ide-chat-welcome"><strong>Ask Claude about this project</strong><p>Use your Claude subscription to reason about code, explain files, and plan changes. Attach project files for focused context.</p></div></div>
+                <div id="bc-ide-session-tabs" class="bc-ide-session-tabs" role="tablist" aria-label="Open Claude sessions"></div>
+                <header class="bc-ide-chat-head"><div><strong>Claude</strong><small id="bc-ide-chat-subtitle">Project-aware assistant</small></div><button id="bc-ide-view-editor" class="bc-ide-icon-btn" type="button" title="Show editor &amp; terminal" aria-label="Show editor and terminal"><span data-bc-icon="CODE"></span></button><button id="bc-ide-close-chat" class="bc-ide-icon-btn" type="button" title="Hide Claude assistant" aria-label="Hide Claude assistant"><span data-bc-icon="CLOSE"></span></button></header>
+                <div id="bc-ide-chat-messages" class="bc-ide-chat-messages"></div>
                 <div id="bc-ide-chat-attachments" class="bc-ide-chat-attachments" hidden></div>
                 <form id="bc-ide-chat-form" class="bc-ide-chat-composer">
-                  <textarea id="bc-ide-chat-input" rows="3" placeholder="Ask Claude about your code..." aria-label="Ask Claude about your code"></textarea>
-                  <div class="bc-ide-chat-composer-foot"><button id="bc-ide-chat-attach" class="bc-ide-icon-btn" type="button" title="Attach project files" aria-label="Attach project files"><span data-bc-icon="ATTACH"></span></button><!-- Model picker: Claude subscription or any currently-free provider --><div class="bc-ide-model-picker"><button id="bc-ide-model-btn" class="bc-ide-model-btn" type="button" aria-haspopup="listbox" aria-expanded="false" title="Choose who answers this chat">Claude</button><div id="bc-ide-model-menu" class="bc-ide-model-menu" hidden></div></div><button id="bc-ide-chat-stop" class="bc-ide-command bc-ide-chat-stop" type="button" hidden>Stop</button><button class="bc-ide-send-btn" type="submit" title="Send to Claude" aria-label="Send to Claude"><span data-bc-icon="SEND"></span></button></div>
+                  <div id="bc-ide-slash-menu" class="bc-ide-slash-menu" hidden></div>
+                  <textarea id="bc-ide-chat-input" rows="3" placeholder="Ask Claude, or type / for commands" aria-label="Ask Claude about your code"></textarea>
+                  <div class="bc-ide-chat-composer-foot">
+                    <button id="bc-ide-chat-attach" class="bc-ide-icon-btn" type="button" title="Attach project files" aria-label="Attach project files"><span data-bc-icon="ATTACH"></span></button>
+                    <button id="bc-ide-slash" class="bc-ide-icon-btn" type="button" title="Slash commands" aria-label="Slash commands"><span data-bc-icon="CODE_SLASH"></span></button>
+                    <button id="bc-ide-mic" class="bc-ide-icon-btn bc-ide-mic" type="button" hidden title="Hold to talk" aria-label="Hold to dictate"><span data-bc-icon="MIC"></span></button>
+                    <div class="bc-ide-perm-mode" id="bc-ide-perm-mode" role="group" aria-label="Permission mode">
+                      <button type="button" data-perm="plan" title="Plan only — no edits or commands">Plan</button>
+                      <button type="button" data-perm="normal" aria-pressed="true" title="Auto-accept edits, ask before commands">Normal</button>
+                      <button type="button" data-perm="auto" title="Auto-accept edits and commands">Auto</button>
+                    </div>
+                    <!-- Model picker: Claude subscription or any currently-free provider -->
+                    <div class="bc-ide-model-picker"><button id="bc-ide-model-btn" class="bc-ide-model-btn" type="button" aria-haspopup="listbox" aria-expanded="false" title="Choose who answers this chat">Claude</button><div id="bc-ide-model-menu" class="bc-ide-model-menu" hidden></div></div>
+                    <button id="bc-ide-chat-stop" class="bc-ide-command bc-ide-chat-stop" type="button" hidden>Stop</button>
+                    <button class="bc-ide-send-btn" type="submit" title="Send to Claude" aria-label="Send to Claude"><span data-bc-icon="SEND"></span></button>
+                  </div>
                 </form>
               </aside>
             </div>

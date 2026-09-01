@@ -297,6 +297,11 @@ var BetterClaudeCore = (() => {
           why: "Anthropic's own segmented control. Nothing of ours is mounted inside it; core/code-tab.js scopes its native Home/Code click interception to this group so color-mode controls sharing the data-mode attribute can never be mistaken for it.",
           absenceIsNormal: ({ signedIn }) => !signedIn,
           strategies: [
+            // Current build: `div.df-app-switch` (a.k.a. `[data-compact-mode-switcher]`)
+            // wrapping a `[role="radiogroup"]` of `[data-mode]` radios, in `.df-titlebar`.
+            { sel: ".df-app-switch", tier: "primary" },
+            { sel: "[data-compact-mode-switcher]", tier: "primary" },
+            { sel: '[role="radiogroup"]:has([data-mode])', tier: "primary" },
             // `data-segmented` + `data-pills` are developer-authored and semantic;
             // the surrounding Tailwind classes and the React `_r_*` ids are not.
             { sel: '[data-testid="sidebar"] [role="group"][data-segmented]', tier: "primary" },
@@ -1161,6 +1166,35 @@ ${buildClaudeTokenBridge({ bg, bgElevated, bgSidebar, text, textMuted: textMuted
 body {
   background: var(--bc-bg) !important;
 }
+
+/* The area behind the composer, plus claude's cards, pills and popovers, is
+   painted by the cds design system's bg-surface-N utilities, which read plain
+   color tokens (--cds-surface-0..3, measured live #0b0b0b -> #20201f) \u2014 NOT the
+   hsl(var(--bg-*)) tokens the bridge above retints. That is why the chat
+   surface stayed near-black on every theme and only a scrim overlay could fake
+   it. Retinting the tokens themselves recolors every consumer at once.
+
+   Two live-verified cascade facts drive the selector choice:
+   - claude declares these tokens on the descendant .cds-root (div.dframe-root),
+     not on :root/<html>. Setting them at :root loses to that closer .cds-root
+     declaration, so the override must also sit on .cds-root.
+   - claude re-declares the tokens on BOTH the outer html.cds-root AND the inner
+     div.dframe-root.cds-root, the latter at (0,2,0). A plain .cds-root override
+     only wins by source order, and BetterClaude's stylesheet is injected early,
+     so it must win by specificity instead. .cds-root.cds-root.cds-root is
+     (0,3,0) \u2014 it out-specifies every claude declaration on either element, so
+     the retint holds regardless of who is appended last.
+   Elevation is preserved: surface-0 is the deepest well, surface-3 the most
+   raised (the composer), mapped onto this palette's sidebar -> bg -> elevated
+   ramp. (Everything above consumes these via var(--cds-surface-N) directly, so
+   there is a ~200ms background-color transition on the composer card \u2014 expected,
+   claude ships that transition on the element itself.) */
+.cds-root.cds-root.cds-root {
+  --cds-surface-0: var(--bc-bg-sidebar) !important;
+  --cds-surface-1: var(--bc-bg) !important;
+  --cds-surface-2: color-mix(in srgb, var(--bc-bg) 55%, var(--bc-bg-elevated)) !important;
+  --cds-surface-3: var(--bc-bg-elevated) !important;
+}
 /* Text color has to reach every real leaf node: Claude's signed-out page
    assigns dark utility colors directly to its headings and Google button.
    On a dark preset, a zero-specificity :where() rule loses that cascade and
@@ -1593,6 +1627,33 @@ a { color: var(--bc-link) !important; }
       } = require_tokens();
       var BG_STYLE_ID = "betterclaude-background";
       var MAIN_PANE = 'main .dframe-pane-primary, main [class*="pane-primary" i], [data-testid="conversation"], [role="main"], main';
+      function splitSelectorList(list) {
+        const out = [];
+        let depth = 0;
+        let quote = null;
+        let current = "";
+        for (const ch of String(list)) {
+          if (quote) {
+            if (ch === quote) quote = null;
+          } else if (ch === '"' || ch === "'") {
+            quote = ch;
+          } else if (ch === "(" || ch === "[") {
+            depth++;
+          } else if (ch === ")" || ch === "]") {
+            depth--;
+          } else if (ch === "," && depth === 0) {
+            out.push(current.trim());
+            current = "";
+            continue;
+          }
+          current += ch;
+        }
+        out.push(current.trim());
+        return out.filter(Boolean);
+      }
+      function scoped(list, suffix) {
+        return splitSelectorList(list).map((sel) => sel + suffix).join(",\n");
+      }
       function fitToBackgroundProps(fit, position) {
         switch (fit) {
           case "contain":
@@ -1636,7 +1697,7 @@ a { color: var(--bc-link) !important; }
         const opacity = clampNumber(bg.opacity, BOUNDS["background.opacity"]);
         const scrimOpacity = clampNumber(bg.scrimOpacity, BOUNDS["background.scrimOpacity"]);
         const blurPx = clampNumber(bg.blurPx, BOUNDS["background.blurPx"]);
-        const scope = bg.unifyAllSurfaces ? "body, #__next" : MAIN_PANE;
+        const scope = bg.unifyAllSurfaces ? "body, #root, #__next, .bc-claude-root" : MAIN_PANE;
         const value = backgroundValue(bg);
         const imagePosition = bg.mode === "image" && bg.offsetX != null && bg.offsetY != null ? `${bg.offsetX}% ${bg.offsetY}%` : bg.position || "center";
         const fitProps = bg.mode === "image" ? fitToBackgroundProps(bg.fit || "cover", imagePosition) : "";
@@ -1655,8 +1716,8 @@ ${scope} {
    a long conversation stays smooth (no fixed-viewport repaint). The
    overflow:hidden above (image mode only) keeps a zoomed/flipped layer's
    transform from bleeding past the pane's own edges. */
-${scope} > .bc-bg-layer,
-${scope}::before {
+${scoped(scope, " > .bc-bg-layer")},
+${scoped(scope, "::before")} {
   content: "";
   position: absolute;
   inset: 0;
@@ -1672,7 +1733,7 @@ ${scope}::before {
 }
 /* Scrim/overlay between background and text. Its opacity is what the contrast
    check is computed against. */
-${scope}::after {
+${scoped(scope, "::after")} {
   content: "";
   position: absolute;
   inset: 0;
@@ -1689,7 +1750,7 @@ ${animate ? `
 }
 /* Static frame for users who asked the OS to reduce motion (\xA74.1). */
 @media (prefers-reduced-motion: reduce) {
-  ${scope}::before { animation: none !important; }
+  ${scoped(scope, "::before")} { animation: none !important; }
 }` : ""}
 `.trim();
       }
@@ -3459,6 +3520,7 @@ ${cssSelectorList("sidebar", { suffix: ' [class*="animate-spin"]' })} {
         WARNING: `<svg ${ATTRS}><path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4"/><path d="M12 17h.01"/></svg>`,
         FLAME: `<svg ${ATTRS}><path d="M12 2c1 3-2 4.5-2 7.5a4 4 0 0 0 8 0c0-1.5-.6-2.3-1-3 .8 3-1 4.5-2 3 .6-2-1-3.5-1-5-1 1-2 2.5-2 4.5-1-1-1-4 0-7z"/><path d="M8.5 14.5a3.5 3.5 0 1 0 7 0c0-1-.5-1.8-1-2.5-.3 1.5-1.3 2-1.5 1-1 1-1.5 0-1-1.5-1.6.7-2.5 1.8-3.5 3z"/></svg>`,
         SPARKLE: `<svg ${ATTRS}><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/></svg>`,
+        MIC: `<svg ${ATTRS}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>`,
         SHUFFLE: `<svg ${ATTRS}><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>`,
         MUTE: `<svg ${ATTRS}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>`,
         ZEN: `<svg ${ATTRS}><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg>`,
@@ -3487,7 +3549,13 @@ ${cssSelectorList("sidebar", { suffix: ' [class*="animate-spin"]' })} {
         CHECK: `<svg ${ATTRS}><path d="M5 13l4 4L19 7"/></svg>`,
         HOME: `<svg ${ATTRS}><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V21h13V9.5"/></svg>`,
         CODE: `<svg ${ATTRS}><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`,
-        CHAT_BOX: `<svg ${ATTRS}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`
+        CHAT_BOX: `<svg ${ATTRS}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
+        // Nav-rail chat glyph: two overlapping speech bubbles, matching claude.ai's
+        // own "Chat / Cowork" mode icon (a double bubble, not the single one).
+        CHAT: `<svg ${ATTRS}><path d="M14 9a2 2 0 0 1-2 2H6l-4 3.5V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M17.5 9H18a2 2 0 0 1 2 2v10.5L16.5 18H11a2 2 0 0 1-2-2v-.5"/></svg>`,
+        // Nav-rail code glyph: angle brackets around a slash — the conventional
+        // "code" mark, matching the </> claude.ai uses.
+        CODE_SLASH: `<svg ${ATTRS}><path d="M8.5 7 3 12l5.5 5"/><path d="M15.5 7 21 12l-5.5 5"/><path d="M13.5 4.5 10.5 19.5"/></svg>`
       };
     }
   });
@@ -8561,9 +8629,12 @@ ${content}
   var require_code_tab = __commonJS({
     "core/code-tab.js"(exports, module) {
       var { resolveTarget, queryOne, boxOf } = require_claude_dom();
+      var ICONS = require_icons();
       var PILL_ID = "bc-code-tab-pill";
       var PILL_LABEL = "CLI";
       var FLOATING_CLASS = "bc-code-tab-floating";
+      var TITLEBAR_CLASS = "bc-code-tab-in-titlebar";
+      var TITLE_BAR_ID = "betterclaude-titlebar";
       var SPLIT_BODY_CLASS = "bc-code-split";
       var SPLIT_PANE_CLASS = "bc-split-squeezed";
       var CHAT_LINK_SELECTOR = 'a[href*="/chat/"], a[href*="/conversation/"]';
@@ -8634,7 +8705,7 @@ ${content}
         btn.className = "bc-code-tab-pill";
         btn.setAttribute("aria-label", "BetterClaude Code (Claude Code CLI)");
         btn.title = "BetterClaude Code \u2014 runs the Claude Code CLI from this machine, in this window";
-        btn.textContent = PILL_LABEL;
+        btn.innerHTML = `<span class="bc-code-tab-pill-icon" aria-hidden="true">${ICONS.TERMINAL}</span><span class="bc-code-tab-pill-label">${PILL_LABEL}</span>`;
         btn.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -8642,7 +8713,7 @@ ${content}
         });
         return btn;
       }
-      function mountCodeTab({ onActivate, onDeactivate, onLayout, onNativeCode, onNativeHome, titleBarHeight = 0, getSidebarOnRight = () => false, showPill = true } = {}) {
+      function mountCodeTab({ onActivate, onDeactivate, onLayout, onNativeCode, onNativeHome, titleBarHeight = 0, getSidebarOnRight = () => false, showPill = false } = {}) {
         let active = false;
         let split = false;
         let splitPendingPath = null;
@@ -8731,10 +8802,23 @@ ${content}
           const group = resolveTarget("modeSwitch");
           if (group) {
             pill.classList.remove(FLOATING_CLASS);
-            if (pill.parentElement !== group.element) group.element.appendChild(pill);
-          } else if (pill.parentElement !== document.body) {
-            pill.classList.add(FLOATING_CLASS);
-            document.body.appendChild(pill);
+            if (pill.parentElement !== group.element) {
+              pill.classList.remove(TITLEBAR_CLASS);
+              group.element.appendChild(pill);
+            }
+          } else {
+            const controls = document.querySelector(`#${TITLE_BAR_ID} .bc-tb-controls`);
+            if (controls) {
+              if (pill.parentElement !== controls) {
+                pill.classList.remove(FLOATING_CLASS);
+                pill.classList.add(TITLEBAR_CLASS);
+                controls.insertBefore(pill, controls.firstChild);
+              }
+            } else if (pill.parentElement !== document.body) {
+              pill.classList.remove(TITLEBAR_CLASS);
+              pill.classList.add(FLOATING_CLASS);
+              document.body.appendChild(pill);
+            }
           }
           pill.setAttribute("aria-pressed", active ? "true" : "false");
           pill.toggleAttribute("data-bc-active", active);
@@ -8824,7 +8908,7 @@ ${content}
           }
         };
       }
-      module.exports = { mountCodeTab, measureContentArea, PILL_ID, FLOATING_CLASS };
+      module.exports = { mountCodeTab, measureContentArea, PILL_ID, FLOATING_CLASS, TITLEBAR_CLASS };
     }
   });
 

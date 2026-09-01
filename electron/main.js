@@ -20,6 +20,7 @@ const { attachWindowState, getInitialBounds } = require("./window-state");
 const { BUDDY_CANVAS, BUDDY_HIT_BOX, getBuddy, resolveActiveBuddy } = require("../core/buddies");
 const { titleBarOptions, TITLE_BAR_HEIGHT } = require("./window-chrome");
 const { ClaudeNotFoundError, ClaudeSession, PtySpawnError, listAgentSessions, locateClaude } = require("./claude-cli");
+const { createActivityTracker } = require("./claude-activity");
 const { autoUpdater } = require("electron-updater");
 const { pickLoadingTip } = require("../core/motion-fx");
 const { deriveChannelId, encryptText, decryptText } = require("../core/clipboard-bridge");
@@ -29,6 +30,7 @@ const sessionBundle = require("./session-bundle");
 const ideWorkspace = require("./ide-workspace");
 const openrouter = require("./openrouter");
 const teamHub = require("./team-hub");
+const speech = require("./speech");
 
 // Single source of truth for the repo that backs the update feed and every
 // "view on GitHub" affordance. Must stay in lockstep with package.json's
@@ -790,7 +792,23 @@ let ideView = null;
 let ideViewShown = false;
 let ideViewSuspended = false;
 let ideSession = null;
-let ideChatProcess = null;
+// In-flight IDE chat turns, keyed by the renderer's tab id so several saved
+// sessions can stream replies at the same time. Each value is
+// { child, abort }: `child` for the subscription-CLI path, `abort` (an
+// AbortController) for the free-model path.
+const ideChats = new Map();
+
+// Heuristic Claude Code activity -> the nav rail's status dot on the CLI / Code
+// button (ui/title-bar.js). One tracker per surface, fed the same pty output
+// the panes already receive; state changes are pushed to the main window so the
+// dot is visible from the chat view too. See electron/claude-activity.js.
+const codeActivity = createActivityTracker({ onState: (s) => sendNavActivity("code-tab:activity", s) });
+const ideActivity = createActivityTracker({ onState: (s) => sendNavActivity("ide-tab:activity", s) });
+function sendNavActivity(channel, state) {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send(channel, { state });
+  }
+}
 // Detached-but-still-open. A WebContentsView composites above the window's web
 // page unconditionally, so it also covers BetterClaude's own in-page overlays —
 // open Settings with the pane showing and the panel renders behind it. The pane
@@ -1013,7 +1031,10 @@ function startCodeSession({ cwd, cols, rows, args = [], id = null, team = null }
   codeLastSessionId = entry.id;
 
   const session = entry.session;
+  codeActivity.reset("idle");
   session.on("data", (chunk) => {
+    // Timing/pattern only, never stored - feeds the nav-rail status dot.
+    codeActivity.feed(chunk);
     // Guarded on every chunk, not just at startup: a pty can emit between the
     // window closing and the child dying, and send() on destroyed webContents
     // throws.
@@ -1022,6 +1043,7 @@ function startCodeSession({ cwd, cols, rows, args = [], id = null, team = null }
   });
   session.on("exit", ({ exitCode, signal }) => {
     if (session === entry.session) entry.session = null;
+    codeActivity.reset("idle");
     if (entry.team) markMemberExited(entry);
     broadcastTeamSnapshot();
     if (target.isDestroyed()) return;
@@ -1357,21 +1379,36 @@ function disposeIdeSession() {
   ideSession = null;
 }
 
-let ideChatAbort = null;
-
-function disposeIdeChatProcess() {
-  if (ideChatAbort) {
-    try { ideChatAbort.abort(); } catch {}
-    ideChatAbort = null;
-  }
-  if (!ideChatProcess) return;
-  try { ideChatProcess.kill(); } catch {}
-  ideChatProcess = null;
+// Ends one tab's in-flight turn (CLI child or free-model request) and forgets
+// it. Safe to call for a tab that has nothing running.
+function disposeIdeChat(tabId) {
+  const entry = ideChats.get(tabId);
+  if (!entry) return;
+  ideChats.delete(tabId);
+  if (entry.abort) { try { entry.abort.abort(); } catch {} }
+  if (entry.child) { try { entry.child.kill(); } catch {} }
 }
 
+// Every tab's turn — used by window hide/close/quit so parallel sessions can
+// never leave an orphaned `claude` behind.
+function disposeAllIdeChats() {
+  for (const tabId of Array.from(ideChats.keys())) disposeIdeChat(tabId);
+}
+
+// Back-compat shim: a few teardown call sites still use the old name.
+function disposeIdeChatProcess() {
+  disposeAllIdeChats();
+}
+
+// Every `ide:chat-event` carries the `tabId` it belongs to so the renderer can
+// route it to the right open session; callers pass it in the payload.
 function sendIdeChat(payload) {
   if (ideView && !ideView.webContents.isDestroyed()) ideView.webContents.send("ide:chat-event", payload);
 }
+
+// The three permission modes the composer exposes, mapped to the CLI flag.
+// Default is the historical behaviour (auto-accept edits, ask for the rest).
+const IDE_PERMISSION_MODES = { plan: "plan", normal: "acceptEdits", auto: "bypassPermissions" };
 
 /**
  * Settings for the free-model fallback, merged so installs predating the
@@ -1394,15 +1431,15 @@ const LIMIT_ERROR_RE = /(usage limit|rate.?limit|limit (has been |was )?reached|
  * emitted before its first delta) and `done` carrying `modelId`/`modelLabel`
  * so the renderer can say who wrote the answer.
  */
-async function startFreeModelChat({ prompt, attachments = [], sessionId = null, projectName = "", preferredModelId = null }) {
+async function startFreeModelChat({ prompt, attachments = [], sessionId = null, projectName = "", preferredModelId = null, tabId = "default" }) {
   const target = ideView && ideView.webContents;
   if (!target || target.isDestroyed()) return false;
   if (typeof prompt !== "string" || !prompt.trim()) return false;
 
   const controller = new AbortController();
-  ideChatAbort = controller;
-  const request = controller;
-  sendIdeChat({ type: "start", sessionId });
+  const entry = { child: null, abort: controller };
+  ideChats.set(tabId, entry);
+  sendIdeChat({ type: "start", sessionId, tabId });
   let resolvedSessionId = sessionId;
 
   try {
@@ -1417,24 +1454,27 @@ async function startFreeModelChat({ prompt, attachments = [], sessionId = null, 
       onEvent: (payload) => {
         if (!payload) return;
         if (payload.type === "session") return; // free providers have no CLI session id
-        sendIdeChat(payload);
+        sendIdeChat({ ...payload, tabId });
       },
     });
-    if (ideChatAbort === request) ideChatAbort = null;
-    sendIdeChat({ type: "done", modelId, modelLabel, sessionId: resolvedSessionId });
+    if (ideChats.get(tabId) === entry) ideChats.delete(tabId);
+    sendIdeChat({ type: "done", modelId, modelLabel, sessionId: resolvedSessionId, tabId });
     return true;
   } catch (err) {
-    if (ideChatAbort === request) ideChatAbort = null;
+    if (ideChats.get(tabId) === entry) ideChats.delete(tabId);
     if ((controller.signal.aborted || err.message === "stopped") && !target.isDestroyed()) {
-      sendIdeChat({ type: "stopped" });
+      sendIdeChat({ type: "stopped", tabId });
       return true;
     }
-    sendIdeChat({ type: "error", message: err.message || "The free models could not be reached." });
+    sendIdeChat({ type: "error", message: err.message || "The free models could not be reached.", tabId });
     return false;
   }
 }
 
-async function startIdeChat({ cwd, prompt, attachments = [], sessionId = null, model = null }) {
+async function startIdeChat({ cwd, prompt, attachments = [], sessionId = null, model = null, permissionMode = "normal", tabId = "default" }) {
+  // One turn per tab at a time — drop anything this tab already had running.
+  disposeIdeChat(tabId);
+
   // A free model picked in the chat's own selector bypasses the CLI entirely.
   // No Claude credentials are involved: this is exactly the "run out of usage,
   // keep going on whatever is free" path.
@@ -1445,11 +1485,11 @@ async function startIdeChat({ cwd, prompt, attachments = [], sessionId = null, m
       sessionId,
       projectName: path.basename(String(cwd || "")),
       preferredModelId: model,
+      tabId,
     });
     return true;
   }
 
-  disposeIdeChatProcess();
   const target = ideView && ideView.webContents;
   if (!target || target.isDestroyed()) return false;
   if (typeof prompt !== "string" || !prompt.trim()) return false;
@@ -1458,7 +1498,7 @@ async function startIdeChat({ cwd, prompt, attachments = [], sessionId = null, m
   try {
     binaryPath = locateClaude(store.get("codeWindow.claudePath") || undefined);
   } catch (err) {
-    sendIdeChat({ type: "error", message: err.message });
+    sendIdeChat({ type: "error", message: err.message, tabId });
     return false;
   }
 
@@ -1466,7 +1506,7 @@ async function startIdeChat({ cwd, prompt, attachments = [], sessionId = null, m
   try {
     resolvedCwd = ideWorkspace.realDirectory(cwd);
   } catch (err) {
-    sendIdeChat({ type: "error", message: err.message || "The selected project folder is unavailable." });
+    sendIdeChat({ type: "error", message: err.message || "The selected project folder is unavailable.", tabId });
     return false;
   }
 
@@ -1490,7 +1530,7 @@ async function startIdeChat({ cwd, prompt, attachments = [], sessionId = null, m
     "--setting-sources", "project,local",
     "--strict-mcp-config",
     "--no-chrome",
-    "--permission-mode", "acceptEdits",
+    "--permission-mode", IDE_PERMISSION_MODES[permissionMode] || "acceptEdits",
   ];
   if (sessionId) args.push("--resume", sessionId);
   // Pass the project-aware prompt over stdin. `--tools` and `--add-dir` are
@@ -1519,13 +1559,13 @@ async function startIdeChat({ cwd, prompt, attachments = [], sessionId = null, m
       stdio: ["pipe", "pipe", "pipe"],
     });
   } catch (err) {
-    sendIdeChat({ type: "error", message: err.message });
+    sendIdeChat({ type: "error", message: err.message, tabId });
     return false;
   }
 
-  ideChatProcess = child;
-  sendIdeChat({ type: "start", sessionId, modelLabel: "Claude" });
-  const request = child;
+  const entry = { child, abort: null };
+  ideChats.set(tabId, entry);
+  sendIdeChat({ type: "start", sessionId, modelLabel: "Claude", tabId });
   let stdoutBuffer = "";
   let assistantText = "";
   // Every stderr diagnostic the CLI emits during this turn. The usage-limit
@@ -1535,7 +1575,7 @@ async function startIdeChat({ cwd, prompt, attachments = [], sessionId = null, m
   const emitDeltaText = (text) => {
     if (typeof text !== "string" || !text) return;
     assistantText += text;
-    sendIdeChat({ type: "delta", text });
+    sendIdeChat({ type: "delta", text, tabId });
   };
   const emitCumulativeText = (text) => {
     if (typeof text !== "string" || !text) return;
@@ -1545,12 +1585,12 @@ async function startIdeChat({ cwd, prompt, attachments = [], sessionId = null, m
     if (text.startsWith(assistantText)) {
       const unseen = text.slice(assistantText.length);
       assistantText = text;
-      if (unseen) sendIdeChat({ type: "delta", text: unseen });
+      if (unseen) sendIdeChat({ type: "delta", text: unseen, tabId });
       return;
     }
     if (assistantText.endsWith(text)) return;
     assistantText += text;
-    sendIdeChat({ type: "delta", text });
+    sendIdeChat({ type: "delta", text, tabId });
   };
   const parseChunk = (chunk) => {
     stdoutBuffer += String(chunk || "");
@@ -1575,36 +1615,36 @@ async function startIdeChat({ cwd, prompt, attachments = [], sessionId = null, m
         }
         if (cumulative) emitCumulativeText(text);
         else emitDeltaText(text);
-        if (event.session_id) sendIdeChat({ type: "session", sessionId: event.session_id });
-        if (event.type === "result") sendIdeChat({ type: "done", sessionId: event.session_id || sessionId || null });
+        if (event.session_id) sendIdeChat({ type: "session", sessionId: event.session_id, tabId });
+        if (event.type === "result") sendIdeChat({ type: "done", sessionId: event.session_id || sessionId || null, tabId });
       } catch {
         // Stream-json is line-delimited; ignore a partial/non-JSON diagnostic line.
       }
     }
   };
   child.stdout.on("data", (chunk) => {
-    if (ideChatProcess === request) parseChunk(chunk);
+    if (ideChats.get(tabId) === entry) parseChunk(chunk);
   });
   child.stdin.on("error", () => {
     // The CLI can close stdin while emitting a final result; there is no user
     // action to take for that stream-level EPIPE.
   });
   child.stderr.on("data", (chunk) => {
-    if (ideChatProcess !== request) return;
+    if (ideChats.get(tabId) !== entry) return;
     const message = String(chunk || "").trim();
     if (message) {
       diagnostics.push(message);
-      sendIdeChat({ type: "diagnostic", message });
+      sendIdeChat({ type: "diagnostic", message, tabId });
     }
   });
   child.on("error", (err) => {
-    if (ideChatProcess !== request) return;
-    ideChatProcess = null;
-    sendIdeChat({ type: "error", message: err.message });
+    if (ideChats.get(tabId) !== entry) return;
+    ideChats.delete(tabId);
+    sendIdeChat({ type: "error", message: err.message, tabId });
   });
   child.on("close", (code, signal) => {
-    if (ideChatProcess !== request) return;
-    ideChatProcess = null;
+    if (ideChats.get(tabId) !== entry) return;
+    ideChats.delete(tabId);
     if (stdoutBuffer.trim()) parseChunk("\n");
     if (code && !assistantText) {
       // Auto-failover: Claude died before answering anything and its own
@@ -1616,21 +1656,22 @@ async function startIdeChat({ cwd, prompt, attachments = [], sessionId = null, m
       if (LIMIT_ERROR_RE.test(diagnosticText)) {
         const config = freeModelsConfig();
         if (config.enabled && config.autoFailover) {
-          sendIdeChat({ type: "diagnostic", message: "Claude hit its usage limit — continuing with a free provider" });
+          sendIdeChat({ type: "diagnostic", message: "Claude hit its usage limit — continuing with a free provider", tabId });
           startFreeModelChat({
             prompt,
             attachments,
             sessionId,
             projectName: path.basename(resolvedCwd),
             preferredModelId: config.preferredModelId || null,
+            tabId,
           }).catch(() => {});
           return;
         }
       }
-      sendIdeChat({ type: "error", message: `Claude Code exited with status ${code}${signal ? ` (${signal})` : ""}. Check the session status and try again.` });
+      sendIdeChat({ type: "error", message: `Claude Code exited with status ${code}${signal ? ` (${signal})` : ""}. Check the session status and try again.`, tabId });
       return;
     }
-    sendIdeChat({ type: "done", code, signal, sessionId, modelLabel: "Claude" });
+    sendIdeChat({ type: "done", code, signal, sessionId, modelLabel: "Claude", tabId });
   });
   // Closing stdin is required for --input-format=text; without it Claude Code
   // correctly waits for the rest of the user's message forever.
@@ -1649,6 +1690,12 @@ function createIdeView() {
     },
   });
   ideView.setBackgroundColor("#14101f");
+  // The only web-permission this window ever needs is the microphone, for the
+  // push-to-talk composer (macOS only; see electron/speech.js). Grant just
+  // that and deny everything else — geolocation, notifications, HID, etc.
+  ideView.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(permission === "media" && process.platform === "darwin");
+  });
   if (process.env.BC_DEBUG_CONSOLE) {
     ideView.webContents.on("console-message", (_e, level, message, line, sourceId) => {
       console.log(`[ide-renderer:${level}] ${message} (${sourceId}:${line})`);
@@ -1725,11 +1772,14 @@ function startIdeSession({ cwd, cols, rows, args = [] }) {
 
   store.set("codeWindow.ideLastCwd", cwd);
   const session = ideSession;
+  ideActivity.reset("idle");
   session.on("data", (chunk) => {
+    ideActivity.feed(chunk);
     if (!target.isDestroyed()) target.send("ide:data", chunk);
   });
   session.on("exit", ({ exitCode, signal }) => {
     if (session === ideSession) ideSession = null;
+    ideActivity.reset("idle");
     if (!target.isDestroyed()) target.send("ide:exit", { exitCode, signal });
   });
   if (!target.isDestroyed()) target.send("ide:started", { cwd, binaryPath, pid: session.pid });
@@ -2428,19 +2478,54 @@ ipcMain.handle("ide:chat", (e, payload = {}) => {
     // "claude" (or null) = subscription CLI; anything else is a free-model id
     // from the picker ("stealth/ox-alpha", "keyless:pollinations-openai", ...).
     model: typeof payload.model === "string" && payload.model !== "claude" ? payload.model : null,
+    // plan / normal / auto — see IDE_PERMISSION_MODES.
+    permissionMode: typeof payload.permissionMode === "string" ? payload.permissionMode : "normal",
+    // Which open session tab this turn belongs to, so parallel sessions'
+    // events stay separated.
+    tabId: typeof payload.tabId === "string" && payload.tabId ? payload.tabId : "default",
   });
 });
-ipcMain.handle("ide:chat-stop", (e) => {
+ipcMain.handle("ide:chat-stop", (e, tabId) => {
   if (!isIdeSender(e.sender)) return false;
-  disposeIdeChatProcess();
-  sendIdeChat({ type: "stopped" });
+  const key = typeof tabId === "string" && tabId ? tabId : null;
+  if (key) {
+    disposeIdeChat(key);
+    sendIdeChat({ type: "stopped", tabId: key });
+  } else {
+    disposeAllIdeChats();
+    sendIdeChat({ type: "stopped" });
+  }
   return true;
 });
 ipcMain.handle("ide:git-diff", async (e, cwd) => isIdeSender(e.sender) ? ideWorkspace.getGitDiff(rememberIdeCwd(cwd)) : { isRepo: false, diff: "" });
+// Push-to-talk voice (macOS + whisper.cpp; see electron/speech.js).
+ipcMain.handle("ide:stt-available", (e) => isIdeSender(e.sender) ? speech.status() : { available: false });
+ipcMain.handle("ide:transcribe", async (e, arrayBuffer) => {
+  if (!isIdeSender(e.sender)) return { error: "unauthorized" };
+  try {
+    const text = await speech.transcribe(Buffer.from(arrayBuffer));
+    return { text };
+  } catch (err) {
+    return { error: (err && err.message) || "Could not transcribe that audio." };
+  }
+});
 ipcMain.handle("ide:list-sessions", (e, cwd) => {
   if (!isIdeSender(e.sender)) return [];
   const resolved = rememberIdeCwd(cwd);
-  return sessionBundle.listSessionsForCwd(resolved).map(({ sessionId, firstTimestamp, lastTimestamp, messageCount }) => ({ sessionId, firstTimestamp, lastTimestamp, messageCount }));
+  return sessionBundle.listSessionsForCwd(resolved).map(({ sessionId, firstTimestamp, lastTimestamp, messageCount, title }) => ({ sessionId, firstTimestamp, lastTimestamp, messageCount, title }));
+});
+// Full past transcript for one saved session, so the chat panel can show it
+// exactly like Claude Code desktop does. Read-only file access (see
+// electron/session-bundle.js); the terminal/pty path is untouched by this.
+ipcMain.handle("ide:read-session", (e, cwd, sessionId) => {
+  if (!isIdeSender(e.sender)) return { turns: [], error: "unauthorized" };
+  try {
+    const resolved = rememberIdeCwd(cwd);
+    const lines = sessionBundle.readSessionMessagesFromDisk(resolved, sessionId);
+    return { turns: sessionBundle.messagesToChatTurns(lines) };
+  } catch (err) {
+    return { turns: [], error: (err && err.message) || "Could not read that session." };
+  }
 });
 ipcMain.handle("ide:read-file", (e, cwd, relativePath) => isIdeSender(e.sender) ? ideWorkspace.readProjectFile(rememberIdeCwd(cwd), relativePath) : { binary: false, content: "" });
 ipcMain.handle("ide:write-file", (e, cwd, relativePath, content, expectedMtimeMs) => isIdeSender(e.sender) ? ideWorkspace.writeProjectFile(rememberIdeCwd(cwd), relativePath, content, expectedMtimeMs) : { ok: false, conflict: true });
@@ -2497,10 +2582,22 @@ ipcMain.handle("ide:list-free-models", async (e) => {
 });
 ipcMain.handle("ide:open-home", (e, url) => {
   if (!isIdeSender(e.sender)) return false;
-  const target = typeof url === "string" && /^https:\/\/claude\.ai\/(chat|conversation)\//.test(url) ? url : "https://claude.ai";
   setIdeViewShown(false);
   setCodeViewShown(false);
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.loadURL(target);
+  // Detaching the panes already reveals claude.ai sitting underneath, right
+  // where the user left it. Only actually navigate when we have somewhere
+  // specific to go (a conversation deep-link) or the main view has drifted off
+  // claude.ai entirely — a blanket loadURL here is what made returning to chat
+  // flash through a full blank reload.
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    const wantsDeepLink = typeof url === "string" && /^https:\/\/claude\.ai\/(chat|conversation)\//.test(url);
+    const current = mainWindow.webContents.getURL() || "";
+    if (wantsDeepLink) {
+      mainWindow.webContents.loadURL(url);
+    } else if (!/^https:\/\/claude\.ai\//.test(current)) {
+      mainWindow.webContents.loadURL("https://claude.ai");
+    }
+  }
   return true;
 });
 ipcMain.handle("ide:open-cli", (e) => {
@@ -2608,6 +2705,8 @@ function attachClaudeReloadRecovery(win) {
     }
     wc.send("code-tab:state", { shown: codeViewShown });
     wc.send("ide-tab:state", { shown: ideViewShown });
+    wc.send("code-tab:activity", { state: codeActivity.getState() });
+    wc.send("ide-tab:activity", { state: ideActivity.getState() });
     wc.send("betterclaude:reinject", { reason });
   };
 

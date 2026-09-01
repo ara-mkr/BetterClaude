@@ -390,6 +390,11 @@ const TARGETS = {
     why: "Anthropic's own segmented control. Nothing of ours is mounted inside it; core/code-tab.js scopes its native Home/Code click interception to this group so color-mode controls sharing the data-mode attribute can never be mistaken for it.",
     absenceIsNormal: ({ signedIn }) => !signedIn,
     strategies: [
+      // Current build: `div.df-app-switch` (a.k.a. `[data-compact-mode-switcher]`)
+      // wrapping a `[role="radiogroup"]` of `[data-mode]` radios, in `.df-titlebar`.
+      { sel: ".df-app-switch", tier: "primary" },
+      { sel: "[data-compact-mode-switcher]", tier: "primary" },
+      { sel: '[role="radiogroup"]:has([data-mode])', tier: "primary" },
       // `data-segmented` + `data-pills` are developer-authored and semantic;
       // the surrounding Tailwind classes and the React `_r_*` ids are not.
       { sel: '[data-testid="sidebar"] [role="group"][data-segmented]', tier: "primary" },

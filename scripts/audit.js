@@ -357,6 +357,52 @@ function auditContrast() {
   const touchesSidebar = /sidebar/.test(bgCss.replace(/\/\*[^]*?\*\//g, "")); // ignore comments
   record("§4.1", "background scoped to main pane (not sidebar)", !touchesSidebar,
     touchesSidebar ? "leaks into sidebar" : "main-only");
+
+  // The decorative layer's properties must never reach a REAL element.
+  //
+  // This guards the 0.4.1 defect that bricked the app. Both scopes are selector
+  // LISTS, and the rules were built by string-concatenating a suffix onto them:
+  //
+  //     ${scope} > .bc-bg-layer,
+  //     ${scope}::before { pointer-events: none; position: absolute; ... }
+  //
+  // A comma binds looser than the suffix, so that flattened into bare `main`,
+  // `[role="main"]`, `[data-testid="conversation"]` (and, with unifyAllSurfaces,
+  // bare `body`) each receiving the layer's own block. `pointer-events` INHERITS,
+  // so the whole app under those nodes went click-dead while the document-level
+  // click handler still fired the click sound; `position: absolute; inset: 0`
+  // pulled <main> out of flow and collapsed the page into overlapping rows.
+  //
+  // Every existing §4.1 check passed with that bug present, which is why this
+  // one is structural: it asserts that no selector receiving the layer block is
+  // a plain element/attribute selector — each must end in `::before`, `::after`
+  // or `> .bc-bg-layer`.
+  for (const unify of [false, true]) {
+    const css = stripCssComments(buildBackgroundCSS({
+      mode: "solid", color: "#123456", unifyAllSurfaces: unify,
+    }));
+    const offenders = [];
+    for (const [, selectorText, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (!/pointer-events\s*:\s*none/.test(body)) continue;
+      for (const sel of selectorText.split(",").map((s) => s.trim()).filter(Boolean)) {
+        if (!/(::before|::after|>\s*\.bc-bg-layer)$/.test(sel)) offenders.push(sel);
+      }
+    }
+    record("§4.1", `background layer never lands on a real element (unifyAllSurfaces=${unify})`,
+      offenders.length === 0,
+      offenders.length ? `bare selectors got the layer block: ${offenders.join(" | ")}` : "all pseudo/child-scoped");
+  }
+
+  // ...and the same for the container rule: it may style the scope itself, but
+  // only with the containing-block setup, never with layer geometry.
+  for (const unify of [false, true]) {
+    const css = stripCssComments(buildBackgroundCSS({
+      mode: "solid", color: "#123456", unifyAllSurfaces: unify,
+    }));
+    const leaked = /(^|[^:])\b(body|main)\s*\{[^}]*position:\s*absolute/.test(css);
+    record("§4.1", `scope container never made position:absolute (unifyAllSurfaces=${unify})`,
+      !leaked, leaked ? "a bare scope selector was absolutely positioned" : "container rule is relative-only");
+  }
 }
 
 /* ---------------- Defect 1: painted-button exclusion list can't drift ---------------- */

@@ -1,12 +1,19 @@
 /**
  * BetterClaude's Code tab — the in-page half.
  *
- * Mounts one pill next to Anthropic's own Home / Code segmented control and
- * reports where the content area is, so the host can park the embedded
- * terminal pane exactly where claude.ai's own content would be. DOM-only: every
- * side effect arrives as a host callback, the same contract as
- * core/skill-marketplace.js and core/update-banner.js, so a browser extension
- * could mount this against a different transport unchanged.
+ * Reports where claude.ai's content area is, so the host can park the embedded
+ * terminal pane exactly where claude.ai's own content would be, and intercepts
+ * claude.ai's own Home/Code control as a fallback. DOM-only: every side effect
+ * arrives as a host callback, the same contract as core/skill-marketplace.js
+ * and core/update-banner.js, so a browser extension could mount this against a
+ * different transport unchanged.
+ *
+ * The visible Home / Code / CLI switch is NOT here anymore — it is the one nav
+ * rail in the shared title bar (ui/title-bar.js), which stays put in every
+ * mode. This module used to also mount an in-page pill that hopped between
+ * claude.ai's segmented row, the title bar, and a floating box depending on the
+ * route; `showPill` now defaults false and that path is dead. What remains is
+ * the pane geometry measurement, split mode, and the native-click fallback.
  *
  * WHY THE BETTERCLAUDE IDE OWNS THE NATIVE "CODE" ACTION
  *
@@ -15,8 +22,8 @@
  * behind a private desktop-app gate. BetterClaude cannot reliably unlock that
  * route, so this module observes the semantic mode control and prevents only
  * the native Code navigation, opening the BetterClaude-owned IDE instead.
- * Home is left untouched. The optional CLI pill remains a separate affordance
- * for the existing embedded terminal.
+ * claude.ai's own segmented control is hidden by ui/title-bar.css now that the
+ * rail covers it; this interception stays as belt-and-suspenders.
  *
  * WHY THE PANE DOES NOT COVER THE SIDEBAR
  *
@@ -48,6 +55,7 @@
  */
 
 const { resolveTarget, queryOne, boxOf } = require("./claude-dom");
+const ICONS = require("./icons");
 
 const PILL_ID = "bc-code-tab-pill";
 
@@ -63,6 +71,13 @@ const PILL_LABEL = "CLI";
 // Anthropic's pills are ~30px tall inside a 32px group. Matched here so ours
 // sits on the same baseline rather than stretching the row.
 const FLOATING_CLASS = "bc-code-tab-floating";
+// Set instead of FLOATING_CLASS when the pill falls back into BetterClaude's
+// own title bar (see the fallback branch in mount()).
+const TITLEBAR_CLASS = "bc-code-tab-in-titlebar";
+// Kept in sync with TITLE_BAR_ID in ui/title-bar.js. Not imported: that module
+// requires electron/window-chrome.js, and core/ stays free of Electron deps so
+// the same bundle can run as a browser extension content script.
+const TITLE_BAR_ID = "betterclaude-titlebar";
 
 // --- Split mode ---------------------------------------------------------------
 //
@@ -231,7 +246,15 @@ function createPill({ onActivate }) {
   btn.className = "bc-code-tab-pill";
   btn.setAttribute("aria-label", "BetterClaude Code (Claude Code CLI)");
   btn.title = "BetterClaude Code — runs the Claude Code CLI from this machine, in this window";
-  btn.textContent = PILL_LABEL;
+  // Icon + label, matching the shape of Anthropic's own pills next door (each
+  // is a small leading glyph followed by a text label). The terminal glyph is
+  // what makes this pill readable at a glance as "the command-line one" rather
+  // than a third word to parse; the label stays because "CLI" is the honest
+  // distinction from their Code pill, and the icon is aria-hidden so assistive
+  // tech still reads the one accessible name set above.
+  btn.innerHTML =
+    `<span class="bc-code-tab-pill-icon" aria-hidden="true">${ICONS.TERMINAL}</span>` +
+    `<span class="bc-code-tab-pill-label">${PILL_LABEL}</span>`;
   btn.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -252,7 +275,7 @@ function createPill({ onActivate }) {
  *   captured once, since the user can flip the setting while the pane is
  *   mounted (or open).
  */
-function mountCodeTab({ onActivate, onDeactivate, onLayout, onNativeCode, onNativeHome, titleBarHeight = 0, getSidebarOnRight = () => false, showPill = true } = {}) {
+function mountCodeTab({ onActivate, onDeactivate, onLayout, onNativeCode, onNativeHome, titleBarHeight = 0, getSidebarOnRight = () => false, showPill = false } = {}) {
   let active = false;
   let split = false;
   // Where a clicked sidebar chat is ABOUT to route. React Router navigates on
@@ -415,15 +438,49 @@ function mountCodeTab({ onActivate, onDeactivate, onLayout, onNativeCode, onNati
       // only exists if you assume the pill order, and the audit's six-pill
       // reshuffle case exists precisely because that assumption is the one
       // Anthropic keeps invalidating. Last is last whatever the order is.
-      if (pill.parentElement !== group.element) group.element.appendChild(pill);
-    } else if (pill.parentElement !== document.body) {
-      // Safe fallback: the container is gone, so float the control instead of
-      // dropping it. A user who cannot see the pane at all has lost a feature;
-      // a user whose pill is in a slightly odd place has not. The
-      // bc-miss-modeSwitch body class (set by core/layout-probe.js) is what
-      // ui/title-bar.css keys the floating position off.
-      pill.classList.add(FLOATING_CLASS);
-      document.body.appendChild(pill);
+      if (pill.parentElement !== group.element) {
+        pill.classList.remove(TITLEBAR_CLASS);
+        group.element.appendChild(pill);
+      }
+    } else {
+      // FALLBACK — Anthropic's pill row is not on this render.
+      //
+      // This is not the rare case the old comment assumed. claude.ai ships the
+      // Home/Code segmented group conditionally (measured live: zero
+      // `[data-segmented]` nodes on /new), so the fallback IS the normal state
+      // on those routes, and where it puts the pill matters as much as the
+      // primary placement does.
+      //
+      // It used to float at `top: var(--bc-tb-h) + 8px; left: 12px` on the
+      // claim that the spot was "clear of Claude's own chrome on every route
+      // the audit covered". That is no longer true and was the whole "Claude is
+      // fried / weird overlap" bug: claude.ai now paints its own brand wordmark
+      // at (12,46,50,44) — `div.df-titlebar-brand` > `span.font-voice`, the
+      // word "Claude" — and the floating pill landed exactly on top of it, so
+      // the two texts rendered through each other.
+      //
+      // Chasing a new "empty" coordinate inside claude.ai's layout would just
+      // reschedule the same bug for their next redesign. So the fallback moves
+      // into the one region whose emptiness BetterClaude controls: its OWN
+      // title bar, which already reserves a wide drag spacer and is mounted on
+      // every route. Inserted before the settings button so the row reads
+      // [CLI] [gear], and it stays a real member of .bc-tb-controls rather than
+      // a floating overlay, so it cannot cover anything by construction.
+      const controls = document.querySelector(`#${TITLE_BAR_ID} .bc-tb-controls`);
+      if (controls) {
+        if (pill.parentElement !== controls) {
+          pill.classList.remove(FLOATING_CLASS);
+          pill.classList.add(TITLEBAR_CLASS);
+          controls.insertBefore(pill, controls.firstChild);
+        }
+      } else if (pill.parentElement !== document.body) {
+        // No BetterClaude title bar either (the extension build mounts none).
+        // Float as a last resort, but below claude.ai's brand row rather than
+        // through it — see the floating rules in ui/title-bar.css.
+        pill.classList.remove(TITLEBAR_CLASS);
+        pill.classList.add(FLOATING_CLASS);
+        document.body.appendChild(pill);
+      }
     }
 
     pill.setAttribute("aria-pressed", active ? "true" : "false");
@@ -559,4 +616,4 @@ function mountCodeTab({ onActivate, onDeactivate, onLayout, onNativeCode, onNati
   };
 }
 
-module.exports = { mountCodeTab, measureContentArea, PILL_ID, FLOATING_CLASS };
+module.exports = { mountCodeTab, measureContentArea, PILL_ID, FLOATING_CLASS, TITLEBAR_CLASS };
