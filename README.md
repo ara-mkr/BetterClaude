@@ -114,11 +114,11 @@ Full technical detail on every module above — exact file paths, IPC handler na
 
 ## The Code workspace
 
-Version 0.4 turned the Code tab from "a terminal in a pane" into a real workspace with three surfaces sharing one window. Navigation is **one fixed rail of icon buttons — Home / Code / CLI — centred in the title bar**, in the same spot in every mode (0.5 replaced three older, inconsistent controls that used to hop between claude.ai's row, the sidebar, and a floating box — which is also what used to eat clicks near the window edges). claude.ai's own **Code** pill opens the IDE too, instead of leading to a gated route:
+Version 0.4 turned the Code tab from "a terminal in a pane" into a real workspace with three surfaces sharing one window. Navigation is **one fixed rail of icon buttons — Chat / Code / CLI — centred in the title bar**, in the same spot in every mode (0.5 replaced three older, inconsistent controls that used to hop between claude.ai's row, the sidebar, and a floating box — which is also what used to eat clicks near the window edges). claude.ai's own **Code** pill opens the IDE too, instead of leading to a gated route:
 
-![The Home, Code and CLI pills above claude.ai's sidebar](.github/readme-assets/code-tabs.png)
+![The Chat / Code / CLI rail centred in BetterClaude's title bar, with the Code workspace open below it](.github/readme-assets/code-tabs.png)
 
-- **Home** is claude.ai exactly as Anthropic ships it.
+- **Chat** is claude.ai exactly as Anthropic ships it.
 - **Code** opens the IDE workspace described below.
 - **CLI** is the plain embedded terminal from before, still your real `claude` binary in a real pty.
 
@@ -126,15 +126,15 @@ A nice side effect: open a conversation while a Code surface is showing and clau
 
 ### The IDE workspace
 
-![The IDE workspace: file tree, editor, terminal, and the Claude assistant chat](.github/readme-assets/ide-workspace.png)
+![The Code tab: projects and sessions on the left, a Claude Code conversation with tool rows and an approved command in the middle, the Changes panel on the right](.github/readme-assets/ide-workspace.png)
 
-As of 0.5 the workspace is **chat-first**, like the Claude Code desktop app. The Claude conversation is the main surface; the editor tooling is one click away when you want it.
+The Code tab is laid out like Claude Code's own desktop app, and its conversation is a **real Claude Code session on your Claude plan**: the same `claude` you run in a terminal, driven over Claude Code's host protocol (`electron/ide-chat.js`), not a lookalike.
 
-- **Sessions are the primary list.** The sidebar shows your saved `claude` sessions for the project with **real names** (taken from the first prompt, not a raw id). Click one and its **entire transcript loads into the chat** — every turn, exactly as it happened. Resuming an old session happens here, in the chat, and never disturbs the terminal.
-- **Multiple sessions open at once.** A tab strip across the top of the chat holds every open session, each streaming its own reply independently; **+** starts a fresh one. New sessions can still be started from the CLI/terminal too.
-- **The composer** takes slash commands (type `/` for a menu of `claude` commands plus your prompt-library entries), sends on **Enter** (Shift+Enter for a newline), and has a **Plan / Normal / Auto** switch that maps to Claude Code's permission modes (`plan` = read-only planning, `auto` = run edits and commands unattended). On macOS, a **hold-to-talk mic button** dictates into the composer via a local whisper.cpp — nothing leaves the machine, and it only appears if `whisper-cli` is on your PATH (`brew install whisper-cpp`; the ~142 MB model downloads itself on first use).
-- **Editor view** (the Explorer / Source / Extensions buttons, or the editor icon in the chat header) brings back the classic arrangement: a project **file tree** (capped at 700 entries / 7 levels, skipping `.git`, `node_modules`, and other noise), a **tabbed CodeMirror 6 editor** (`Cmd/Ctrl+S` saves and refuses to clobber a file changed on disk; CSS gets syntax highlighting), **source control** with a real diff view, **Extensions** (below), a **bottom terminal** running the actual Claude Code CLI in the project, and a **Cloud** tab listing your live `claude agents --all` sessions.
-- The model picker described [below](#free-models-through-openrouter) rides on the chat composer, and everything is themed by the same `--bc-*` tokens as the rest of the app.
+- **Projects and their sessions** share one sidebar: each project folder with its saved sessions nested under it (a short AI title after the first reply), a search box, and status glyphs for working, needs-your-input and unread. Click a saved session and its whole transcript, tool calls included, loads into the chat; your next message resumes it.
+- **One conversation** in the middle: replies as markdown, tool calls as compact rows you can expand ("Edited math.js +1 −1", "Ran npm test"), and **approval cards inline**: Allow / Always allow / Deny for a command, option pickers when Claude asks you something, and the plan itself with Approve / Keep planning in Plan mode. Several sessions, in several projects, can work at once, each in its own `claude` process; a reply Claude starts on its own (a background task finished) shows up too.
+- **The composer** has Claude Code's permission modes (Ask, Accept edits, Plan, Auto), a model menu (your plan's default, Fable, Opus, Sonnet, Haiku, or any model id), `/` commands plus your prompt library, file attachments, and Stop (Esc). On macOS a **hold-to-talk mic** dictates through a local whisper.cpp; it only appears if `whisper-cli` is on your PATH (`brew install whisper-cpp`).
+- **A right panel on demand** (⌘⌥B): **Changes** (the working tree's diff, with Commit & PR through `gh`), **Files** (a tree plus a CodeMirror 6 editor that refuses to clobber a file changed on disk), **Terminal** (a real login shell in the project) and **Extensions** (below).
+- **Billing stays yours.** Chats run on your claude.ai login with every API-key and provider override stripped from the environment. If a project's (or your own) Claude Code settings would send a chat to an API key, an auth token or another endpoint, a cloud provider, or an apiKeyHelper, it stops before sending anything. Loading your `~/.claude/settings.json` (hooks, plugins and its `env` block) is opt-in under Settings → Claude Code.
 
 ### Extensions
 
@@ -151,7 +151,7 @@ The assistant chat's model picker has a **"Free right now · OpenRouter"** secti
 1. Pick a free model from the picker and chat with it directly, no subscription touched.
 2. Stay on Claude. If a prompt dies to a usage limit, the same prompt re-runs on the free chain automatically ("Auto-switch when Claude hits its limit", on by default).
 
-An OpenRouter key is optional; paste one into the picker footer if you want higher rate limits. Requests go from the app straight to the provider you picked — there is no BetterClaude server in the middle, because there is no BetterClaude server.
+OpenRouter's free models need a free key (openrouter.ai/keys): paste it into the picker footer. It is stored encrypted in your OS keychain, never in settings or exports. Without one, the chain goes straight to a local Ollama and then Pollinations (best effort). Auto-failover only takes over a turn that hadn't run any tools yet. Requests go from the app straight to the provider you picked — there is no BetterClaude server in the middle, because there is no BetterClaude server.
 
 ### Team Hub
 

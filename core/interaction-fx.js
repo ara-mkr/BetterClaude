@@ -12,8 +12,12 @@
 
 // BetterClaude's own chrome only — see file header for why claude.ai's own
 // buttons are deliberately excluded from the magnetic effect.
+// The Home / Code / CLI rail is excluded: moving the pointer from the rail
+// into a native pane (the Code / CLI WebContentsView) stops this page's
+// mousemove stream mid-pull, which left a rail button stuck translated a few
+// pixels off-centre — a visible "shift" every time the Code tab opened.
 const MAGNETIC_TARGETS_SELECTOR =
-  '#betterclaude-titlebar button, #betterclaude-settings-panel .bc-btn, ' +
+  '#betterclaude-titlebar button:not(.bc-tb-nav-btn), #betterclaude-settings-panel .bc-btn, ' +
   '#betterclaude-settings-panel .bc-sp-close, #betterclaude-plugin-dock .bc-dock-btn';
 
 const MAGNETIC_RADIUS_PX = 70;
@@ -50,8 +54,14 @@ class InteractionFX {
     this._bound.onClick = (e) => this._onClick(e);
     this._bound.onContextMenu = (e) => this._onContextMenu(e);
     this._bound.onResize = () => this._resize();
+    // The pointer can leave this document without a final mousemove (into a
+    // native pane, another window, or off-screen) — never leave a target
+    // translated when it does.
+    this._bound.onLeave = () => this._resetMagnetic();
 
     document.addEventListener("mousemove", this._bound.onMouseMove, { passive: true });
+    document.documentElement.addEventListener("mouseleave", this._bound.onLeave);
+    window.addEventListener("blur", this._bound.onLeave);
     document.addEventListener("click", this._bound.onClick, { passive: true });
     document.addEventListener("contextmenu", this._bound.onContextMenu);
     window.addEventListener("resize", this._bound.onResize);
@@ -68,6 +78,10 @@ class InteractionFX {
     if (this._bound.onClick) document.removeEventListener("click", this._bound.onClick);
     if (this._bound.onContextMenu) document.removeEventListener("contextmenu", this._bound.onContextMenu);
     if (this._bound.onResize) window.removeEventListener("resize", this._bound.onResize);
+    if (this._bound.onLeave) {
+      document.documentElement.removeEventListener("mouseleave", this._bound.onLeave);
+      window.removeEventListener("blur", this._bound.onLeave);
+    }
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.rafId = null;
     if (this.canvas) {

@@ -11,6 +11,7 @@
     "audit": "node scripts/audit.js",
     "audit:layout": "npm run build:core && electron scripts/audit-layout-probe.js",
     "audit:dom": "electron scripts/audit-claude-dom.js",
+    "audit:composer": "electron scripts/audit-composer-fill.js",
     "clipboard-relay": "node scripts/clipboard-relay-server.js",
     "regen-themes": "node scripts/regen-themes.js",
     "start": "npm run build:core && electron .",
@@ -45,6 +46,7 @@
     "diff": "^7.0.0",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.8.9",
+    "marked": "^15.0.12",
     "node-pty": "^1.1.0",
     "sql.js": "^1.14.1"
   },

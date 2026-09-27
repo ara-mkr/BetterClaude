@@ -430,7 +430,11 @@ const PAINTED_BUTTON_EXCLUDE = PAINTED_BUTTON_ATTRS.map((attr) => `:not(${attr})
 // claude.ai's app-root id, which isn't a stable contract (see PAGE_ROOT_SCOPE
 // below). Wrapped in :where() by callers so it contributes zero specificity,
 // same as the rules it used to gate via #__next/#root.
-const OWN_CHROME_IDS = ["betterclaude-titlebar", "betterclaude-settings-panel", "betterclaude-hud", "betterclaude-plugin-dock"];
+// The id list is tokens.js's, not a copy: this file's own copy drifted —
+// it lacked #bc-ide-shell, so the base font rule below forced
+// --bc-base-size (!important) onto every element of the Code tab and
+// flattened its whole type scale (notes read exactly like replies).
+const OWN_CHROME_IDS = tokens.OWN_CHROME_IDS;
 const OWN_CHROME_EXCLUDE = OWN_CHROME_IDS.map((id) => `:not(#${id}):not(#${id} *)`).join("");
 
 // Scope for "every real element of the actual page". Originally
@@ -845,6 +849,8 @@ module.exports = {
   BASE_STYLE_ID,
   THEME_VAR_DEFS,
   buildThemeCSSFromVars,
+  // Pure (settings -> CSS); exported for scripts/audit-composer-fill.js.
+  buildBaseCSS,
   resolveScheduledTheme,
   // Small DOM helper other modules (core/extras-css.js consumers, etc.) can
   // reuse instead of duplicating the same "find or create a <style> tag"

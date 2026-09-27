@@ -19,7 +19,7 @@ module.exports = {
     wrap.appendChild(el("h2", { text: "Claude Code" }));
     wrap.appendChild(el("p", {
       class: "bc-hint",
-      text: "Runs the claude CLI installed on this machine, in a real terminal beside the chat — not Anthropic's hosted Code surface.",
+      text: "The CLI and Code tabs run the claude CLI installed on this machine — a real terminal, and a chat on your Claude plan — not Anthropic's hosted Code surface.",
     }));
 
     wrap.appendChild(toggleField(
@@ -66,6 +66,76 @@ module.exports = {
     wrap.appendChild(el("p", {
       class: "bc-hint",
       text: "Only needed for a version-managed or non-standard install that a GUI app's PATH doesn't reach. This is a path to an executable — never a config or credential file.",
+    }));
+
+    // --- Code tab chats (electron/ide-chat.js) -------------------------------
+    const chat = code.chat || {};
+    wrap.appendChild(el("h3", { text: "Code tab chats" }));
+    wrap.appendChild(el("p", {
+      class: "bc-hint",
+      text: "Each Code tab conversation is a real Claude Code session on your Claude plan. These change how new sessions start; one that is already open picks them up from your next message.",
+    }));
+
+    wrap.appendChild(toggleField(
+      "Load my ~/.claude settings",
+      chat.loadUserSettings === true,
+      (v) => this._set("codeWindow.chat.loadUserSettings", v)
+    ));
+    wrap.appendChild(el("p", {
+      class: "bc-hint",
+      text: "Your global permission rules, hooks and plugins, like a terminal claude. It also applies that file's env block: if it points Claude Code at another endpoint or token, chats stop before sending anything (see below). The project's own .claude settings always load.",
+    }));
+
+    wrap.appendChild(toggleField(
+      "Start MCP servers",
+      chat.loadMcpServers === true,
+      (v) => this._set("codeWindow.chat.loadMcpServers", v)
+    ));
+    wrap.appendChild(el("p", {
+      class: "bc-hint",
+      text: "Off: sessions start with Claude Code's built-in tools only. Each configured MCP server launches per session and can add seconds to the first reply.",
+    }));
+
+    wrap.appendChild(toggleField(
+      "Allow chats that don't bill my Claude plan",
+      chat.allowApiKeyBilling === true,
+      (v) => this._set("codeWindow.chat.allowApiKeyBilling", v)
+    ));
+    wrap.appendChild(el("p", {
+      class: "bc-hint",
+      text: "Off: a chat whose Claude Code settings would use an API key, an auth token or another base URL, a cloud provider, or an apiKeyHelper is stopped before its first request.",
+    }));
+
+    wrap.appendChild(toggleField(
+      "Offer the Bypass permissions mode",
+      chat.allowBypassMode === true,
+      (v) => this._set("codeWindow.chat.allowBypassMode", v)
+    ));
+    wrap.appendChild(el("p", {
+      class: "bc-hint",
+      text: "Adds Bypass to the composer's mode menu: every tool runs without asking. Auto (Claude Code's own safety classifier) is the safer hands-off choice.",
+    }));
+
+    // --- Free models (electron/openrouter.js) ---------------------------------
+    const free = code.freeModels || {};
+    wrap.appendChild(el("h3", { text: "Free models" }));
+    wrap.appendChild(toggleField(
+      "Free models in the Code tab",
+      free.enabled !== false,
+      (v) => this._set("codeWindow.freeModels.enabled", v)
+    ));
+    wrap.appendChild(el("p", {
+      class: "bc-hint",
+      text: "Lists no-cost models in the composer's model menu. They never use your Claude plan and can't edit files or run commands. OpenRouter's need a free key, added in that menu.",
+    }));
+    wrap.appendChild(toggleField(
+      "Switch to a free model when Claude hits its limit",
+      free.autoFailover !== false,
+      (v) => this._set("codeWindow.freeModels.autoFailover", v)
+    ));
+    wrap.appendChild(el("p", {
+      class: "bc-hint",
+      text: "Only for a turn that hadn't run any tools yet — the free model answers that one message with the conversation so far.",
     }));
 
     this.contentEl.appendChild(wrap);

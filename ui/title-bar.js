@@ -111,11 +111,17 @@ function mountTitleBar(host) {
   for (const btn of navButtons) {
     btn.addEventListener("click", () => {
       const fn = navHandlers[btn.dataset.bcNav];
-      if (typeof fn === "function") fn();
+      // Highlight the clicked button immediately; main's pane-state echo
+      // confirms it (or corrects it) a frame later. Waiting on the round-trip
+      // left the old button lit while the new pane was already drawing.
+      if (typeof fn === "function") {
+        setNavMode(btn.dataset.bcNav);
+        fn();
+      }
     });
   }
 
-  let navMode = "home";
+  let navMode = null;
   function setNavMode(mode) {
     navMode = mode;
     for (const btn of navButtons) {
@@ -124,7 +130,10 @@ function mountTitleBar(host) {
       btn.setAttribute("aria-pressed", on ? "true" : "false");
     }
   }
-  setNavMode("home");
+  // No highlight until the host reports the real pane: after a claude.ai
+  // reload while Code is open, a hard-coded "home" lit the wrong button and
+  // then jumped once main's state arrived.
+  setNavMode(host.initialNavMode || null);
 
   // The CLI pane can be switched off in Settings (codeWindow.tabEnabled) —
   // the tray item, app menu and accelerator keep it reachable, so the button

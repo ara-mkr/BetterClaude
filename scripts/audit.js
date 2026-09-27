@@ -100,7 +100,9 @@ function auditThemesStatic() {
     const { rules } = splitRoot(css);
 
     // Hardcoded hex outside the token :root block (scrollbar/# in var() is ok).
-    const hexInRules = (rules.match(/#[0-9a-f]{3,6}\b/gi) || []);
+    // Comments stripped first, like the hover check below: a hex quoted in
+    // prose (e.g. a measured native colour) is not a hardcoded rule value.
+    const hexInRules = (stripCssComments(rules).match(/#[0-9a-f]{3,6}\b/gi) || []);
     record("static", `${file}: no hardcoded hex in selectors`, hexInRules.length === 0,
       hexInRules.length ? `found ${hexInRules.slice(0, 3).join(", ")}` : "clean");
 

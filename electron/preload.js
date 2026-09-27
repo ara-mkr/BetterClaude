@@ -537,9 +537,18 @@ async function bootstrap() {
   // The title-bar nav rail's pressed state follows main.js's pane truth, not
   // the other way round — the tray, menu, accelerator and `--code` can all open
   // or close a pane without the rail being touched.
+  // Coalesced to one frame: switching CLI -> Code arrives as TWO messages
+  // (code-tab:state false, then ide-tab:state true). Applied one at a time,
+  // the pair briefly computed "home", so the highlight hopped CLI -> Home ->
+  // Code and its colour fade read as the button sliding across the rail.
+  let navModeFrame = 0;
   function updateNavMode() {
-    const mode = idePaneShown ? "code" : codePaneShown ? "cli" : "home";
-    if (titleBarHandle && titleBarHandle.setNavMode) titleBarHandle.setNavMode(mode);
+    if (navModeFrame) return;
+    navModeFrame = requestAnimationFrame(() => {
+      navModeFrame = 0;
+      const mode = idePaneShown ? "code" : codePaneShown ? "cli" : "home";
+      if (titleBarHandle && titleBarHandle.setNavMode) titleBarHandle.setNavMode(mode);
+    });
   }
   ipcRenderer.on("code-tab:state", (_e, { shown }) => {
     codePaneShown = !!shown;

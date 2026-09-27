@@ -198,36 +198,6 @@ function readProjectFiles(cwd, relativePaths) {
   return relativePaths.slice(0, 12).map((relativePath) => readProjectFile(cwd, relativePath));
 }
 
-function searchProjectFiles(cwd, query) {
-  const needle = String(query || "").trim().toLowerCase();
-  if (!needle) return [];
-  const tree = listProjectTree(cwd);
-  const paths = [];
-  const collect = (nodes) => {
-    for (const node of nodes || []) {
-      if (paths.length >= 180) return;
-      if (node.kind === "file") paths.push(node.path);
-      else collect(node.children);
-    }
-  };
-  collect(tree.nodes);
-  const matches = [];
-  for (const relativePath of paths) {
-    if (matches.length >= 100) break;
-    let file;
-    try { file = readProjectFile(cwd, relativePath); } catch { continue; }
-    if (file.binary) continue;
-    const lines = file.content.split("\n");
-    lines.forEach((line, index) => {
-      if (matches.length >= 100) return;
-      if (line.toLowerCase().includes(needle)) {
-        matches.push({ path: relativePath, line: index + 1, preview: line.trim().slice(0, 180) });
-      }
-    });
-  }
-  return matches;
-}
-
 function writeProjectFile(cwd, relativePath, content, expectedMtimeMs) {
   if (typeof content !== "string") throw new Error("File content must be text.");
   const { root, target } = safeProjectPath(cwd, relativePath);
@@ -250,12 +220,26 @@ function runFile(command, args, cwd) {
   });
 }
 
+// git push / gh pr create can take far longer than a status read — a separate
+// generous budget so they aren't killed mid-network.
+function runLong(command, args, cwd) {
+  return new Promise((resolve) => {
+    execFile(command, args, { cwd, timeout: 90000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+      resolve({ error, stdout: String(stdout || ""), stderr: String(stderr || "") });
+    });
+  });
+}
+
 async function getGitInfo(cwd) {
   const root = realDirectory(cwd);
-  const [status, diffStat, branch] = await Promise.all([
+  const [status, diffStat, branch, ahead, upstream] = await Promise.all([
     runFile("git", ["-C", root, "status", "--short"], root),
-    runFile("git", ["-C", root, "diff", "--stat"], root),
+    // vs HEAD so staged + unstaged tracked edits both count — this is the
+    // "what Claude changed since the last commit" number the SCM bar shows.
+    runFile("git", ["-C", root, "diff", "--stat", "HEAD"], root),
     runFile("git", ["-C", root, "branch", "--show-current"], root),
+    runFile("git", ["-C", root, "rev-list", "--count", "@{upstream}..HEAD"], root),
+    runFile("git", ["-C", root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], root),
   ]);
   const statusLines = status.error ? [] : status.stdout.split("\n").map((line) => line.trimEnd()).filter(Boolean);
   return {
@@ -264,7 +248,63 @@ async function getGitInfo(cwd) {
     changedFiles: statusLines.length,
     statusLines: statusLines.slice(0, 80),
     diffStat: diffStat.error ? "" : diffStat.stdout.trim(),
+    ahead: ahead.error ? 0 : (parseInt(ahead.stdout.trim(), 10) || 0),
+    hasUpstream: !upstream.error && !!upstream.stdout.trim(),
   };
+}
+
+/**
+ * Open a pull request for the current branch: commit any pending work (only
+ * when `commit` is set), push to origin, then run `gh pr create`. Every failure
+ * mode returns { ok:false, error } — nothing here throws into the IPC layer.
+ * `needsCommit:true` is a soft stop so the renderer can confirm the commit.
+ */
+async function createPullRequest(cwd, opts = {}) {
+  const root = realDirectory(cwd);
+  const gh = await runFile("gh", ["--version"], root);
+  if (gh.error) {
+    return { ok: false, error: "GitHub CLI (gh) isn't installed or on PATH. Install it from cli.github.com, then run `gh auth login`." };
+  }
+  const branchRes = await runFile("git", ["-C", root, "branch", "--show-current"], root);
+  if (branchRes.error) return { ok: false, error: "This folder is not a Git repository." };
+  const branch = branchRes.stdout.trim();
+  if (!branch) return { ok: false, error: "You're on a detached HEAD — check out a branch first." };
+  if (/^(main|master|develop|trunk)$/i.test(branch)) {
+    return { ok: false, error: `You're on "${branch}". Create a feature branch before opening a pull request.` };
+  }
+
+  const steps = [];
+  const status = await runFile("git", ["-C", root, "status", "--porcelain"], root);
+  if (status.stdout.trim()) {
+    if (!opts.commit) return { ok: false, needsCommit: true, branch, error: "You have uncommitted changes." };
+    const add = await runLong("git", ["-C", root, "add", "-A"], root);
+    if (add.error) return { ok: false, steps, error: `git add failed: ${(add.stderr || add.error.message || "").trim()}` };
+    const message = String(opts.commitMessage || "").trim() || "Changes from BetterClaude Code";
+    const commit = await runLong("git", ["-C", root, "commit", "-m", message], root);
+    if (commit.error) return { ok: false, steps, error: `git commit failed: ${(commit.stderr || commit.error.message || "").trim()}` };
+    steps.push("committed");
+  }
+
+  const push = await runLong("git", ["-C", root, "push", "-u", "origin", "HEAD"], root);
+  if (push.error) return { ok: false, steps, error: `git push failed: ${(push.stderr || push.error.message || "").trim()}` };
+  steps.push("pushed");
+  if (opts.pushOnly) return { ok: true, steps, branch };
+
+  const ghArgs = opts.web ? ["pr", "create", "--web", "--fill"] : ["pr", "create", "--fill"];
+  const pr = await runLong("gh", ghArgs, root);
+  // --web opens the browser and may exit non-zero once the tab is handed off;
+  // only treat a non-web failure as fatal.
+  if (pr.error && !opts.web) {
+    const detail = (pr.stderr || pr.error.message || "").trim();
+    if (/already exists/i.test(detail)) {
+      const view = await runFile("gh", ["pr", "view", "--json", "url", "-q", ".url"], root);
+      return { ok: true, steps, branch, url: view.error ? null : view.stdout.trim(), note: "PR already existed" };
+    }
+    return { ok: false, steps, error: `gh pr create failed: ${detail}` };
+  }
+  steps.push(opts.web ? "opened a PR draft in your browser" : "created the PR");
+  const url = (String(pr.stdout || "").match(/https?:\/\/\S+/) || [])[0] || null;
+  return { ok: true, steps, branch, url };
 }
 
 async function getGitDiff(cwd) {
@@ -280,12 +320,6 @@ async function getGitDiff(cwd) {
     isRepo: !unstaged.error || !staged.error,
     diff: parts.join("\n\n"),
   };
-}
-
-async function getCliVersion(binaryPath) {
-  if (!binaryPath) return null;
-  const result = await runFile(binaryPath, ["--version"], process.cwd());
-  return result.error ? null : result.stdout.trim() || null;
 }
 
 // Editors whose extension folders are worth showing in the Code workspace's
@@ -596,7 +630,7 @@ function uninstallExtension(id) {
 
 module.exports = {
   MAX_TEXT_BYTES,
-  getCliVersion,
+  createPullRequest,
   getGitDiff,
   getGitInfo,
   installExtension,
@@ -606,7 +640,6 @@ module.exports = {
   readProjectFile,
   readProjectFiles,
   realDirectory,
-  searchProjectFiles,
   searchRegistryExtensions,
   safeProjectPath,
   uninstallExtension,

@@ -508,16 +508,50 @@ const DEFAULT_SETTINGS = {
       // re-run the same prompt on the next free provider instead of surfacing
       // an error bubble and stopping there.
       autoFailover: true,
-      // The model chosen in the Code tab's picker, or null = "Claude only".
-      // Free ids are OpenRouter ids ("stealth/ox-alpha") or keyless:*
-      // builtins; they rotate constantly so nothing validates this against a
-      // fixed list.
+      // The free model last picked in the Code tab's model menu — tried first
+      // when auto-failover kicks in (it is kept when you switch back to
+      // Claude). null = the chain's own order. Free ids are OpenRouter ids
+      // ("stealth/ox-alpha") or keyless:* builtins; they rotate constantly, so
+      // nothing validates this against a fixed list.
       preferredModelId: null,
-      // Optional OpenRouter API key. Empty string = keyless attempts only;
-      // OpenRouter's free tier needs a key to run inference today, so without
-      // this the chain usually lands on the keyless providers at the end.
-      openRouterKey: "",
+      // The optional OpenRouter key is NOT a setting: it lives encrypted in a
+      // separate secrets store (electron/main.js, "Secrets"), because
+      // settings are broadcast to every renderer and written out by Export.
     },
+    // The Code tab's Claude Code chat (electron/ide-chat.js): one persistent
+    // `claude` per open session tab, talking Claude Code's host protocol.
+    chat: {
+      // Load the user's own ~/.claude/settings.json (permission rules, hooks,
+      // plugins, and its `env` block) like their terminal `claude` does. Off
+      // by default because that file travels whole: an `env` block routing
+      // Claude Code elsewhere (ANTHROPIC_BASE_URL + a token, e.g. a local
+      // model router) re-applies inside the chat and quietly replaces the
+      // Claude-plan login BetterClaude promises — the billing guard then
+      // stops the chat — and global hooks/plugins add seconds to every new
+      // session and inject their own gates into its tool calls. Project and
+      // local settings (the repo's own .claude/) always load.
+      loadUserSettings: false,
+      // MCP servers start per session and can take seconds each; on a machine
+      // with many configured that dominates every new chat's first reply.
+      // Off by default (passes --strict-mcp-config); opt in here.
+      loadMcpServers: false,
+      // Billing guard. If the Claude Code settings a chat would load (an
+      // `env` block with an API key, auth token or base URL, a cloud
+      // provider switch, or an apiKeyHelper) would send it anywhere but the
+      // user's Claude plan, the chat stops before its first request unless
+      // this is on.
+      allowApiKeyBilling: false,
+      // Shows the "Bypass permissions" mode (runs every tool without asking).
+      // Off by default — "Auto" (Claude Code's own safety-classifier mode)
+      // covers the hands-off case without disabling every check.
+      allowBypassMode: false,
+    },
+    // Short AI-generated names for Code-chat sessions, keyed by the CLI session
+    // id — { "<uuid>": "Fix Composer Corner Radius" }. Written by
+    // ide:generate-session-title (one Haiku call over the first exchange) so a
+    // session keeps its human name across window reopens, the way the desktop
+    // app names conversations. Capped at ~200 entries, oldest dropped first.
+    sessionTitles: {},
   },
 };
 

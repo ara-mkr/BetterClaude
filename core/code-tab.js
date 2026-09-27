@@ -32,7 +32,8 @@
  * only cosmetic: it keeps this row — the app's one Home / Code / CLI switch —
  * visible and clickable while the CLI pane is open. The IDE pane is the
  * exception: it owns the full content area below the title bar, and its way
- * back is the workspace's own "Open Home" action (ide:open-home), not this row.
+ * back is the title bar's Chat button (ui/title-bar.js), which sits above
+ * every pane.
  *
  * SPLIT MODE (chat beside the pane)
  *
@@ -92,9 +93,8 @@ const TITLE_BAR_ID = "betterclaude-titlebar";
 const SPLIT_BODY_CLASS = "bc-code-split";
 const SPLIT_PANE_CLASS = "bc-split-squeezed";
 
-// Same two href shapes listClaudeConversationsFromHome() trusts in main.js,
-// so what this detects as "a chat" is exactly what everywhere else in the app
-// calls one.
+// The two href shapes claude.ai uses for a conversation, so what this detects
+// as "a chat" is exactly what claude.ai itself links to as one.
 const CHAT_LINK_SELECTOR = 'a[href*="/chat/"], a[href*="/conversation/"]';
 
 function isConversationPath(pathname) {

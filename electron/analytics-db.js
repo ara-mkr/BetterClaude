@@ -101,7 +101,7 @@ function execAll(sql, params) {
 }
 
 function queryAnalytics({ from, to }) {
-  const empty = { tokensByDay: [], messagesByDay: [], costByDay: [], topPlugins: [], topProjects: [], totals: { messages: 0, tokens: 0, costUsd: 0 } };
+  const empty = { tokensByDay: [], messagesByDay: [], costByDay: [], topPlugins: [], topProjects: [], modelsByUsage: [], totals: { messages: 0, tokens: 0, costUsd: 0 } };
   if (!db) return empty;
   const range = "day >= ? AND day <= ?";
   const params = [from, to];
@@ -111,6 +111,10 @@ function queryAnalytics({ from, to }) {
   const costByDay = execAll(`SELECT day, SUM(costUsd) as costUsd FROM usage_events WHERE ${range} AND type='message' GROUP BY day ORDER BY day`, params);
   const topPlugins = execAll(`SELECT pluginId, COUNT(*) as count FROM usage_events WHERE ${range} AND type='plugin' GROUP BY pluginId ORDER BY count DESC LIMIT 10`, params);
   const topProjects = execAll(`SELECT project, COUNT(*) as messages, SUM(tokens) as tokens FROM usage_events WHERE ${range} AND type='message' GROUP BY project ORDER BY messages DESC LIMIT 10`, params);
+  // Per-model split for the Code window's stats panel: which models answered,
+  // how many turns, how many tokens, what it cost. Assistant turns only —
+  // user rows carry no model.
+  const modelsByUsage = execAll(`SELECT COALESCE(model, 'claude') as model, COUNT(*) as messages, SUM(tokens) as tokens, SUM(costUsd) as costUsd FROM usage_events WHERE ${range} AND type='message' AND (role='assistant' OR role IS NULL) GROUP BY model ORDER BY messages DESC LIMIT 12`, params);
   const totalsRows = execAll(`SELECT COUNT(*) as messages, SUM(tokens) as tokens, SUM(costUsd) as costUsd FROM usage_events WHERE ${range} AND type='message'`, params);
   const totalsRow = totalsRows[0] || {};
 
@@ -120,6 +124,7 @@ function queryAnalytics({ from, to }) {
     costByDay,
     topPlugins,
     topProjects,
+    modelsByUsage,
     totals: { messages: totalsRow.messages || 0, tokens: totalsRow.tokens || 0, costUsd: totalsRow.costUsd || 0 },
   };
 }
