@@ -1,7 +1,9 @@
-const { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, nativeTheme, shell, dialog, screen, globalShortcut, clipboard, Notification, safeStorage } = require("electron");
+const { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, nativeTheme, shell, dialog, screen, globalShortcut, clipboard, Notification, safeStorage, session, net } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+const http = require("http");
+const crypto = require("crypto");
 const Store = require("electron-store");
 const AdmZip = require("adm-zip");
 const chokidar = require("chokidar");
@@ -21,6 +23,8 @@ const { BUDDY_CANVAS, BUDDY_HIT_BOX, getBuddy, resolveActiveBuddy } = require(".
 const { titleBarOptions, TITLE_BAR_HEIGHT } = require("./window-chrome");
 const { ClaudeNotFoundError, ClaudeSession, PtySpawnError, applyLoginShellPath, listAgentSessions, locateClaude, subscriptionEnv } = require("./claude-cli");
 const { createIdeChatEngine } = require("./ide-chat");
+const { createWorkbench, scrub: scrubWorkbenchLine } = require("./workbench");
+const { buildVSCodeTheme } = require("../core/vscode-theme");
 const { createActivityTracker } = require("./claude-activity");
 const { autoUpdater } = require("electron-updater");
 const { pickLoadingTip } = require("../core/motion-fx");
@@ -1789,6 +1793,7 @@ function reconcileIdeView() {
     ideViewAttached = false;
     if (!mainWindow.webContents.isDestroyed()) mainWindow.webContents.focus();
   }
+  reconcileWorkbenchView();
 }
 
 function layoutIdeView() {
@@ -1802,7 +1807,337 @@ function layoutIdeView() {
   const viewHeight = Number.isFinite(ideViewBounds.height) && ideViewBounds.height > 0
     ? Math.min(ideViewBounds.height, height - y)
     : height - y;
-  ideView.setBounds({ x, y, width: Math.max(0, viewWidth), height: Math.max(0, viewHeight) });
+  const full = { x, y, width: Math.max(0, viewWidth), height: Math.max(0, viewHeight) };
+  if (workbenchSplit()) {
+    // Full-IDE layout: the workbench left of the chat, which keeps
+    // chatWidth px on the right (never less than WORKBENCH_CHAT_MIN, never
+    // more than 60% of the area so the editor stays usable).
+    const chat = Math.min(Math.max(WORKBENCH_CHAT_MIN, workbenchLayout.chatWidth), Math.floor(full.width * 0.6));
+    const left = Math.max(0, full.width - chat);
+    workbenchView.setBounds({ x: full.x, y: full.y, width: left, height: full.height });
+    ideView.setBounds({ x: full.x + left, y: full.y, width: full.width - left, height: full.height });
+    return;
+  }
+  ideView.setBounds(full);
+}
+
+// ---------------------------------------------------------------------------
+// Full-IDE layout (docs/ADR-0001-full-ide-workbench.md): a real VS Code
+// workbench — VSCodium's REH-web server, electron/workbench.js — in its own
+// view next to the Code tab page, which then shows only its chat.
+//
+// The view is walled off from everything else: its own session partition,
+// sandboxed, context-isolated, no preload (so extension webviews, iframes in
+// it, can never reach betterClaudeIDE or the main preload), navigation held
+// to the server's origin, and no permission but the clipboard. The server's
+// connection token reaches it as the `vscode-tkn` cookie, never in a URL.
+// ---------------------------------------------------------------------------
+const WORKBENCH_PARTITION = "persist:bc-workbench";
+const WORKBENCH_CHAT_MIN = 320;
+const WORKBENCH_IDLE_STOP_MS = 10 * 60 * 1000;
+let workbench = null;
+let workbenchView = null;
+let workbenchAttached = false;
+let workbenchOrigin = null; // http://127.0.0.1:<port> of the running server
+let workbenchFolder = null; // the folder the view has open
+let workbenchSessionReady = false;
+let workbenchIdleTimer = null;
+let workbenchCrashReloads = [];
+// Set by the Code tab page: whether it is in the full-IDE layout, for which
+// project, and how wide it wants the chat.
+let workbenchLayout = { active: false, cwd: null, chatWidth: 440 };
+
+function workbenchSplit() {
+  return !!(workbenchLayout.active && workbenchView && workbenchOrigin && workbenchFolder);
+}
+
+function sendToIdePage(channel, payload) {
+  if (ideView && !ideView.webContents.isDestroyed()) ideView.webContents.send(channel, payload);
+}
+
+function getWorkbench() {
+  if (workbench) return workbench;
+  workbench = createWorkbench({
+    userDataDir: app.getPath("userData"),
+    // The chat's scrubbed environment: no ANTHROPIC_* / CLAUDE* provider
+    // overrides reach the server or its extension hosts. The bridge address
+    // and token are for the built-in bridge extension (electron/workbench-bridge).
+    buildEnv: () => subscriptionEnv({ extra: bridgePort ? { BC_BRIDGE_URL: `http://127.0.0.1:${bridgePort}`, BC_BRIDGE_TOKEN: bridgeToken } : null }),
+    builtinExtensions: [{ name: "betterclaude.bridge", dir: path.join(__dirname, "workbench-bridge") }],
+    log: process.env.BC_DEBUG_CONSOLE ? (line) => console.log(line) : () => {},
+  });
+  workbench.onEvent((event) => {
+    // A restarted server is on a new port: reconnect the view to it.
+    if (event.type === "restarted") {
+      workbenchOrigin = null;
+      workbenchFolder = null;
+      if (workbenchLayout.active && workbenchLayout.cwd) showWorkbench(workbenchLayout.cwd).catch(() => {});
+    }
+    if (event.type === "failed") {
+      workbenchOrigin = null;
+      reconcileWorkbenchView();
+      layoutIdeView();
+    }
+    sendToIdePage("workbench:event", event);
+  });
+  return workbench;
+}
+
+// VS Code web loads every extension webview from its own
+// https://<uuid>.vscode-cdn.net origin — the isolation boundary between an
+// extension's webview and the workbench. Keep those origins, but answer them
+// from the engine's own files (electron/workbench.js webviewPreDir) instead of
+// Microsoft's CDN: offline, and the same build. Nothing else under that
+// domain is fetched; every other https request goes out untouched.
+async function serveWorkbenchHttps(request) {
+  const url = new URL(request.url);
+  if (url.hostname === "vscode-cdn.net" || url.hostname.endsWith(".vscode-cdn.net")) {
+    const pre = getWorkbench().webviewPreDir();
+    const m = /\/out\/vs\/workbench\/contrib\/webview\/browser\/pre\/([\w.-]+)$/.exec(url.pathname);
+    if (pre && m && !url.hostname.includes("vscode-resource")) {
+      try {
+        const body = await fs.promises.readFile(path.join(pre, m[1]));
+        const headers = { "content-type": m[1].endsWith(".js") ? "text/javascript" : m[1].endsWith(".html") ? "text/html" : "application/octet-stream" };
+        if (m[1] === "service-worker.js") headers["service-worker-allowed"] = "/";
+        return new Response(body, { headers });
+      } catch {
+        // Fall through to 404.
+      }
+    }
+    return new Response("", { status: 404 });
+  }
+  return net.fetch(request, { bypassCustomProtocolHandlers: true });
+}
+
+function workbenchSession() {
+  const ses = session.fromPartition(WORKBENCH_PARTITION);
+  if (workbenchSessionReady) return ses;
+  workbenchSessionReady = true;
+  const clipboardOnly = (permission) => permission === "clipboard-read" || permission === "clipboard-sanitized-write";
+  ses.setPermissionRequestHandler((_wc, permission, callback, details) => {
+    callback(!!workbenchOrigin && String((details && details.requestingUrl) || "").startsWith(`${workbenchOrigin}/`) && clipboardOnly(permission));
+  });
+  ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) => !!workbenchOrigin && requestingOrigin === workbenchOrigin && clipboardOnly(permission));
+  ses.protocol.handle("https", serveWorkbenchHttps);
+  return ses;
+}
+
+function isWorkbenchUrl(url) {
+  return !!workbenchOrigin && (url === workbenchOrigin || String(url).startsWith(`${workbenchOrigin}/`) || String(url).startsWith(`${workbenchOrigin}?`));
+}
+
+function createWorkbenchView() {
+  workbenchSession();
+  workbenchView = new WebContentsView({
+    webPreferences: {
+      partition: WORKBENCH_PARTITION,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+  workbenchView.setBackgroundColor(activeThemeBackground());
+  const wc = workbenchView.webContents;
+  wc.on("will-navigate", (event, url) => {
+    if (isWorkbenchUrl(url)) return;
+    event.preventDefault();
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+  });
+  wc.on("will-redirect", (event, url) => {
+    if (!isWorkbenchUrl(url)) event.preventDefault();
+  });
+  wc.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url) && !isWorkbenchUrl(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+  wc.on("render-process-gone", () => {
+    const now = Date.now();
+    workbenchCrashReloads = workbenchCrashReloads.filter((t) => now - t < 60000);
+    if (workbenchCrashReloads.length < 3 && !wc.isDestroyed()) {
+      workbenchCrashReloads.push(now);
+      wc.reload();
+    }
+  });
+  if (process.env.BC_DEBUG_CONSOLE) {
+    wc.on("console-message", (_e, level, message) => {
+      if (level >= 2) console.log(`[workbench-renderer:${level}] ${scrubWorkbenchLine(message).slice(0, 300)}`);
+    });
+  }
+  return workbenchView;
+}
+
+// ---------------------------------------------------------------------------
+// The bridge: BetterClaude's end of the link to the built-in bridge
+// extension running in the workbench's extension host. Server-sent events out
+// (theme, open file, diff, status), JSON POSTs in (a selection for the chat,
+// a Commit & PR request). 127.0.0.1 only, a per-launch token compared in
+// constant time. What arrives is data for the user: a selection lands in the
+// composer unsent; a PR request opens the page's own confirmed flow.
+// ---------------------------------------------------------------------------
+const bridgeToken = crypto.randomBytes(24).toString("base64url");
+const bridgeClients = new Set();
+let bridgeServer = null;
+let bridgePort = 0;
+let lastBridgeStatus = null;
+let lastBridgeTheme = ""; // the theme message last broadcast, serialized
+
+function bridgeAuthorized(req) {
+  const given = Buffer.from(String(req.headers["x-bc-bridge"] || ""));
+  const want = Buffer.from(bridgeToken);
+  return given.length === want.length && crypto.timingSafeEqual(given, want);
+}
+
+function bridgeSend(message, only = null) {
+  const frame = `data: ${JSON.stringify(message)}\n\n`;
+  for (const res of only ? [only] : bridgeClients) {
+    try { res.write(frame); } catch { bridgeClients.delete(res); }
+  }
+}
+
+/** The active BetterClaude theme as VS Code colours (core/vscode-theme.js). */
+function workbenchTheme() {
+  const settings = mergeDefaults(store.store);
+  const { appearance } = settings;
+  const css = appearance.activeTheme === "custom" ? appearance.customThemeCSS : readAllThemes()[appearance.activeTheme];
+  const ide = (settings.codeWindow && settings.codeWindow.ide) || {};
+  return {
+    type: "theme",
+    ...buildVSCodeTheme(css ? extractThemeVars(css) : {}, {
+      accent: appearance.accentColor || "",
+      codeFont: (settings.fonts && settings.fonts.codeFont) || "",
+      ligatures: ide.fontLigatures !== false,
+    }),
+  };
+}
+
+function onBridgeMessage(message) {
+  if (!message || typeof message !== "object") return;
+  if (message.type === "selection" && typeof message.file === "string" && typeof message.text === "string") {
+    sendToIdePage("workbench:bridge", {
+      type: "selection",
+      file: message.file,
+      startLine: Number(message.startLine) || 1,
+      endLine: Number(message.endLine) || 1,
+      text: message.text.slice(0, 200000),
+    });
+  } else if (message.type === "create-pr") {
+    sendToIdePage("workbench:bridge", { type: "create-pr" });
+  }
+}
+
+function ensureBridgeServer() {
+  if (bridgeServer) return Promise.resolve(bridgePort);
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      if (!bridgeAuthorized(req)) {
+        res.writeHead(403);
+        res.end();
+        return;
+      }
+      if (req.method === "GET" && req.url === "/events") {
+        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+        res.write(": connected\n\n");
+        bridgeClients.add(res);
+        req.on("close", () => bridgeClients.delete(res));
+        bridgeSend(workbenchTheme(), res);
+        if (lastBridgeStatus) bridgeSend(lastBridgeStatus, res);
+        return;
+      }
+      if (req.method === "POST" && req.url === "/msg") {
+        let size = 0;
+        const chunks = [];
+        req.on("data", (chunk) => {
+          size += chunk.length;
+          if (size > 1024 * 1024) { req.destroy(); return; }
+          chunks.push(chunk);
+        });
+        req.on("end", () => {
+          try { onBridgeMessage(JSON.parse(Buffer.concat(chunks).toString("utf8"))); } catch {}
+          res.writeHead(204);
+          res.end();
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      bridgeServer = server;
+      bridgePort = server.address().port;
+      resolve(bridgePort);
+    });
+  });
+}
+
+function stopBridgeServer() {
+  for (const res of bridgeClients) { try { res.end(); } catch {} }
+  bridgeClients.clear();
+  if (bridgeServer) bridgeServer.close();
+  bridgeServer = null;
+  bridgePort = 0;
+}
+
+/** Start the server if needed and open `cwd` in the view. */
+async function showWorkbench(cwd) {
+  const wb = getWorkbench();
+  await ensureBridgeServer();
+  await wb.start();
+  const conn = wb.connection();
+  if (!conn) throw new Error("The IDE engine is not running.");
+  if (!workbenchView) createWorkbenchView();
+  await workbenchView.webContents.session.cookies.set({ url: conn.origin, name: "vscode-tkn", value: conn.token, httpOnly: true, sameSite: "strict" });
+  const reload = workbenchOrigin !== conn.origin || workbenchFolder !== cwd;
+  workbenchOrigin = conn.origin;
+  if (reload) {
+    workbenchFolder = cwd;
+    workbenchView.webContents.loadURL(`${conn.origin}/?folder=${encodeURIComponent(cwd)}`).catch(() => {});
+  }
+  reconcileWorkbenchView();
+  layoutIdeView();
+}
+
+/** The workbench is on screen exactly when the Code tab is and the page is in the full-IDE layout. */
+function reconcileWorkbenchView() {
+  if (!workbenchView || !mainWindow || mainWindow.isDestroyed()) return;
+  const want = workbenchSplit() && ideViewAttached;
+  if (want && !workbenchAttached) {
+    layoutIdeView();
+    mainWindow.contentView.addChildView(workbenchView);
+    workbenchAttached = true;
+  } else if (!want && workbenchAttached) {
+    mainWindow.contentView.removeChildView(workbenchView);
+    workbenchAttached = false;
+  }
+}
+
+// Left the full-IDE layout: keep the server warm for a quick return, then
+// free it (and its extension hosts) once nobody has used it for a while.
+function scheduleWorkbenchIdleStop() {
+  clearTimeout(workbenchIdleTimer);
+  workbenchIdleTimer = setTimeout(() => {
+    if (workbenchLayout.active || !workbench) return;
+    workbench.stop();
+    workbenchOrigin = null;
+    workbenchFolder = null;
+  }, WORKBENCH_IDLE_STOP_MS);
+}
+
+function stopWorkbench() {
+  clearTimeout(workbenchIdleTimer);
+  if (workbench) workbench.stop();
+  workbenchOrigin = null;
+  workbenchFolder = null;
+}
+
+/** After an engine update: stop the old build and, if the full-IDE layout is open, bring the view up on the new one. */
+function restartWorkbench() {
+  const cwd = workbenchLayout.active ? workbenchLayout.cwd : null;
+  stopWorkbench();
+  reconcileWorkbenchView();
+  layoutIdeView();
+  if (cwd && ideViewShown) showWorkbench(cwd).catch((err) => sendToIdePage("workbench:event", { type: "failed", message: err.message }));
 }
 
 /**
@@ -1891,6 +2226,10 @@ function setIdeViewShown(shown) {
   // Hiding clears any overlay suspension too — the next show starts clean.
   if (!shown) ideViewSuspended = false;
   reconcileIdeView();
+  // A full-IDE layout the page restored while hidden: its engine starts now.
+  if (shown && workbenchLayout.active && workbenchLayout.cwd && !workbenchOrigin) {
+    showWorkbench(workbenchLayout.cwd).catch((err) => sendToIdePage("workbench:event", { type: "failed", message: err.message }));
+  }
   if (!mainWindow.webContents.isDestroyed()) mainWindow.webContents.send("ide-tab:state", { shown });
 }
 
@@ -2785,6 +3124,190 @@ ipcMain.handle("ide:list-agents", async (e) => {
     return (await listAgentSessions(binaryPath)).map(({ sessionId, name, cwd, kind, startedAt }) => ({ sessionId, name, cwd, kind, startedAt }));
   } catch { return []; }
 });
+// Full-IDE engine (electron/workbench.js). The download is resolved and
+// verified here — the page only ever learns the asset's name, size and
+// source to show the user before they agree, never supplies a URL.
+// The Code tab page and Settings → Claude Code (in the main window) both
+// manage it; progress goes to whichever asked, and to the Code tab page.
+const isWorkbenchCaller = (sender) => isIdeSender(sender) || isMainSender(sender);
+function workbenchProgress(sender, channel) {
+  return (progress) => {
+    sendToIdePage(channel, progress);
+    if (sender !== (ideView && ideView.webContents) && !sender.isDestroyed()) sender.send(channel, progress);
+  };
+}
+ipcMain.handle("workbench:status", (e) => (isWorkbenchCaller(e.sender) ? getWorkbench().status() : null));
+ipcMain.handle("workbench:latest", async (e) => {
+  if (!isWorkbenchCaller(e.sender)) return null;
+  try {
+    const asset = await getWorkbench().latestAsset();
+    return { version: asset.version, name: asset.name, size: asset.size, source: asset.source };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+ipcMain.handle("workbench:install", async (e) => {
+  if (!isWorkbenchCaller(e.sender)) return { ok: false };
+  try {
+    const wb = getWorkbench();
+    const before = wb.status();
+    const manifest = await wb.installEngine(await wb.latestAsset(), workbenchProgress(e.sender, "workbench:progress"));
+    // An update: the running server is the old build. Bring the view back on
+    // the new one.
+    if (before.installed && before.version !== manifest.version) restartWorkbench();
+    return { ok: true, version: manifest.version };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+// Settings → Claude Code → Full IDE.
+ipcMain.handle("workbench:ide-info", (e) => {
+  if (!isWorkbenchCaller(e.sender)) return null;
+  const wb = getWorkbench();
+  const status = wb.status();
+  return { ...status, extensions: status.installed ? wb.installedManifests() : [] };
+});
+ipcMain.handle("workbench:check-update", async (e) => {
+  if (!isWorkbenchCaller(e.sender)) return null;
+  try {
+    return await getWorkbench().checkEngineUpdate();
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+ipcMain.handle("workbench:uninstall-engine", async (e) => {
+  if (!isWorkbenchCaller(e.sender)) return null;
+  workbenchLayout = { ...workbenchLayout, active: false };
+  reconcileWorkbenchView();
+  layoutIdeView();
+  stopWorkbench();
+  sendToIdePage("workbench:event", { type: "uninstalled" });
+  try {
+    return { ok: true, status: await getWorkbench().uninstallEngine() };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+ipcMain.handle("workbench:reveal-extensions", (e) => {
+  if (!isWorkbenchCaller(e.sender)) return false;
+  const dir = getWorkbench().paths.extensions;
+  fs.mkdirSync(dir, { recursive: true });
+  return shell.openPath(dir).then((err) => !err);
+});
+// Import: the extensions VS Code, Cursor, Antigravity or VS Code Insiders have
+// (read from their folders, never written), reinstalled by id from Open VSX —
+// never copied out of those editors.
+ipcMain.handle("workbench:import-candidates", (e) => {
+  if (!isWorkbenchCaller(e.sender)) return [];
+  const have = new Set(getWorkbench().installedManifests().map((x) => x.id));
+  return ideWorkspace.listInstalledExtensions().map(({ id, displayName, publisher, version, hosts, host }) => ({
+    id, displayName, publisher, version, hosts: hosts || [host], installed: have.has(id),
+  }));
+});
+ipcMain.handle("workbench:import-extensions", async (e, ids) => {
+  if (!isWorkbenchCaller(e.sender) || !Array.isArray(ids)) return [];
+  const wb = getWorkbench();
+  if (!wb.status().installed) return [{ ok: false, error: "Install the full IDE first." }];
+  const progress = workbenchProgress(e.sender, "workbench:ext-progress");
+  const results = [];
+  for (const id of [...new Set(ids.filter((x) => typeof x === "string"))].slice(0, 200)) {
+    progress({ id, phase: "start" });
+    try {
+      results.push(await wb.installFromOpenVsx(id, (p) => progress({ id, ...p })));
+    } catch (err) {
+      results.push({ ok: false, id, error: err.message });
+    }
+    progress({ id, phase: "done", result: results[results.length - 1] });
+  }
+  return results;
+});
+ipcMain.handle("workbench:install-vsix", async (e) => {
+  if (!isWorkbenchCaller(e.sender)) return null;
+  const wb = getWorkbench();
+  if (!wb.status().installed) return { ok: false, error: "Install the full IDE first." };
+  const owner = BrowserWindow.fromWebContents(e.sender) || mainWindow;
+  const picked = await dialog.showOpenDialog(owner, {
+    title: "Install Extension from VSIX",
+    buttonLabel: "Install",
+    properties: ["openFile"],
+    filters: [{ name: "VS Code extension", extensions: ["vsix"] }],
+  });
+  if (picked.canceled || !picked.filePaths.length) return null;
+  try {
+    return await wb.installVsix(picked.filePaths[0], workbenchProgress(e.sender, "workbench:ext-progress"));
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+ipcMain.handle("workbench:set-layout", async (e, opts = {}) => {
+  if (!isIdeSender(e.sender)) return { ok: false };
+  if (Number.isFinite(opts.chatWidth)) workbenchLayout.chatWidth = Math.round(opts.chatWidth);
+  if (!opts.active) {
+    workbenchLayout = { ...workbenchLayout, active: false };
+    reconcileWorkbenchView();
+    layoutIdeView();
+    scheduleWorkbenchIdleStop();
+    return { ok: true };
+  }
+  let cwd;
+  try {
+    cwd = ideWorkspace.realDirectory(opts.cwd);
+  } catch {
+    return { ok: false, error: "That project folder is not available." };
+  }
+  if (!getWorkbench().status().installed) return { ok: false, needsInstall: true };
+  clearTimeout(workbenchIdleTimer);
+  workbenchLayout = { ...workbenchLayout, active: true, cwd };
+  // The page is pre-warmed hidden at launch and restores a remembered
+  // layout: note it, but start the engine only once the Code tab is shown
+  // (setIdeViewShown), not on every app launch.
+  if (!ideViewShown) return { ok: true, pending: true };
+  try {
+    await showWorkbench(cwd);
+    return { ok: true };
+  } catch (err) {
+    workbenchLayout = { ...workbenchLayout, active: false };
+    reconcileWorkbenchView();
+    layoutIdeView();
+    return { ok: false, error: err.message };
+  }
+});
+ipcMain.on("workbench:chat-width", (e, width) => {
+  if (!isIdeSender(e.sender) || !Number.isFinite(width)) return;
+  workbenchLayout.chatWidth = Math.round(width);
+  layoutIdeView();
+});
+// Chat -> workbench, through the bridge: a tool row's file in the editor, an
+// edit in the diff editor, and the chat's model / mode / activity / usage for
+// the status bar. Files are resolved inside the open project only.
+function workbenchFile(file) {
+  if (!workbenchLayout.active || !workbenchLayout.cwd || typeof file !== "string") return null;
+  let resolved = path.resolve(workbenchLayout.cwd, file);
+  try { resolved = fs.realpathSync(resolved); } catch { /* a deleted file still gets its diff */ }
+  const rel = path.relative(workbenchLayout.cwd, resolved);
+  return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? resolved : null;
+}
+ipcMain.on("workbench:open-file", (e, file, line) => {
+  const target = isIdeSender(e.sender) ? workbenchFile(file) : null;
+  if (target) bridgeSend({ type: "open", file: target, line: Number(line) || 0 });
+});
+ipcMain.on("workbench:diff", (e, file) => {
+  const target = isIdeSender(e.sender) ? workbenchFile(file) : null;
+  if (target) bridgeSend({ type: "diff", file: target });
+});
+ipcMain.on("workbench:status", (e, info = {}) => {
+  if (!isIdeSender(e.sender)) return;
+  // Kept so a bridge that connects later (the engine starts after the chat
+  // already has a state) gets it straight away.
+  lastBridgeStatus = {
+    type: "status",
+    model: String(info.model || "").slice(0, 60),
+    mode: String(info.mode || "").slice(0, 30),
+    state: ["working", "waiting"].includes(info.state) ? info.state : "idle",
+    usage: Number.isFinite(info.usage) ? info.usage : undefined,
+  };
+  if (bridgeClients.size) bridgeSend(lastBridgeStatus);
+});
 ipcMain.handle("ide:list-extensions", (e) => isIdeSender(e.sender) ? ideWorkspace.listInstalledExtensions() : []);
 ipcMain.handle("ide:search-extensions", (e, query, opts) => isIdeSender(e.sender) ? ideWorkspace.searchRegistryExtensions(query, opts || {}) : []);
 ipcMain.handle("ide:install-extension", async (e, id) => {
@@ -2920,6 +3443,10 @@ function attachClaudeReloadRecovery(win) {
       layoutIdeView();
       win.contentView.addChildView(ideView);
     }
+    if (workbenchAttached && workbenchView) {
+      win.contentView.removeChildView(workbenchView);
+      win.contentView.addChildView(workbenchView);
+    }
     wc.send("code-tab:state", { shown: codeViewShown });
     wc.send("ide-tab:state", { shown: ideViewShown });
     wc.send("code-tab:activity", { state: codeActivity.getState() });
@@ -3036,6 +3563,9 @@ function createWindow() {
     ideViewShown = false;
     ideViewReady = false;
     ideViewAttached = false;
+    workbenchView = null;
+    workbenchAttached = false;
+    stopWorkbench();
   });
 
   // Same guarantee one beat earlier. "closed" is too late to be the only hook
@@ -3241,6 +3771,13 @@ ipcMain.handle("settings:set", (_e, keyPath, value) => {
   // Code-chat processes read these at spawn: release the idle ones so the
   // change applies from each session's next message (it resumes itself).
   if ((keyPath.startsWith("codeWindow.chat.") || keyPath === "codeWindow.claudePath") && ideChat) ideChat.disposeIdle();
+  // Lightweight only: the full IDE's engine has no business running.
+  if (keyPath === "codeWindow.ide.engine" && value === "lightweight") {
+    workbenchLayout = { ...workbenchLayout, active: false };
+    reconcileWorkbenchView();
+    layoutIdeView();
+    stopWorkbench();
+  }
   const updated = mergeDefaults(store.store);
   broadcastSettingsUpdated(updated);
   return updated;
@@ -3264,6 +3801,17 @@ function broadcastSettingsUpdated(updated) {
   for (const view of [codeView, ideView]) {
     if (view && view.webContents && !view.webContents.isDestroyed()) {
       view.webContents.send("betterclaude:settings-changed", updated);
+    }
+  }
+  // The full-IDE workbench follows the theme live, through its bridge — only
+  // when what it would get changed: this runs on every slider tick in Settings,
+  // and each theme message is a round of settings writes in the workbench.
+  if (bridgeClients.size) {
+    const theme = workbenchTheme();
+    const key = JSON.stringify(theme);
+    if (key !== lastBridgeTheme) {
+      lastBridgeTheme = key;
+      bridgeSend(theme);
     }
   }
 }
@@ -4415,6 +4963,8 @@ app.on("will-quit", () => {
   disposeCodeSession();
   disposeIdeSession();
   disposeIdeChatProcess();
+  stopWorkbench();
+  stopBridgeServer();
   destroyBuddyWindow();
   globalShortcut.unregisterAll();
   fileWatchers.forEach((w) => w.close());

@@ -54,6 +54,24 @@
       <div id="bc-ide-sidebar-resize" class="bc-ide-resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" tabindex="0"></div>
 
       <main class="bc-ide-main">
+        <!-- Full-IDE layout: drag to resize the chat against the workbench
+             (a separate view to the left, laid out by main.js). -->
+        <div id="bc-ide-chat-split" class="bc-ide-chat-split" role="separator" aria-orientation="vertical" aria-label="Resize chat" tabindex="0"></div>
+        <section id="bc-ide-wb-install" class="bc-ide-wb-install" hidden role="dialog" aria-modal="false" aria-labelledby="bc-ide-wb-install-title">
+          <h2 id="bc-ide-wb-install-title">Full IDE</h2>
+          <p>A real VS Code workbench runs locally next to this chat: explorer, editors and splits, terminals, source control, and extensions from Open VSX — Codex, Claude Code, Gemini Code Assist, CodeRabbit and the rest.</p>
+          <dl class="bc-ide-wb-facts">
+            <dt>Engine</dt><dd id="bc-ide-wb-name">Checking…</dd>
+            <dt>Download</dt><dd id="bc-ide-wb-size">—</dd>
+            <dt>From</dt><dd id="bc-ide-wb-source">—</dd>
+          </dl>
+          <p class="bc-ide-wb-note">Nothing downloads until you choose to. It is checked against VSCodium's published sha256, kept in BetterClaude's data folder, and works offline afterwards. Telemetry stays off.</p>
+          <div class="bc-ide-wb-progress" hidden><div class="bc-ide-wb-bar"><span id="bc-ide-wb-bar-fill"></span></div><span id="bc-ide-wb-phase"></span></div>
+          <div class="bc-ide-wb-actions">
+            <button id="bc-ide-wb-cancel" class="bc-ide-btn" type="button">Not now</button>
+            <button id="bc-ide-wb-go" class="bc-ide-btn bc-ide-btn-primary" type="button" disabled>Download and install</button>
+          </div>
+        </section>
         <header class="bc-ide-topbar">
           <button id="bc-ide-toggle-sidebar" class="bc-ide-icon-btn" type="button" title="Toggle sidebar (⌘B)" aria-label="Toggle sidebar"><span data-bc-icon="SIDEBAR"></span></button>
           <div class="bc-ide-title">
@@ -63,6 +81,7 @@
           <span class="bc-ide-flex"></span>
           <span id="bc-ide-plan-tag" class="bc-ide-plan-tag" hidden></span>
           <button id="bc-ide-diff-pill" class="bc-ide-diff-pill" type="button" hidden title="Review changes (⌘⇧D)"><span class="bc-ide-add" id="bc-ide-diff-add">+0</span><span class="bc-ide-del" id="bc-ide-diff-del">−0</span></button>
+          <button id="bc-ide-layout-toggle" class="bc-ide-icon-btn" type="button" title="Full IDE — a VS Code workbench next to this chat (⌘⌥I)" aria-label="Full IDE layout" aria-pressed="false"><span data-bc-icon="LAYOUT_IDE"></span></button>
           <button id="bc-ide-toggle-panel" class="bc-ide-icon-btn" type="button" title="Changes, files and terminal (⌘⌥B)" aria-label="Toggle side panel" aria-pressed="false"><span data-bc-icon="PANEL_RIGHT"></span></button>
           <div class="bc-ide-menu-anchor">
             <button id="bc-ide-more" class="bc-ide-icon-btn" type="button" title="More" aria-label="More actions" aria-haspopup="menu" aria-expanded="false"><span data-bc-icon="MORE"></span></button>

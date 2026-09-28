@@ -546,6 +546,22 @@ const DEFAULT_SETTINGS = {
       // covers the hands-off case without disabling every check.
       allowBypassMode: false,
     },
+    // The Code tab's full-IDE layout: a VS Code workbench (VSCodium's server,
+    // electron/workbench.js; docs/ADR-0001) beside the chat. The engine itself
+    // is never downloaded until the user agrees, after seeing its size and
+    // source; these only shape what's offered and how it opens.
+    ide: {
+      // "full" offers the layout (the ⌘⌥I toggle; the engine installs on
+      // first use), "lightweight" keeps the Code tab to its built-in editor
+      // panel and never starts the engine.
+      engine: "full",
+      // Layout for a project the user hasn't chosen one for yet. Chat-first by
+      // default: most sessions are a conversation, and the workbench costs a
+      // server process. Each project remembers its own choice after that.
+      defaultLayout: "chat",
+      // editor.fontLigatures in the workbench (its font follows fonts.codeFont).
+      fontLigatures: true,
+    },
     // Short AI-generated names for Code-chat sessions, keyed by the CLI session
     // id — { "<uuid>": "Fix Composer Corner Radius" }. Written by
     // ide:generate-session-title (one Haiku call over the first exchange) so a

@@ -831,3 +831,53 @@
   background: color-mix(in srgb, var(--bc-bg, #14101f) 70%, transparent);
 }
 .bc-bg-preview-overlay .bc-btn-secondary { margin-bottom: 0; }
+
+/* --- Claude Code → Full IDE: the engine and its extensions --- */
+.bc-wb-box {
+  margin: 8px 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--bc-border, #3a2e5c);
+  border-radius: 10px;
+  background: var(--bc-bg, #14101f);
+}
+.bc-wb-line { margin: 0 0 10px; font-size: 13px; }
+.bc-wb-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; }
+.bc-wb-actions:empty { display: none; }
+.bc-wb-actions .bc-btn-secondary,
+.bc-wb-path .bc-btn-secondary,
+.bc-wb-picker-head .bc-btn-secondary { margin-bottom: 0; }
+.bc-wb-status { margin: 0 0 8px; font-size: 12px; line-height: 1.5; }
+.bc-wb-status:empty { display: none; }
+.bc-wb-status .bc-btn { margin-left: 6px; }
+.bc-wb-note { font-size: 12px; opacity: 0.8; }
+.bc-wb-subhead { margin: 14px 0 6px; font-size: 13px; font-weight: 600; }
+.bc-wb-path { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.bc-wb-path code { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 11.5px; opacity: 0.8; }
+.bc-wb-path .bc-btn-secondary { flex: none; }
+.bc-wb-picker { margin: 4px 0 8px; }
+.bc-wb-picker-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+.bc-wb-picker-head span { flex: 1; opacity: 0.75; }
+.bc-wb-picker-head .bc-btn-secondary { padding: 4px 10px; }
+.bc-wb-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--bc-border, #3a2e5c);
+  border-radius: 8px;
+}
+.bc-wb-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--bc-text, #fff) 6%, transparent);
+  cursor: pointer;
+}
+.bc-wb-row:last-child { border-bottom: 0; }
+.bc-wb-row-copy { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.bc-wb-row-copy strong { font-size: 12.5px; font-weight: 600; }
+.bc-wb-row-copy small { font-size: 11px; opacity: 0.6; overflow-wrap: anywhere; }
+.bc-wb-row-state { flex: none; max-width: 45%; font-size: 11px; opacity: 0.75; text-align: right; }
+.bc-wb-row-state[data-state="ok"] { color: var(--bc-accent, #8b5cf6); opacity: 1; }
+.bc-wb-row-state[data-state="failed"] { color: var(--bc-danger, #ef4444); opacity: 1; }

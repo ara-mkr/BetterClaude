@@ -3222,6 +3222,22 @@ ${text}` : text;
             // covers the hands-off case without disabling every check.
             allowBypassMode: false
           },
+          // The Code tab's full-IDE layout: a VS Code workbench (VSCodium's server,
+          // electron/workbench.js; docs/ADR-0001) beside the chat. The engine itself
+          // is never downloaded until the user agrees, after seeing its size and
+          // source; these only shape what's offered and how it opens.
+          ide: {
+            // "full" offers the layout (the ⌘⌥I toggle; the engine installs on
+            // first use), "lightweight" keeps the Code tab to its built-in editor
+            // panel and never starts the engine.
+            engine: "full",
+            // Layout for a project the user hasn't chosen one for yet. Chat-first by
+            // default: most sessions are a conversation, and the workbench costs a
+            // server process. Each project remembers its own choice after that.
+            defaultLayout: "chat",
+            // editor.fontLigatures in the workbench (its font follows fonts.codeFont).
+            fontLigatures: true
+          },
           // Short AI-generated names for Code-chat sessions, keyed by the CLI session
           // id — { "<uuid>": "Fix Composer Corner Radius" }. Written by
           // ide:generate-session-title (one Haiku call over the first exchange) so a
@@ -3558,7 +3574,9 @@ ${cssSelectorList("sidebar", { suffix: ' [class*="animate-spin"]' })} {
         CHAT: `<svg ${ATTRS}><path d="M14 9a2 2 0 0 1-2 2H6l-4 3.5V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M17.5 9H18a2 2 0 0 1 2 2v10.5L16.5 18H11a2 2 0 0 1-2-2v-.5"/></svg>`,
         // Nav-rail code glyph: angle brackets around a slash — the conventional
         // "code" mark, matching the </> claude.ai uses.
-        CODE_SLASH: `<svg ${ATTRS}><path d="M8.5 7 3 12l5.5 5"/><path d="M15.5 7 21 12l-5.5 5"/><path d="M13.5 4.5 10.5 19.5"/></svg>`
+        CODE_SLASH: `<svg ${ATTRS}><path d="M8.5 7 3 12l5.5 5"/><path d="M15.5 7 21 12l-5.5 5"/><path d="M13.5 4.5 10.5 19.5"/></svg>`,
+        // Full-IDE layout toggle: activity bar | editor | chat.
+        LAYOUT_IDE: `<svg ${ATTRS}><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M8 4v16"/><path d="M15.5 4v16"/></svg>`
       };
     }
   });

@@ -1,0 +1,44 @@
+{
+  "name": "bridge",
+  "displayName": "BetterClaude Bridge",
+  "description": "Connects this workbench to BetterClaude's Claude Code chat: theme, open file, selection to chat, diff review, status.",
+  "publisher": "betterclaude",
+  "version": "0.1.0",
+  "license": "MIT",
+  "private": true,
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "extensionKind": ["workspace"],
+  "capabilities": {
+    "untrustedWorkspaces": { "supported": true },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "commands": [
+      { "command": "betterclaude.addSelectionToChat", "title": "Add Selection to Claude Chat", "category": "BetterClaude", "icon": "$(comment-discussion)" },
+      { "command": "betterclaude.createPr", "title": "Commit & Create PR (BetterClaude)", "category": "BetterClaude", "icon": "$(git-pull-request-create)" }
+    ],
+    "menus": {
+      "editor/context": [
+        { "command": "betterclaude.addSelectionToChat", "when": "editorHasSelection", "group": "9_cutcopypaste@9" }
+      ],
+      "scm/title": [
+        { "command": "betterclaude.createPr", "group": "navigation@9" }
+      ]
+    },
+    "keybindings": [
+      { "command": "betterclaude.addSelectionToChat", "key": "ctrl+alt+l", "mac": "cmd+alt+l", "when": "editorTextFocus" }
+    ],
+    "configuration": {
+      "title": "BetterClaude",
+      "properties": {
+        "betterclaude.syncTheme": {
+          "type": "boolean",
+          "default": true,
+          "description": "Follow BetterClaude's active theme. Turns itself off when you pick a different colour theme here."
+        }
+      }
+    }
+  }
+}

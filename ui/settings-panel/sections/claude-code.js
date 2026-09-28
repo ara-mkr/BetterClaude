@@ -7,9 +7,15 @@
  * been read at runtime for some time with NO user interface anywhere — stored
  * settings nobody could set, which is indistinguishable from a broken feature
  * from the outside.
+ *
+ * "Full IDE" also manages the Code tab's VS Code engine and its extensions
+ * (host.workbench — electron/preload.js → electron/workbench.js). Only the
+ * main window's host has it; elsewhere the section says where to go.
  */
 
-const { el, rangeField, toggleField, textField } = require("../dom-helpers");
+const { el, rangeField, selectField, toggleField, textField } = require("../dom-helpers");
+
+const mb = (bytes) => `${(Number(bytes) / 1e6).toFixed(0)} MB`;
 
 module.exports = {
   _renderClaudeCode() {
@@ -138,6 +144,263 @@ module.exports = {
       text: "Only for a turn that hadn't run any tools yet — the free model answers that one message with the conversation so far.",
     }));
 
+    this._renderFullIde(wrap, code.ide || {});
+
     this.contentEl.appendChild(wrap);
+  },
+
+  // --- Full IDE (electron/workbench.js; docs/ADR-0001-full-ide-workbench.md) --
+  _renderFullIde(wrap, ide) {
+    wrap.appendChild(el("h3", { text: "Full IDE" }));
+    wrap.appendChild(el("p", {
+      class: "bc-hint",
+      text: "A real VS Code workbench — VSCodium, the open-source build — beside the Code tab's chat: explorer, editors and splits, terminals, source control and extensions from Open VSX. It runs on this machine only (127.0.0.1, a random port, a secret token) and shares no cookies or storage with claude.ai.",
+    }));
+
+    wrap.appendChild(selectField("In the Code tab", [
+      { value: "full", label: "Offer the full IDE (⌘⌥I)" },
+      { value: "lightweight", label: "Lightweight editor only" },
+    ], ide.engine === "lightweight" ? "lightweight" : "full", (v) => this._set("codeWindow.ide.engine", v)));
+    wrap.appendChild(selectField("Layout for a new project", [
+      { value: "chat", label: "Chat first" },
+      { value: "ide", label: "Full IDE" },
+    ], ide.defaultLayout === "ide" ? "ide" : "chat", (v) => this._set("codeWindow.ide.defaultLayout", v)));
+    wrap.appendChild(el("p", {
+      class: "bc-hint",
+      text: "Each project remembers the layout you leave it in. Lightweight keeps the Code tab to its built-in files, changes and terminal panel and never starts the IDE engine.",
+    }));
+
+    wrap.appendChild(toggleField(
+      "Font ligatures in the IDE editor",
+      ide.fontLigatures !== false,
+      (v) => this._set("codeWindow.ide.fontLigatures", v)
+    ));
+    wrap.appendChild(el("p", {
+      class: "bc-hint",
+      text: "Its editor and terminal use the code font set under Fonts. Its colours follow your BetterClaude theme until you pick another colour theme inside the IDE.",
+    }));
+
+    const box = el("div", { class: "bc-wb-box" });
+    wrap.appendChild(box);
+    if (this.host.workbench) this._renderWorkbenchEngine(box);
+    else box.appendChild(el("p", { class: "bc-hint", text: "The IDE engine and its extensions are managed from Settings in the main window." }));
+
+    const telemetry = toggleField("Telemetry", false, () => {});
+    telemetry.querySelector("input").disabled = true;
+    wrap.appendChild(telemetry);
+    wrap.appendChild(el("p", {
+      class: "bc-hint",
+      text: "Always off: the engine starts with --telemetry-level off, and there is no switch for it.",
+    }));
+    wrap.appendChild(el("p", {
+      class: "bc-hint",
+      text: "Shortcuts: VS Code's own keybindings apply inside the IDE, where BetterClaude's ⌘K palette and ⌘⇧P prompt picker don't listen. A keyboard shortcut you give a prompt in the Prompt Library is system-wide, though, and wins over the IDE's key for the same combination.",
+    }));
+  },
+
+  /** The engine's state and its actions, filled in from main. */
+  async _renderWorkbenchEngine(box) {
+    const wb = this.host.workbench;
+    const rerender = () => this._renderWorkbenchEngine(box);
+    box.replaceChildren(el("p", { class: "bc-hint", text: "Checking the IDE engine…" }));
+    let info = null;
+    try { info = await wb.info(); } catch { /* shown below */ }
+    box.replaceChildren();
+    if (!info) {
+      box.appendChild(el("p", { class: "bc-hint", text: "The IDE engine's state isn't available right now." }));
+      return;
+    }
+    if (!info.supported) {
+      box.appendChild(el("p", { class: "bc-wb-line", text: "Engine: VSCodium publishes no server build for this platform, so the Code tab keeps its lightweight editor." }));
+      return;
+    }
+    const status = el("p", { class: "bc-wb-status", role: "status" });
+    if (!info.installed) {
+      box.appendChild(el("p", { class: "bc-wb-line", text: "Engine: not installed — the Code tab uses its lightweight editor." }));
+      box.appendChild(el("div", { class: "bc-wb-actions" }, [
+        el("button", { class: "bc-btn", text: "Install the full IDE…", onclick: () => this._confirmEngineDownload(box, status, "Install", rerender) }),
+      ]));
+      box.appendChild(status);
+      return;
+    }
+
+    box.appendChild(el("p", {
+      class: "bc-wb-line",
+      text: `Engine: VSCodium ${info.version} · ${info.running ? "running" : "starts when you open the full IDE"}`,
+    }));
+    const confirmRow = el("div", { class: "bc-wb-actions" });
+    box.appendChild(el("div", { class: "bc-wb-actions" }, [
+      el("button", {
+        class: "bc-btn bc-btn-secondary",
+        text: "Check for updates",
+        onclick: async () => {
+          status.textContent = "Asking GitHub for VSCodium's latest release…";
+          const res = await wb.checkUpdate();
+          if (!res || res.error) { status.textContent = (res && res.error) || "The update check failed."; return; }
+          if (!res.newer) { status.textContent = `Up to date — ${res.current} is VSCodium's latest release.`; return; }
+          const breaks = res.breaks.map((x) => `${x.displayName} (needs VS Code ${x.engine})`);
+          status.textContent = `VSCodium ${res.latest} is available (${mb(res.size)}).${breaks.length ? ` It would stop these extensions from loading: ${breaks.join(", ")}.` : " Every installed extension supports it."}`;
+          confirmRow.replaceChildren(el("button", { class: "bc-btn", text: `Update to ${res.latest}…`, onclick: () => this._confirmEngineDownload(box, status, "Update", rerender) }));
+        },
+      }),
+      el("button", {
+        class: "bc-btn bc-btn-secondary",
+        text: "Uninstall…",
+        onclick: () => {
+          confirmRow.replaceChildren(
+            el("span", { class: "bc-wb-note", text: "Remove the engine? Its extensions and settings stay for a reinstall." }),
+            el("button", {
+              class: "bc-btn",
+              text: "Remove",
+              onclick: async () => {
+                status.textContent = "Removing the engine…";
+                const res = await wb.uninstallEngine();
+                if (res && res.ok) rerender();
+                else status.textContent = (res && res.error) || "Couldn't remove the engine.";
+              },
+            }),
+            el("button", { class: "bc-btn bc-btn-secondary", text: "Cancel", onclick: () => confirmRow.replaceChildren() }),
+          );
+        },
+      }),
+    ]));
+    box.appendChild(confirmRow);
+    box.appendChild(status);
+
+    // --- Extensions -------------------------------------------------------
+    box.appendChild(el("h4", { class: "bc-wb-subhead", text: "Extensions" }));
+    box.appendChild(el("div", { class: "bc-wb-path" }, [
+      el("code", { text: info.extensionsDir }),
+      el("button", { class: "bc-btn bc-btn-secondary", text: "Reveal", onclick: () => wb.revealExtensions() }),
+    ]));
+    const names = info.extensions.map((x) => `${x.displayName} ${x.version}`);
+    box.appendChild(el("p", {
+      class: "bc-hint",
+      text: names.length
+        ? `Installed: ${names.join(" · ")}.`
+        : "None yet. Browse and install them in the IDE's own Extensions view (Open VSX), or bring over the ones you use elsewhere:",
+    }));
+    const picker = el("div", { class: "bc-wb-picker", hidden: "" });
+    const extStatus = el("p", { class: "bc-wb-status", role: "status" });
+    box.appendChild(el("div", { class: "bc-wb-actions" }, [
+      el("button", { class: "bc-btn", text: "Import from other editors…", onclick: () => this._renderImportPicker(picker, extStatus, rerender) }),
+      el("button", {
+        class: "bc-btn bc-btn-secondary",
+        text: "Install from .vsix…",
+        onclick: async () => {
+          const res = await wb.installVsix((p) => { if (p.phase === "install") extStatus.textContent = "Installing…"; });
+          if (!res) return; // cancelled
+          if (!res.ok) { extStatus.textContent = res.error || "That package didn't install."; return; }
+          extStatus.textContent = `Installed ${res.displayName} ${res.version || ""} (sha256 ${res.sha256.slice(0, 12)}…).`;
+          setTimeout(rerender, 2500);
+        },
+      }),
+    ]));
+    box.appendChild(picker);
+    box.appendChild(extStatus);
+    box.appendChild(el("p", {
+      class: "bc-hint",
+      text: "Extensions run with your user's permissions, as in VS Code. Installs from here are checked against Open VSX's published sha256, and each shows its publisher and whether Open VSX has verified it.",
+    }));
+  },
+
+  /** Shows the engine release (size, source) and downloads it only on the user's click. */
+  async _confirmEngineDownload(box, status, verb, done) {
+    const wb = this.host.workbench;
+    status.textContent = "Looking up VSCodium's latest release…";
+    const info = await wb.latest();
+    if (!info || info.error) { status.textContent = (info && info.error) || "Couldn't reach GitHub releases — check your connection."; return; }
+    const go = el("button", {
+      class: "bc-btn",
+      text: `Download ${mb(info.size)} and ${verb.toLowerCase()}`,
+      onclick: async () => {
+        go.disabled = true;
+        const res = await wb.installEngine((p) => {
+          const pct = p.total ? Math.min(100, Math.round((p.received / p.total) * 100)) : 0;
+          status.textContent = p.phase === "download" ? `Downloading… ${pct}%` : p.phase === "verify" ? "Checking the sha256…" : p.phase === "unpack" ? "Unpacking…" : "Done.";
+        });
+        if (res && res.ok) done();
+        else { go.disabled = false; status.textContent = (res && res.error) || "The install failed."; }
+      },
+    });
+    status.replaceChildren(
+      el("span", { text: `VSCodium ${info.version} (${info.name}), ${mb(info.size)} from ${info.source}. Checked against VSCodium's published sha256, kept in BetterClaude's data folder, and works offline afterwards. ` }),
+      go,
+    );
+  },
+
+  /** Pick which of the other editors' extensions to reinstall here from Open VSX. */
+  async _renderImportPicker(picker, status, done) {
+    const wb = this.host.workbench;
+    picker.hidden = false;
+    picker.replaceChildren(el("p", { class: "bc-hint", text: "Reading VS Code, Cursor, Antigravity and VS Code Insiders' extension folders…" }));
+    let list = [];
+    try { list = (await wb.importCandidates()) || []; } catch { /* empty */ }
+    if (!list.length) {
+      picker.replaceChildren(el("p", { class: "bc-hint", text: "No extensions found in VS Code, Cursor, Antigravity or VS Code Insiders." }));
+      return;
+    }
+    const rows = new Map();
+    const listEl = el("div", { class: "bc-wb-list" });
+    list.forEach((x) => {
+      const box = el("input", { type: "checkbox" });
+      box.checked = !x.installed;
+      const note = el("span", { class: "bc-wb-row-state", text: x.installed ? "already in the IDE" : "" });
+      listEl.appendChild(el("label", { class: "bc-wb-row" }, [
+        box,
+        el("span", { class: "bc-wb-row-copy" }, [
+          el("strong", { text: x.displayName }),
+          el("small", { text: `${x.id} · ${x.version} · ${x.hosts.join(", ")}` }),
+        ]),
+        note,
+      ]));
+      rows.set(x.id, { box, note });
+    });
+    const setAll = (on) => rows.forEach(({ box }) => { box.checked = on; });
+    const importBtn = el("button", { class: "bc-btn", text: "Import selected" });
+    const cancelBtn = el("button", { class: "bc-btn bc-btn-secondary", text: "Cancel", onclick: () => { picker.hidden = true; picker.replaceChildren(); } });
+    importBtn.addEventListener("click", async () => {
+      const ids = [...rows].filter(([, r]) => r.box.checked).map(([id]) => id);
+      if (!ids.length) { status.textContent = "Nothing selected."; return; }
+      importBtn.disabled = true;
+      cancelBtn.disabled = true;
+      rows.forEach(({ box }) => { box.disabled = true; });
+      status.textContent = `Importing ${ids.length} from Open VSX…`;
+      const results = await wb.importExtensions(ids, (p) => {
+        const row = rows.get(p.id);
+        if (!row) return;
+        if (p.phase === "download") row.note.textContent = p.total ? `downloading ${Math.round((p.received / p.total) * 100)}%` : "downloading…";
+        else if (p.phase === "install") row.note.textContent = "installing…";
+        else if (p.phase === "start") row.note.textContent = "looking up…";
+      });
+      let ok = 0;
+      let missing = 0;
+      let failed = 0;
+      (results || []).forEach((r) => {
+        const row = rows.get(r.id);
+        if (r.ok) ok += 1;
+        else if (r.notFound) missing += 1;
+        else failed += 1;
+        if (!row) return;
+        row.note.textContent = r.ok
+          ? `✓ ${r.version} · ${r.publisher}${r.verified ? " · verified" : " · unverified publisher"}`
+          : r.notFound ? "not on Open VSX for this platform" : `✗ ${r.error || "failed"}`;
+        row.note.dataset.state = r.ok ? "ok" : r.notFound ? "missing" : "failed";
+      });
+      status.textContent = `Imported ${ok}${missing ? ` · ${missing} not on Open VSX` : ""}${failed ? ` · ${failed} failed` : ""}. Nothing was copied from or written to the other editors.`;
+      cancelBtn.disabled = false;
+      cancelBtn.textContent = "Done";
+      cancelBtn.onclick = () => done();
+    });
+    picker.replaceChildren(
+      el("div", { class: "bc-wb-picker-head" }, [
+        el("span", { text: `${list.length} found` }),
+        el("button", { class: "bc-btn bc-btn-secondary", text: "All", onclick: () => setAll(true) }),
+        el("button", { class: "bc-btn bc-btn-secondary", text: "None", onclick: () => setAll(false) }),
+      ]),
+      listEl,
+      el("p", { class: "bc-hint", text: "Each is reinstalled from Open VSX by its id and checked against Open VSX's sha256. Nothing is copied out of those editors, and nothing is written to them." }),
+      el("div", { class: "bc-wb-actions" }, [importBtn, cancelBtn]),
+    );
   },
 };

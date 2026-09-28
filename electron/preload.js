@@ -61,6 +61,16 @@ function loadPluginModule(absolutePath) {
   return require(absolutePath);
 }
 
+// Progress events on `channel` go to onProgress while run() is pending, and
+// the listener is gone after — so a section that re-renders can't pile them up.
+function withIpcProgress(channel, onProgress, run) {
+  const listener = (_event, progress) => {
+    try { if (onProgress) onProgress(progress); } catch (_err) { /* the UI's problem */ }
+  };
+  ipcRenderer.on(channel, listener);
+  return run().finally(() => ipcRenderer.removeListener(channel, listener));
+}
+
 async function bootstrap() {
   await new Promise((resolve) => {
     if (document.readyState !== "loading") resolve();
@@ -1607,6 +1617,23 @@ async function bootstrap() {
     // (it only toggles the while-you-wait popup). Cmd+K -> "Play Snake"
     // still calls the local openMiniGame() directly.
     applyWeatherTheme: () => applyScheduledWeatherTheme(),
+
+    // --- Full IDE (electron/workbench.js), Settings → Claude Code ---
+    // The engine and its extensions. Nothing here takes a URL or a path from
+    // the page: downloads are resolved and verified in main, and a .vsix is
+    // chosen in main's own file dialog. Progress reaches the callback only
+    // for the duration of the call that asked for it.
+    workbench: {
+      info: () => ipcRenderer.invoke("workbench:ide-info"),
+      latest: () => ipcRenderer.invoke("workbench:latest"),
+      installEngine: (onProgress) => withIpcProgress("workbench:progress", onProgress, () => ipcRenderer.invoke("workbench:install")),
+      uninstallEngine: () => ipcRenderer.invoke("workbench:uninstall-engine"),
+      checkUpdate: () => ipcRenderer.invoke("workbench:check-update"),
+      importCandidates: () => ipcRenderer.invoke("workbench:import-candidates"),
+      importExtensions: (ids, onProgress) => withIpcProgress("workbench:ext-progress", onProgress, () => ipcRenderer.invoke("workbench:import-extensions", ids)),
+      installVsix: (onProgress) => withIpcProgress("workbench:ext-progress", onProgress, () => ipcRenderer.invoke("workbench:install-vsix")),
+      revealExtensions: () => ipcRenderer.invoke("workbench:reveal-extensions"),
+    },
 
     // --- Claude UI structure bridge (core/layout-probe.js) ---
     // Surfaced in Settings -> Layout. The point is that when Anthropic changes

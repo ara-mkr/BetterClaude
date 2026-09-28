@@ -69,6 +69,24 @@ contextBridge.exposeInMainWorld("betterClaudeIDE", {
   onExit: forward("ide:exit"),
   onFatal: forward("ide:fatal"),
   onChatEvent: forward("ide:chat-event"),
+  // Full-IDE layout (electron/workbench.js via main.js). The page learns the
+  // engine's name, size and source to show before the user agrees to the
+  // download; it never supplies a URL or sees the server's token.
+  workbench: {
+    status: () => ipcRenderer.invoke("workbench:status"),
+    latest: () => ipcRenderer.invoke("workbench:latest"),
+    install: () => ipcRenderer.invoke("workbench:install"),
+    setLayout: (opts) => ipcRenderer.invoke("workbench:set-layout", opts),
+    setChatWidth: (width) => ipcRenderer.send("workbench:chat-width", width),
+    openFile: (file, line) => ipcRenderer.send("workbench:open-file", file, line),
+    diff: (file) => ipcRenderer.send("workbench:diff", file),
+    pushStatus: (info) => ipcRenderer.send("workbench:status", info),
+    onProgress: forward("workbench:progress"),
+    onEvent: forward("workbench:event"),
+    // From the workbench's bridge extension: a selection for the composer,
+    // or a Commit & PR request.
+    onBridge: forward("workbench:bridge"),
+  },
   onProjectPicked: forward("ide:project-picked"),
   onWorkspaceSettings: (callback) => {
     ipcRenderer.on("betterclaude:settings-changed", (_event, payload) => callback(payload));

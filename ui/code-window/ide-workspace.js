@@ -379,7 +379,10 @@
     record.transcript = Transcript.create(host, {
       icon,
       onContent: () => { if (record.tabId === activeTabId) { renderEmptyState(); stickToBottom(); } },
-      onOpenFile: (filePath) => openFileInPanel(filePath, record.cwd),
+      // In the full-IDE layout files open in the workbench editor, and an
+      // edit can be reviewed in its diff editor.
+      onOpenFile: (filePath) => (shell.dataset.layout === "ide" && api.workbench ? api.workbench.openFile(filePath) : openFileInPanel(filePath, record.cwd)),
+      onReviewFile: (filePath) => (shell.dataset.layout === "ide" && api.workbench ? api.workbench.diff(filePath) : openPanel("changes")),
     });
     records.push(record);
     evictRecords();
@@ -498,6 +501,7 @@
     syncModeChip();
     syncComposerBusy();
     renderEmptyState();
+    pushWorkbenchStatus();
   }
 
   function renderEmptyState() {
@@ -545,6 +549,7 @@
     $("bc-ide-chat-stop").hidden = !busy;
     $("bc-ide-send").hidden = busy;
     $("bc-ide-chat-form").dataset.busy = busy ? "true" : "false";
+    pushWorkbenchStatus();
   }
 
   function syncModeChip() {
@@ -555,6 +560,7 @@
     chip.textContent = choice.label;
     chip.dataset.mode = choice.id;
     chip.title = `${choice.label} — ${choice.hint} (⌘⇧M)`;
+    pushWorkbenchStatus();
   }
 
   function setPermMode(next) {
@@ -763,6 +769,7 @@
           api.respondPermission({ tabId: r.tabId, ...answer }).catch(() => {});
         });
         renderSidebar();
+        pushWorkbenchStatus();
         return;
       case "permission-resolved":
       case "permission-cancel":
@@ -770,6 +777,7 @@
         t.permissionSettled(event.requestId, event.type === "permission-cancel" ? "cancel" : event.decision);
         if (r.busy && !r.waiting) t.setWorking("Working…");
         renderSidebar();
+        pushWorkbenchStatus();
         return;
       case "plan-usage":
         planUsage = event.info || null;
@@ -1149,6 +1157,7 @@
     button.title = selectedModel === "claude"
       ? `Claude Code on your plan (${claudeModelVariant || "default model"})`
       : `${full} — a free model, not your Claude plan`;
+    pushWorkbenchStatus();
   }
 
   // ---------------------------------------------------------------------------
@@ -1405,6 +1414,7 @@
     btn.title = known ? `Claude plan usage: ${Math.round(pct * 100)}% of the current window` : "Usage";
     const label = $("bc-ide-usage-label");
     if (label) label.textContent = known ? `${Math.round(pct * 100)}%` : "";
+    pushWorkbenchStatus();
   }
 
   function describePlanUsage() {
@@ -1480,6 +1490,7 @@
       syncChrome();
       await loadSessions(cwd);
       refreshProjectState(cwd);
+      syncLayoutForProject();
       filesLoadedFor = null;
       if (terminalCwd && terminalCwd !== cwd) terminalStale = true;
       if (panelOpen()) loadPanelTab(currentPanelTab);
@@ -1562,6 +1573,216 @@
   function togglePanel(tab) {
     if (panelOpen() && (!tab || tab === currentPanelTab)) closePanel();
     else openPanel(tab || currentPanelTab);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Full-IDE layout (docs/ADR-0001-full-ide-workbench.md): a real VS Code
+  // workbench in its own view left of this page, which then shows only the
+  // chat. Remembered per project; chat-first stays the default. The engine is
+  // installed only when the user says so, after seeing its size and source.
+  // ---------------------------------------------------------------------------
+  const wbApi = api.workbench || null;
+  const layouts = (() => { try { return JSON.parse(store.get("bc-ide-layouts", "{}")) || {}; } catch { return {}; } })();
+  let chatWidth = Math.max(320, Number(store.get("bc-ide-chat-width", "440")) || 440);
+  let layoutBusy = false;
+  let engineInstalling = false;
+
+  // Settings → Claude Code → Full IDE (core/settings-schema.js codeWindow.ide).
+  const ideSettings = () => (latestSettings && latestSettings.codeWindow && latestSettings.codeWindow.ide) || {};
+  const fullIdeOffered = () => ideSettings().engine !== "lightweight";
+  // A project's own choice, else the default for projects not set yet.
+  const projectLayout = (cwd) => (layouts[cwd] === "ide" || layouts[cwd] === "chat" ? layouts[cwd] : ideSettings().defaultLayout === "ide" ? "ide" : "chat");
+  function rememberLayout(cwd, mode) {
+    layouts[cwd] = mode === "ide" ? "ide" : "chat";
+    store.set("bc-ide-layouts", JSON.stringify(layouts));
+  }
+
+  function setLayoutChrome(mode) {
+    const ide = mode === "ide";
+    if (ide && shell.dataset.layout !== "ide") {
+      shell.dataset.sidebar = "closed";
+      if (panelOpen()) closePanel();
+    }
+    if (!ide && shell.dataset.layout === "ide") applySidebarForWidth();
+    shell.dataset.layout = ide ? "ide" : "chat";
+    $("bc-ide-layout-toggle").setAttribute("aria-pressed", ide ? "true" : "false");
+    // The workbench's status bar starts empty; give it the chat's state now
+    // rather than at the next chat event.
+    if (ide) pushWorkbenchStatus();
+  }
+
+  // `quiet`: an automatic restore (a project's remembered layout, the default
+  // for new projects) — never pops the install card or a toast; the toggle does.
+  async function applyLayout(mode, { remember = true, quiet = false } = {}) {
+    if (!wbApi || !activeProject || layoutBusy) return;
+    const cwd = activeProject.cwd;
+    if (mode !== "ide") {
+      setLayoutChrome("chat");
+      if (remember) rememberLayout(cwd, "chat");
+      await wbApi.setLayout({ active: false });
+      return;
+    }
+    if (!fullIdeOffered()) {
+      if (!quiet) toast("The full IDE is off — Settings → Claude Code → Full IDE.");
+      return;
+    }
+    layoutBusy = true;
+    try {
+      const status = await wbApi.status();
+      if (!status || !status.supported) { if (!quiet) toast("The full IDE isn't available on this platform."); return; }
+      if (!status.installed) { if (!quiet) openInstallCard(); return; }
+      if (!status.running) toast("Starting the IDE…", { ms: 2500 });
+      const res = await wbApi.setLayout({ active: true, cwd, chatWidth });
+      // The user may have switched projects while the engine started.
+      if (!activeProject || activeProject.cwd !== cwd) return;
+      if (res && res.ok) {
+        setLayoutChrome("ide");
+        if (remember) rememberLayout(cwd, "ide");
+      } else if (res && res.needsInstall) {
+        if (!quiet) openInstallCard();
+      } else {
+        toast((res && res.error) || "Could not open the IDE.", { kind: "error", ms: 6000 });
+      }
+    } finally {
+      layoutBusy = false;
+    }
+  }
+
+  /** The chat's model, mode, activity and plan usage, for the workbench's status bar. */
+  let lastWorkbenchStatus = "";
+  function pushWorkbenchStatus() {
+    if (!wbApi || shell.dataset.layout !== "ide") return;
+    const r = activeRecord();
+    const info = {
+      model: ($("bc-ide-model-btn").textContent || "").trim(),
+      mode: ($("bc-ide-mode-btn").textContent || "").trim(),
+      state: r && r.waiting ? "waiting" : r && r.busy ? "working" : "idle",
+      usage: planUsage && typeof planUsage.utilization === "number" ? planUsage.utilization * 100 : undefined,
+    };
+    const key = JSON.stringify(info);
+    if (key === lastWorkbenchStatus) return;
+    lastWorkbenchStatus = key;
+    wbApi.pushStatus(info);
+  }
+
+  /** On a project switch: the layout that project was last left in. */
+  function syncLayoutForProject() {
+    if (!wbApi || !activeProject) return;
+    if (projectLayout(activeProject.cwd) === "ide" && fullIdeOffered()) applyLayout("ide", { remember: false, quiet: true });
+    else if (shell.dataset.layout === "ide") applyLayout("chat", { remember: false });
+  }
+
+  /** Settings changed: the toggle only shows while the full IDE is offered. */
+  function syncLayoutToggle() {
+    if (!wbApi) return;
+    $("bc-ide-layout-toggle").hidden = !fullIdeOffered();
+    if (!fullIdeOffered() && shell.dataset.layout === "ide") applyLayout("chat", { remember: false });
+  }
+
+  async function openInstallCard() {
+    const card = $("bc-ide-wb-install");
+    card.hidden = false;
+    $("bc-ide-wb-go").disabled = true;
+    const info = await wbApi.latest();
+    if (!info || info.error) {
+      $("bc-ide-wb-name").textContent = (info && info.error) || "Could not reach GitHub releases — check your connection.";
+      return;
+    }
+    $("bc-ide-wb-name").textContent = `VSCodium ${info.version} (${info.name})`;
+    $("bc-ide-wb-size").textContent = `${(info.size / 1e6).toFixed(1)} MB`;
+    $("bc-ide-wb-source").textContent = info.source;
+    $("bc-ide-wb-go").disabled = false;
+  }
+
+  function closeInstallCard() {
+    if (!engineInstalling) $("bc-ide-wb-install").hidden = true;
+  }
+
+  async function runEngineInstall() {
+    if (engineInstalling) return;
+    engineInstalling = true;
+    $("bc-ide-wb-go").disabled = true;
+    $("bc-ide-wb-cancel").disabled = true;
+    document.querySelector(".bc-ide-wb-progress").hidden = false;
+    try {
+      const res = await wbApi.install();
+      if (!res || !res.ok) throw new Error((res && res.error) || "The install failed.");
+      engineInstalling = false;
+      $("bc-ide-wb-install").hidden = true;
+      await applyLayout("ide");
+    } catch (error) {
+      $("bc-ide-wb-phase").textContent = error.message;
+      toast(error.message, { kind: "error", ms: 8000 });
+    } finally {
+      engineInstalling = false;
+      $("bc-ide-wb-go").disabled = false;
+      $("bc-ide-wb-cancel").disabled = false;
+    }
+  }
+
+  if (wbApi) {
+    wbApi.onProgress((p) => {
+      const pct = p.total ? Math.min(100, Math.round((p.received / p.total) * 100)) : 0;
+      $("bc-ide-wb-bar-fill").style.width = `${p.phase === "download" ? pct : 100}%`;
+      $("bc-ide-wb-phase").textContent = p.phase === "download" ? `${pct}%` : p.phase === "verify" ? "Checking sha256…" : p.phase === "unpack" ? "Unpacking…" : "Done";
+    });
+    // From the workbench's bridge extension. A selection becomes an
+    // attachment in the composer — unsent, like any file the user attaches.
+    wbApi.onBridge((message) => {
+      if (message.type === "selection" && activeProject) {
+        const rel = message.file.startsWith(`${activeProject.cwd}/`) ? message.file.slice(activeProject.cwd.length + 1) : message.file;
+        const label = message.startLine === message.endLine ? `${rel}:${message.startLine}` : `${rel}:${message.startLine}-${message.endLine}`;
+        selectedAttachments = [...selectedAttachments.filter((a) => a.path !== label), { path: label, content: message.text }];
+        renderAttachments();
+        $("bc-ide-chat-input").focus();
+        toast(`Added ${label} to the message`);
+      } else if (message.type === "create-pr") {
+        runCreatePr({ web: true });
+      }
+    });
+    wbApi.onEvent((event) => {
+      if (event.type === "failed") {
+        toast(event.message || "The IDE engine stopped.", { kind: "error", ms: 8000 });
+        setLayoutChrome("chat");
+      } else if (event.type === "restarted") {
+        toast("The IDE engine restarted.");
+      } else if (event.type === "uninstalled") {
+        setLayoutChrome("chat");
+      }
+    });
+    // Drag the chat's left edge: the page is its own view, so its width IS
+    // the chat width; main.js re-lays out both views as it changes.
+    const handle = $("bc-ide-chat-split");
+    let startX = 0;
+    let startWidth = 0;
+    let frame = 0;
+    let pending = 0;
+    const onMove = (event) => {
+      pending = Math.max(320, Math.round(startWidth + (startX - event.screenX)));
+      if (!frame) frame = requestAnimationFrame(() => { frame = 0; chatWidth = pending; wbApi.setChatWidth(chatWidth); });
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.documentElement.classList.remove("bc-ide-resizing");
+      store.set("bc-ide-chat-width", String(chatWidth));
+    };
+    handle.addEventListener("pointerdown", (event) => {
+      startX = event.screenX;
+      startWidth = window.innerWidth;
+      document.documentElement.classList.add("bc-ide-resizing");
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    });
+    handle.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      chatWidth = Math.max(320, window.innerWidth + (event.key === "ArrowLeft" ? 24 : -24));
+      wbApi.setChatWidth(chatWidth);
+      store.set("bc-ide-chat-width", String(chatWidth));
+    });
+  } else {
+    $("bc-ide-layout-toggle").hidden = true;
   }
 
   function loadPanelTab(tab) {
@@ -2064,6 +2285,9 @@
   on("bc-ide-settings-btn", "click", () => api.openSettings());
   on("bc-ide-toggle-sidebar", "click", () => setSidebar(shell.dataset.sidebar !== "open"));
   on("bc-ide-toggle-panel", "click", () => togglePanel());
+  on("bc-ide-layout-toggle", "click", () => applyLayout(shell.dataset.layout === "ide" ? "chat" : "ide"));
+  on("bc-ide-wb-go", "click", () => runEngineInstall());
+  on("bc-ide-wb-cancel", "click", () => closeInstallCard());
   on("bc-ide-panel-close", "click", () => closePanel());
   on("bc-ide-diff-pill", "click", () => togglePanel("changes"));
   on("bc-ide-more", "click", (e) => {
@@ -2170,6 +2394,7 @@
     if (mod && key === "s" && editor && editorDirty) { event.preventDefault(); saveCurrentFile(); return; }
     if (mod && !event.shiftKey && !event.altKey && key === "n") { event.preventDefault(); newSession(); return; }
     if (mod && event.altKey && event.code === "KeyB") { event.preventDefault(); togglePanel(); return; }
+    if (mod && event.altKey && event.code === "KeyI") { event.preventDefault(); applyLayout(shell.dataset.layout === "ide" ? "chat" : "ide"); return; }
     if (mod && !event.shiftKey && !event.altKey && key === "b") { event.preventDefault(); setSidebar(shell.dataset.sidebar !== "open"); return; }
     if (mod && event.shiftKey && key === "d") { event.preventDefault(); togglePanel("changes"); return; }
     if (mod && event.shiftKey && key === "m") { event.preventDefault(); toggleModeMenu(); return; }
@@ -2193,6 +2418,7 @@
       term.options.fontFamily = codeFontStack();
     }
     syncModeChip();
+    syncLayoutToggle();
   });
   api.onProjectPicked(async ({ cwd } = {}) => {
     if (!cwd) return;
@@ -2220,6 +2446,7 @@
     latestSettings = await api.getSettings();
   } catch { /* keep defaults */ }
   syncModeChip();
+  syncLayoutToggle();
   try {
     const initial = await api.getInitialState();
     projects = initial.projects || [];

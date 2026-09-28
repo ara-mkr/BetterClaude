@@ -368,6 +368,14 @@
             open.addEventListener("click", () => options.onOpenFile(d.title));
             detail.appendChild(open);
           }
+          if (d.kind === "edit" && d.title && options.onReviewFile) {
+            const review = document.createElement("button");
+            review.type = "button";
+            review.className = "bc-t-link";
+            review.textContent = "Review diff";
+            review.addEventListener("click", () => options.onReviewFile(d.title));
+            detail.appendChild(review);
+          }
         }
         detail.hidden = !opening;
         row.classList.toggle("is-open", opening);

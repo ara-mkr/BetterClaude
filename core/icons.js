@@ -64,4 +64,6 @@ module.exports = {
   // Nav-rail code glyph: angle brackets around a slash — the conventional
   // "code" mark, matching the </> claude.ai uses.
   CODE_SLASH: `<svg ${ATTRS}><path d="M8.5 7 3 12l5.5 5"/><path d="M15.5 7 21 12l-5.5 5"/><path d="M13.5 4.5 10.5 19.5"/></svg>`,
+  // Full-IDE layout toggle: activity bar | editor | chat.
+  LAYOUT_IDE: `<svg ${ATTRS}><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M8 4v16"/><path d="M15.5 4v16"/></svg>`,
 };

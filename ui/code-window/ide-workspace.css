@@ -508,6 +508,41 @@ html.bc-ide-resizing, html.bc-ide-resizing * { cursor: col-resize !important; us
 .bc-ide-ext-remove:hover { color: var(--bc-ide-danger); }
 
 /* ============================================================
+   Full-IDE layout: this page is the chat beside a VS Code
+   workbench (a separate view to its left, laid out by main.js)
+   ============================================================ */
+.bc-ide-chat-split { display: none; }
+#bc-ide-shell[data-layout="ide"] .bc-ide-chat-split { display: block; position: absolute; top: 0; bottom: 0; left: 0; z-index: 45; width: 6px; cursor: col-resize; }
+#bc-ide-shell[data-layout="ide"] .bc-ide-chat-split:hover,
+#bc-ide-shell[data-layout="ide"] .bc-ide-chat-split:focus-visible { background: color-mix(in srgb, var(--bc-ide-accent) 45%, transparent); }
+#bc-ide-shell[data-layout="ide"] .bc-ide-main { border-left: 1px solid var(--bc-ide-hairline); }
+/* The workbench has its own explorer, editors, terminal and source control. */
+#bc-ide-shell[data-layout="ide"] .bc-ide-panel,
+#bc-ide-shell[data-layout="ide"] #bc-ide-panel-resize,
+#bc-ide-shell[data-layout="ide"] #bc-ide-toggle-panel,
+#bc-ide-shell[data-layout="ide"] #bc-ide-diff-pill,
+#bc-ide-shell[data-layout="ide"] #bc-ide-sidebar-resize,
+#bc-ide-shell[data-layout="ide"] .bc-ide-title-meta { display: none; }
+/* Sessions stay one click away, as a drawer over the chat. */
+#bc-ide-shell[data-layout="ide"][data-sidebar="open"] .bc-ide-sidebar { position: absolute; top: 0; left: 0; bottom: 0; z-index: 35; width: min(var(--bc-ide-sidebar-w), 86%); box-shadow: 16px 0 40px rgba(0,0,0,.28); }
+#bc-ide-shell[data-layout="ide"] .bc-ide-chat-messages,
+#bc-ide-shell[data-layout="ide"] .bc-ide-empty { padding-left: 16px; padding-right: 16px; }
+#bc-ide-shell[data-layout="ide"] .bc-ide-composer-wrap { padding-left: 12px; padding-right: 12px; }
+#bc-ide-layout-toggle[aria-pressed="true"] { color: var(--bc-ide-accent); background: var(--bc-ide-hover); }
+
+.bc-ide-wb-install { position: absolute; top: 56px; left: 50%; z-index: 50; width: min(440px, calc(100% - 32px)); padding: 18px 20px; border: 1px solid var(--bc-ide-line); border-radius: 14px; background: var(--bc-ide-panel); box-shadow: 0 18px 48px rgba(0,0,0,.32), 0 2px 6px rgba(0,0,0,.18); transform: translateX(-50%); }
+.bc-ide-wb-install h2 { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+.bc-ide-wb-install p { margin: 0 0 12px; font-size: 13px; line-height: 1.5; }
+.bc-ide-wb-install .bc-ide-wb-note { color: var(--bc-ide-muted); font-size: 12px; }
+.bc-ide-wb-facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 12px; font-size: 12.5px; }
+.bc-ide-wb-facts dt { color: var(--bc-ide-muted); }
+.bc-ide-wb-facts dd { margin: 0; overflow-wrap: anywhere; font: 12px/1.5 var(--bc-ide-code-font); }
+.bc-ide-wb-progress { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; color: var(--bc-ide-muted); font-size: 12px; }
+.bc-ide-wb-bar { flex: 1; height: 6px; overflow: hidden; border-radius: 3px; background: var(--bc-ide-hover); }
+.bc-ide-wb-bar span { display: block; width: 0; height: 100%; background: var(--bc-ide-accent); transition: width .2s; }
+.bc-ide-wb-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ============================================================
    Narrow windows
    ============================================================ */
 @media (max-width: 1100px) {

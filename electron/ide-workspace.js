@@ -388,7 +388,9 @@ function listInstalledExtensions() {
       if (!manifest.name || !manifest.publisher) continue;
       const id = `${manifest.publisher}.${manifest.name}`.toLowerCase();
       const existing = byId.get(id);
-      if (existing && compareVersions(existing.version, manifest.version) >= 0) continue;
+      // Every editor that has it, for the full IDE's import picker.
+      const hosts = existing ? [...new Set([...existing.hosts, label])] : [label];
+      if (existing && compareVersions(existing.version, manifest.version) >= 0) { existing.hosts = hosts; continue; }
       byId.set(id, {
         id,
         displayName: manifest.displayName || manifest.name,
@@ -396,6 +398,7 @@ function listInstalledExtensions() {
         version: manifest.version || "0.0.0",
         description: manifest.description || "",
         host: label,
+        hosts,
         icon: readExtensionIcon(extensionDir, manifest.icon),
       });
     }

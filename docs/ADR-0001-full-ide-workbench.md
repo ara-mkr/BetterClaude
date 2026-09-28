@@ -1,6 +1,6 @@
 # ADR-0001: A full VS Code workbench in the Code tab
 
-- **Status:** Proposed — waiting for approval. No Phase 3 code is written until it is approved.
+- **Status:** Accepted (2026-09-27): engine A1 with A2 as the fallback. Implemented: milestones 1–5 of section 8. Section 10 records what the implementation changed, how the risks turned out, and the measurements.
 - **Date:** 2026-09-27
 - **Scope:** the Code tab's optional "full IDE" layout, real VS Code extensions (including OpenAI's Codex and Anthropic's Claude Code), and how today's Claude Code chat fits into it.
 
@@ -87,10 +87,10 @@ A full IDE framework with a Node plugin host that runs VS Code extensions and us
 ### 6.1 Processes and lifecycle
 
 - **Lazy, single server.** Started the first time the full-IDE layout opens, never at app launch. One server per app, with a workspace per project, opened as `?folder=<path>`.
-- **Spawn arguments.** `127.0.0.1` on a random free port, `--connection-token-file <userData>/workbench/token` (mode 0600), `--server-data-dir`, `--user-data-dir` and `--extensions-dir` under `<userData>/workbench/`, and `--telemetry-level off`.
+- **Spawn arguments.** `127.0.0.1` on a free port picked at random once per profile and then reused (`<userData>/workbench/port`; see section 10), `--connection-token-file <userData>/workbench/connection-token` (mode 0600), `--server-data-dir`, `--user-data-dir` and `--extensions-dir` under `<userData>/workbench/`, and `--telemetry-level off`. The engine's own node runs `out/server-main.js` directly (all its `bin/` launcher does), so node leads the process group.
 - **The token is secret.** It's 32 random bytes, never logged, never put in argv, and never in a URL a log line could print.
 - **Environment.** The same scrubbed environment as the chat (`subscriptionEnv`), so no `ANTHROPIC_*` or provider overrides leak into the extension host. Plus the bridge variables in 6.4.
-- **Teardown and crash handling.** Killed with its process group on quit, and when the last full-IDE window closes (after an idle grace period). A crash restarts it with backoff (1 s, 2 s, 4 s, at most 5 per minute), mirroring the existing Code view crash reload.
+- **Teardown and crash handling.** Killed with its process group on quit, and after ten idle minutes outside the full-IDE layout. If BetterClaude itself dies (a crash, a force-quit), a `--require`d parent watch ends the group within about 2 s. A crash of the server restarts it with backoff (1 s, 2 s, 4 s, at most 5 per minute), mirroring the existing Code view crash reload.
 
 ### 6.2 Installing the engine
 
@@ -141,7 +141,7 @@ A small first-party extension (`betterclaude.bridge`), installed into the workbe
   - `will-navigate` only allows the server's origin;
   - `setWindowOpenHandler` denies new windows, and http(s) links go to the system browser;
   - all permission requests are denied except clipboard for the server origin.
-- **Webview origins.** VS Code web serves extension webviews from a separate origin, by default Microsoft's `*.vscode-cdn.net`. That would break offline use and send requests to Microsoft. The engine's `product.json` will be pointed at a local per-webview origin instead: `{{uuid}}.localhost` on the server's port, which Chromium resolves to loopback. That keeps both isolation and offline use. It's verified in 3b before anything else is built on it.
+- **Webview origins.** VS Code web serves extension webviews from a separate origin, by default Microsoft's `*.vscode-cdn.net`. That would break offline use and send requests to Microsoft. As built (see section 10), the engine is left unpatched: the view's partition answers `https://<uuid>.vscode-cdn.net/…/webview/browser/pre/<file>` from the engine's own copy of those files, so every webview keeps its own origin (the isolation) and loads offline. Any other `vscode-cdn.net` request gets a 404, and nothing else is intercepted.
 - **Trust.** Extensions run with your user privileges, exactly as in VS Code. Open VSX is the only source, and the publisher and verified state are shown.
 - **Settings.** Telemetry is forced off (`--telemetry-level off` plus `telemetry.telemetryLevel: "off"`).
 
@@ -177,3 +177,31 @@ A small first-party extension (`betterclaude.bridge`), installed into the workbe
 - Downloading the engine: about 131 MB from VSCodium's GitHub releases, checksum-verified.
 - Installing Codex (236 MB) and Claude Code for VS Code (103 MB) from Open VSX during testing, up to their sign-in screens. You sign in yourself.
 - Whether to commit the uncommitted Phase 1–2 work on a branch before 3b starts.
+
+## 10. Results (2026-09-27)
+
+Measured and checked in the real app, on an Apple-silicon Mac, with VSCodium 1.135.06055 and a scratch `acme-api` repo.
+
+### What the implementation changed
+
+- **Webview origins (risk 1).** Pointing `product.json` at `{{uuid}}.localhost` wasn't needed. The web workbench inlines its webview template, `https://{{uuid}}.vscode-cdn.net/insider/<commit>/out/vs/workbench/contrib/webview/browser/pre/`, so the view's partition answers exactly those paths from the engine's own `pre/` folder, service worker included. Each webview keeps its own origin, nothing is fetched from Microsoft, and the engine stays unpatched. Verified with the Markdown preview and with the Codex, Claude Code, Gemini Code Assist and CodeRabbit webviews.
+- **A stable port.** VS Code keys everything per origin: workspace trust, open editors, workspace storage, and every setting the web workbench keeps in the browser. With a new random port on every start, each restart looked like a new machine (Restricted Mode again, editors gone, theme choice gone). The port is now picked at random once per profile and reused, and it's re-picked only if something else holds it.
+- **A parent watch.** The server runs in its own process group so one kill takes down its extension hosts and terminals, but that also meant a crashed or force-quit BetterClaude left the whole group running. One such orphan turned up after a test run. `parent-watch.cjs`, loaded with `node --require`, now ends the group within about 2 s of BetterClaude's main process going away. The variable it reads is removed at once, so the extension hosts VS Code forks (which inherit `execArgv`) find nothing to watch.
+- **The secondary side bar.** VS Code's built-in Chat view container, empty in VSCodium, opened as a second chat column beside BetterClaude's. The bridge closes it once per workspace and makes new workspaces default to hidden. It stays open once reopened, for example for Codex or Claude Code.
+- **Publisher trust.** VS Code 1.97+ asks "Do you trust the publisher?" on the first install from each publisher. It shows Open VSX publishers as "not verified" even where Open VSX has verified the namespace (openai, Anthropic, Google, CodeRabbit), so BetterClaude's own installs show Open VSX's verified state instead.
+
+### Risks 2–5
+
+- **Codex in a non-Microsoft build (risk 2): fine.** Codex 26.908.40401 (darwin-arm64) installs from Open VSX through the Extensions view, activates with no errors, starts its bundled CLI, and renders its onboarding and chat. VSCodium's allow-list covers its proposed APIs. No prompt was sent.
+- **OAuth and `onUri` callbacks (risk 3): not exercised.** Extensions share the user's home folder, as in VS Code. Codex and Claude Code started out signed in through the existing `~/.codex` and `~/.claude` CLI logins, and Gemini Code Assist through an existing Google sign-in. CodeRabbit stopped at its Get Started screen. A fresh browser sign-in round trip still needs a manual test, with the user signing in.
+- **Memory and cold start (risk 4): measured.**
+  - No extensions installed: the engine's process group is about 200 MB (server 58 MB, file watcher and pty host 40 MB, extension host 61 MB, JSON language server 43 MB), plus 130 MB for the view's renderer, so about 330 MB in all.
+  - With Codex, Claude Code, Gemini Code Assist, CodeRabbit, a grammar and a theme: the group is 1.14 GB. That includes Codex's CLI (71 MB), Claude Code's CLI (171 MB) and Gemini's CLI (30 MB), plus about 470 MB for the MCP servers Claude Code starts from the user's own config. The view's renderers are 305 MB (the page and one extension-webview process).
+  - Cold start, from the Code tab click with the full-IDE layout remembered and the engine not running: the first-ever start took 3.7 s to show the workbench and 6.4 s to paint the explorer. A fresh profile took 1.1 s, 5.5 s, and 7.6 s until extensions were up. With a warm OS cache and six extensions it took 0.6 s, 1.9 s and 6.1 s. The server alone is ready in about 0.1–0.2 s; the page and the extension host dominate.
+- **Engine updates (risk 5): handled.** The update check lists installed extensions whose `engines.vscode` the new version wouldn't satisfy. It reads ranges the way VS Code's validator does, including that a non-exact 0.x range runs on 1.x. An update unpacks beside the old build, restarts the server, and the next start removes the old build.
+
+### Found along the way
+
+- Gemini Code Assist's agent refuses workspaces outside the home folder (unless `CODER_AGENT_ALLOWED_ROOT` says otherwise) and crash-loops on a `/tmp` repo. That's Gemini's own rule; desktop VS Code behaves the same.
+- A clipboard read from an extension fails while the window isn't focused ("Document is not focused"). With focus, the workbench origin's clipboard permission works.
+- A CLI install (import, `.vsix`) reaches the running workbench without a reload: the server's extensions watcher reports "Extensions added from another source" and the extension activates.
