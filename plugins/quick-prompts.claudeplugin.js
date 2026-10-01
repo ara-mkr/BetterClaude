@@ -12,7 +12,7 @@ const DEFAULT_PROMPTS = [
 
 module.exports = {
   name: "Quick Prompts",
-  version: "1.0.0",
+  version: "1.0.1",
 
   onLoad(api) {
     const prompts = api.registerSetting("prompts", DEFAULT_PROMPTS);
@@ -30,23 +30,30 @@ module.exports = {
         gap: 4px;
         max-width: 220px;
       }
+      /* Theme tokens, and !important because the page theme resets every
+         button's background and colour (theme-engine PAGE_BTN). */
       #bc-quick-prompts button {
-        font: 11px -apple-system, sans-serif;
+        font: 11px var(--bc-ui-font, -apple-system, sans-serif) !important;
         text-align: left;
-        padding: 6px 10px;
-        border-radius: 6px;
-        border: 1px solid rgba(255,255,255,0.12);
-        background: rgba(20,16,31,0.85);
-        color: #ece7fb;
+        padding: 6px 10px !important;
+        border-radius: 6px !important;
+        border: 1px solid var(--bc-border, rgba(255,255,255,0.12)) !important;
+        background: var(--bc-bg-elevated, rgba(20,16,31,0.92)) !important;
+        color: var(--bc-text, #ece7fb) !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.18);
         cursor: pointer;
       }
       @media (hover: hover) and (pointer: fine) {
-        #bc-quick-prompts button:hover { background: rgba(139,92,246,0.35); }
+        #bc-quick-prompts button:hover {
+          background: color-mix(in srgb, var(--bc-accent, #8b5cf6) 22%, var(--bc-bg-elevated, #14101f)) !important;
+          border-color: var(--bc-accent, #8b5cf6) !important;
+        }
       }
     `);
 
     const container = document.createElement("div");
     container.id = "bc-quick-prompts";
+    container.dataset.bcOwn = ""; // keep the page theme's button reset off these
     (prompts || DEFAULT_PROMPTS).forEach((text) => {
       const btn = document.createElement("button");
       btn.textContent = text;

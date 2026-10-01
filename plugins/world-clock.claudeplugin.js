@@ -11,7 +11,7 @@ const DEFAULT_ZONES = [
 
 module.exports = {
   name: "World Clock",
-  version: "1.0.0",
+  version: "1.0.1",
 
   onLoad(api) {
     this.api = api;
@@ -20,27 +20,28 @@ module.exports = {
 
     api.injectCSS(`
       #bc-clock-panel {
-        position: fixed; top: 88px; right: 16px; width: 220px;
-        z-index: 2147482950; background: rgba(20,16,31,0.98);
-        border: 1px solid rgba(255,255,255,0.15); border-radius: 10px;
+        position: fixed; top: calc(var(--bc-dock-bottom, 120px) + 8px); right: 16px; width: 220px;
+        z-index: 2147482950; background: var(--bc-bg-elevated, rgba(20,16,31,0.98));
+        border: 1px solid var(--bc-border, rgba(255,255,255,0.15)); border-radius: 10px;
         display: none; flex-direction: column; gap: 8px; padding: 14px;
-        font: 12px -apple-system, sans-serif; color: #ece7fb;
+        font: 12px -apple-system, sans-serif; color: var(--bc-text, #ece7fb);
       }
       #bc-clock-panel.bc-open { display: flex; }
       .bc-clock-row { display: flex; justify-content: space-between; align-items: baseline; }
       .bc-clock-zone { opacity: 0.65; }
       .bc-clock-time { font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600; }
       .bc-clock-toggle {
-        margin-top: 4px; padding: 6px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15);
-        background: transparent; color: #ece7fb; cursor: pointer; font: inherit;
+        margin-top: 4px; padding: 6px; border-radius: 6px; border: 1px solid var(--bc-border, rgba(255,255,255,0.15));
+        background: transparent; color: var(--bc-text, #ece7fb); cursor: pointer; font: inherit;
       }
-      .bc-clock-toggle:hover { background: rgba(139,92,246,0.25); }
+      .bc-clock-toggle:hover { background: color-mix(in srgb, var(--bc-accent, #8b5cf6) 25%, transparent); }
     `);
 
     this._dockBtn = api.mountToolbarButton({ icon: CLOCK_ICON, label: "World Clock", onClick: () => this.toggle() });
 
     const panel = document.createElement("div");
     panel.id = "bc-clock-panel";
+    panel.dataset.bcOwn = ""; // themed with --bc-* tokens; keep page resets off it
     document.body.appendChild(panel);
     this._panel = panel;
 

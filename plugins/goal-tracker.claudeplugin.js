@@ -20,7 +20,7 @@ const EMPTY_STATE_SVG = `
 
 module.exports = {
   name: "Goal Tracker",
-  version: "1.0.0",
+  version: "1.0.1",
 
   onLoad(api) {
     this.api = api;
@@ -28,30 +28,30 @@ module.exports = {
 
     api.injectCSS(`
       #bc-goal-panel {
-        position: fixed; top: 88px; right: 16px; width: 280px; max-height: 70vh;
-        overflow-y: auto; z-index: 2147482950; background: rgba(20,16,31,0.98);
-        border: 1px solid rgba(255,255,255,0.15); border-radius: 10px;
+        position: fixed; top: calc(var(--bc-dock-bottom, 120px) + 8px); right: 16px; width: 280px; max-height: 70vh;
+        overflow-y: auto; z-index: 2147482950; background: var(--bc-bg-elevated, rgba(20,16,31,0.98));
+        border: 1px solid var(--bc-border, rgba(255,255,255,0.15)); border-radius: 10px;
         display: none; flex-direction: column; gap: 10px; padding: 14px;
-        font: 12px -apple-system, sans-serif; color: #ece7fb;
+        font: 12px -apple-system, sans-serif; color: var(--bc-text, #ece7fb);
       }
       #bc-goal-panel.bc-open { display: flex; }
-      .bc-goal-empty { text-align: center; color: #cbbdf0; padding: 12px 4px; }
-      .bc-goal-empty svg { color: #8b5cf6; margin-bottom: 6px; }
+      .bc-goal-empty { text-align: center; color: var(--bc-text-muted, #cbbdf0); padding: 12px 4px; }
+      .bc-goal-empty svg { color: var(--bc-accent, #8b5cf6); margin-bottom: 6px; }
       .bc-goal-row { display: flex; align-items: center; gap: 8px; }
       .bc-goal-row input[type="checkbox"] { flex-shrink: 0; }
       .bc-goal-label { flex: 1; }
       .bc-goal-label.bc-done { text-decoration: line-through; opacity: 0.5; }
-      .bc-goal-del { background: none; border: none; color: #a99bd1; cursor: pointer; }
-      .bc-goal-del:hover { color: #ef4444; }
-      .bc-goal-progress { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden; }
-      .bc-goal-progress-fill { height: 100%; background: #8b5cf6; transition: width 200ms ease; }
+      .bc-goal-del { background: none; border: none; color: var(--bc-text-muted, #a99bd1); cursor: pointer; }
+      .bc-goal-del:hover { color: var(--bc-danger, #ef4444); }
+      .bc-goal-progress { height: 6px; border-radius: 3px; background: var(--bc-border, rgba(255,255,255,0.1)); overflow: hidden; }
+      .bc-goal-progress-fill { height: 100%; background: var(--bc-accent, #8b5cf6); transition: width 200ms ease; }
       .bc-goal-add { display: flex; gap: 6px; }
       .bc-goal-add input {
-        flex: 1; background: #14101f; border: 1px solid #3a2e5c; color: #ece7fb;
+        flex: 1; background: var(--bc-bg, #14101f); border: 1px solid var(--bc-border, #3a2e5c); color: var(--bc-text, #ece7fb);
         border-radius: 6px; padding: 6px 8px; font: inherit;
       }
       .bc-goal-add button {
-        padding: 6px 10px; border-radius: 6px; border: none; background: var(--bc-accent, #8b5cf6); color: var(--btn-primary-fg, #fff); cursor: pointer;
+        padding: 6px 10px; border-radius: 6px; border: none; background: var(--bc-accent, #8b5cf6); color: #fff; cursor: pointer;
       }
     `);
 
@@ -59,6 +59,7 @@ module.exports = {
 
     const panel = document.createElement("div");
     panel.id = "bc-goal-panel";
+    panel.dataset.bcOwn = ""; // themed with --bc-* tokens; keep page resets off it
     document.body.appendChild(panel);
     this._panel = panel;
 

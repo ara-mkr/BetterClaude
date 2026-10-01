@@ -14,6 +14,18 @@ const WIDGET_CATALOG = [
   { id: "goal-tracker", label: "Goal Tracker", icon: ICONS.TARGET, description: "A checklist with a progress bar." },
   { id: "quick-prompts", label: "Quick Prompts", icon: ICONS.BOLT, description: "Canned prompts inserted into the composer." },
   { id: "snippet-library", label: "Snippet Library", icon: ICONS.BOOK, description: "Full CRUD prompt/snippet manager with search." },
+  { id: "plan-usage", label: "Plan Usage", icon: ICONS.TARGET, description: "How much of your plan's current window is used (from Code-tab replies)." },
+  { id: "context-gauge", label: "Context Gauge", icon: ICONS.LIST, description: "How full the Code-tab chat's context window is." },
+  { id: "git-status", label: "Git Status", icon: ICONS.GIT_BRANCH, description: "Branch, changes and unpushed commits for the Code tab's folder." },
+  { id: "team-wire", label: "Team Mini-Wire", icon: ICONS.CHAT, description: "The last few Team Hub messages, without opening the CLI tab." },
+  { id: "session-timer", label: "Session Timer", icon: ICONS.CLOCK, description: "Time in this conversation, with an optional break nudge." },
+  { id: "focus-mode", label: "Focus Mode", icon: ICONS.ZEN, description: "Hide everything but the conversation (Cmd/Ctrl+Shift+F)." },
+  { id: "daily-streak", label: "Daily Streak", icon: ICONS.FLAME, description: "Days in a row you've used Claude." },
+  { id: "shortcut-sheet", label: "Shortcut Cheat Sheet", icon: ICONS.COMMAND, description: "Every BetterClaude, Code-tab and Claude Code shortcut." },
+  { id: "clipboard-history", label: "Clipboard History", icon: ICONS.COPY, description: "Your last 20 copies on this page — memory only." },
+  { id: "system-monitor", label: "System Monitor", icon: ICONS.TERMINAL, description: "Machine load and memory, and BetterClaude's own use." },
+  { id: "model-switcher", label: "Model Switcher", icon: ICONS.SHUFFLE, description: "Pick the Code tab's model from the dock." },
+  { id: "scratchpad", label: "Scratchpad", icon: ICONS.EDIT, description: "One big plain-text pad that survives restarts." },
 ];
 
 module.exports = {
