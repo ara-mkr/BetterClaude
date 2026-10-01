@@ -337,6 +337,25 @@
   .bc-toast-popup { animation: none; }
 }
 
+/* --- Backdrop while a native pane steps aside for one of our overlays ---
+   The CLI / Code tab is a native view above the page. Opening Settings (or any
+   BetterClaude overlay) detaches it, and without this claude.ai's own page —
+   its sign-in screen with the "Try Claude" hero video, when signed out — showed
+   through behind the dialog. Set on <html> by electron/preload.js only for OUR
+   overlays, never for a claude.ai modal. Below every BetterClaude overlay
+   (widgets start at 2147482600), above claude.ai's content. */
+html.bc-pane-backdrop::before {
+  content: "";
+  position: fixed;
+  top: var(--bc-tb-h, 0px);
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2147482000;
+  pointer-events: none;
+  background: var(--bc-bg, #14101f);
+}
+
 /* --- In-app update banner (core/update-banner.js) ---
    Anchored top-right, just under the title bar — the same corner
    .bc-toast-popup already uses for "something needs your attention" surfaces

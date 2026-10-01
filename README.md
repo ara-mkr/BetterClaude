@@ -170,10 +170,13 @@ OpenRouter's free models need a free key (openrouter.ai/keys): paste it into the
 
 Every session working in the same folder shares a hub at `<project>/.bc-team/`: plain JSON files (roster, messages, task board, work log) that the agents read and write with their ordinary file tools. No server, no ports, nothing to host.
 
-- The **Team sidebar** shows who's doing what (status dots, work-log excerpts, an "Ask for update" nudge), a **team chat** feed with per-recipient or broadcast sending, a **work board** (todo / doing / done, assignable), and **Made so far**, a real git summary of everything the team has touched.
-- The **Live wire** is a thin rail on the right edge streaming messages and hand-offs as they happen: claims, assignments, completions.
-- **+ Teammate** spawns another real `claude` session into the same hub. Teammates get codenames (Atlas, Nova, Orion, Vega…) and messages you send are delivered straight into their terminal.
+- The **Team sidebar** shows who's doing what (status dots, work-log excerpts, an "Ask for update" nudge, and anything waiting to be delivered), a **team chat** feed with per-recipient or broadcast sending, a **work board** (todo / doing / done, assignable), and **Made so far**, a real git summary of everything the team has touched.
+- The **Live wire** is a resizable rail on the right edge streaming every message and hand-off in the order it actually happened, even when an agent stamps its message with a made-up time.
+- **+ Teammate** spawns another real `claude` session into the same hub. Teammates are named **Agent 001**, **Agent 002**, … and address each other by name; rename any of them from its Team card (double-click the name, or press Rename — its work and history stay the same, and its old name still resolves).
+- **Code-tab chats can join too:** More (⋯) → **Join the agent team**, or **New teammate** for a fresh chat on the team. A teammate's message shows up in the chat as a labelled "Message from …" turn.
 - **Session Mesh** (on by default) puts every ordinary CLI tab into the folder's hub too, so two terminals open on one project can already see each other without you configuring anything. Turn it off in Settings if you only want explicit teammates to cooperate.
+
+**Delivery is careful by design.** A message is typed into a teammate only when it is idle at its prompt — BetterClaude knows this from Claude Code's own hooks, not by guessing from terminal output. A teammate that is mid-turn, at the folder-trust question, or showing a permission prompt gets it queued ("1 message waiting — working on a turn") and delivered right after, so a message can never answer a prompt for it; a Code-tab chat's running turn is never interrupted. Esc (CLI) and Stop (Code tab) work as usual, and the next message still arrives. Messages already in the hub when the app starts are history, never re-sent. Automatic traffic has a per-agent rate cap, a pause after a long back-and-forth between the same two agents (acting on either resumes it), and duplicate suppression — none of which applies to what *you* send. Bodies are stripped of control characters before they reach a terminal, and every agent is told that teammate messages are information, not authority: a teammate can't grant permissions, approve actions, or override you. The hub writes its own `.bc-team/.gitignore`, so it never lands in a commit.
 
 ### Multi-session tabs
 
@@ -199,7 +202,7 @@ Import a theme from a URL or a local file if someone shares one with you, or hit
 
 ## Plugins
 
-Nine plugins ship in the box, each a plain `*.claudeplugin.js` file in `plugins/` you can open, read, edit, or replace outright — there's no compiled or minified plugin format to fight with, just a small manifest-plus-script convention that the built-in ones all follow.
+Twenty plugins ship in the box (all off until you turn them on in Settings → Widgets or Plugins), each a plain `*.claudeplugin.js` file in `plugins/` you can open, read, edit, or replace outright — there's no compiled or minified plugin format to fight with, just a small manifest-plus-script convention that the built-in ones all follow.
 
 | Plugin | What it does |
 | --- | --- |
@@ -212,10 +215,21 @@ Nine plugins ship in the box, each a plain `*.claudeplugin.js` file in `plugins/
 | Snippet Library | Reusable text snippets you can drop straight into the composer, separate from the full Prompt Library module for shorter, more disposable bits of text. |
 | Sticky Notes | Freeform notes that stay pinned to the app across sessions, for the stuff that doesn't belong in a conversation but you don't want to lose either. |
 | World Clock | A small multi-timezone clock widget, useful if you're coordinating with Claude (or people) across time zones. |
+| Plan Usage | How much of your plan's current usage window is spent, from the reading Claude Code reports with each Code-tab reply — never scraped, stored or sent anywhere. |
+| Context Gauge | How full the Code-tab chat's context window is, with a nudge to `/compact` past 80%. |
+| Git Status | Branch, changed files, lines added/removed and unpushed commits for the folder the Code tab is working in. |
+| Team Mini-Wire | The last few Team Hub messages in a dock card, so you can follow hand-offs without opening the CLI tab. |
+| Session Timer | Time spent in the current conversation, with an optional break nudge (25/50/90 min). |
+| Daily Streak | Days in a row you've used Claude. |
+| Shortcut Cheat Sheet | Your BetterClaude bindings plus the Code-tab and Claude Code keys, in one card. |
+| Clipboard History | Your last 20 copies on the page, one click to copy again — memory only, gone when you quit. |
+| System Monitor | Machine load and memory, plus BetterClaude's own memory and CPU. |
+| Model Switcher | Set the Code tab's model (Default / Fable / Opus / Sonnet / Haiku) from the dock. |
+| Scratchpad | One big plain-text pad that survives restarts. |
 
-![Plugin list in Settings, showing all nine built-in plugins with toggle switches](.github/readme-assets/plugins.png)
+![Plugin list in Settings with toggle switches](.github/readme-assets/plugins.png)
 
-`core/plugin-loader.js` is what actually loads these — built-in and custom alike, from the same `userData/plugins` directory, with no special-casing for the nine that ship by default. "Open Plugins Folder" in Settings takes you straight there in Finder/Explorer, and dropping in your own `*.claudeplugin.js` file is enough for it to show up in the plugin list on next launch (or a manual reload from Settings), ready to toggle on like any other. This is also exactly the mechanism Team/Shared Plugin Sync writes into, so a plugin distributed through a synced team repo and one you wrote yourself locally are indistinguishable to the loader.
+`core/plugin-loader.js` is what actually loads these — built-in and custom alike, from the same `userData/plugins` directory, with no special-casing for the ones that ship by default. "Open Plugins Folder" in Settings takes you straight there in Finder/Explorer, and dropping in your own `*.claudeplugin.js` file is enough for it to show up in the plugin list on next launch (or a manual reload from Settings), ready to toggle on like any other. This is also exactly the mechanism Team/Shared Plugin Sync writes into, so a plugin distributed through a synced team repo and one you wrote yourself locally are indistinguishable to the loader.
 
 ## Buddies
 

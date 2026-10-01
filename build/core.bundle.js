@@ -1035,8 +1035,8 @@ ${lines.join("\n")}`);
         }
         return relativeLuminance(composerBg) > 0.5 ? "#6b6b6b" : "#9a9a9a";
       }
-      var OWN_CHROME_IDS = ["betterclaude-titlebar", "betterclaude-settings-panel", "betterclaude-hud", "betterclaude-plugin-dock", "bc-code-tab-pill", "bc-ide-shell"];
-      var OWN_CHROME_EXCLUDE = OWN_CHROME_IDS.map((id) => `:not(#${id}):not(#${id} *)`).join("");
+      var OWN_CHROME_IDS = ["betterclaude-titlebar", "betterclaude-settings-panel", "betterclaude-hud", "betterclaude-plugin-dock", "bc-code-tab-pill", "bc-ide-shell", "bc-code-shell"];
+      var OWN_CHROME_EXCLUDE = OWN_CHROME_IDS.map((id) => `:not(#${id}):not(#${id} *)`).join("") + ":not([data-bc-own]):not([data-bc-own] *)";
       var PAGE_ROOT_SCOPE = `body *${OWN_CHROME_EXCLUDE}`;
       var COMPOSER_CARD = ':is([data-cds="ChatComposer"] > div, div[class*="rounded-composer"]:not(:has([data-cds="ChatComposer"])))';
       function buildScaffoldCSS(vars = {}, opts = {}) {
@@ -1558,6 +1558,7 @@ a { color: var(--bc-link) !important; }
         pickButtonFg,
         SCAFFOLD_PAINTED_BUTTON_ATTRS,
         OWN_CHROME_IDS,
+        OWN_CHROME_EXCLUDE,
         pickComposerFg,
         pickComposerPlaceholder,
         buildScaffoldCSS,
@@ -1979,14 +1980,14 @@ ${animate ? `
         }
         return tag;
       }
-      var PAGE_BTN = `button:not(#bc-code-tab-pill):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel *):not(#betterclaude-hud *):not(#betterclaude-plugin-dock *):not(#bc-ide-shell *)`;
+      var PAGE_BTN = `button:not(#bc-code-tab-pill):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel *):not(#betterclaude-hud *):not(#betterclaude-plugin-dock *):not(#bc-ide-shell *):not(#bc-code-shell *):not([data-bc-own] *)`;
       var PAINTED_BUTTON_ATTRS = [
         ...SCAFFOLD_PAINTED_BUTTON_ATTRS.primary,
         ...SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive
       ];
       var PAINTED_BUTTON_EXCLUDE = PAINTED_BUTTON_ATTRS.map((attr) => `:not(${attr})`).join("");
       var OWN_CHROME_IDS = tokens.OWN_CHROME_IDS;
-      var OWN_CHROME_EXCLUDE = OWN_CHROME_IDS.map((id) => `:not(#${id}):not(#${id} *)`).join("");
+      var OWN_CHROME_EXCLUDE = tokens.OWN_CHROME_EXCLUDE;
       var PAGE_ROOT_SCOPE = `body *${OWN_CHROME_EXCLUDE}`;
       function buildBaseCSS(settings) {
         const { layout, fonts } = settings;
@@ -2191,6 +2192,10 @@ ${PAGE_BTN} svg {
 ${layout.compactMode ? `
 ${SELECTORS.chatHeader} { padding: 4px 8px !important; min-height: 0 !important; }
 [data-testid="message"] { padding-top: 4px !important; padding-bottom: 4px !important; }
+` : ""}
+${layout.density === "spacious" && !layout.compactMode ? `
+${SELECTORS.chatHeader} { padding-top: 12px !important; padding-bottom: 12px !important; }
+[data-testid="message"] { padding-top: 14px !important; padding-bottom: 14px !important; }
 ` : ""}
 ${hideRules}
 `.trim();
@@ -2410,12 +2415,23 @@ ${text}` : text;
           if (child) dock.appendChild(child);
         });
       }
+      var dockObserver = null;
       function ensureDock() {
         let dock = document.getElementById(DOCK_ID);
         if (!dock) {
           dock = document.createElement("div");
           dock.id = DOCK_ID;
           document.body.appendChild(dock);
+          if (typeof ResizeObserver === "function") {
+            if (!dockObserver) {
+              dockObserver = new ResizeObserver((entries) => {
+                const r = entries[0] && entries[0].target.getBoundingClientRect();
+                if (r && r.height) document.documentElement.style.setProperty("--bc-dock-bottom", `${Math.round(r.bottom)}px`);
+              });
+            }
+            dockObserver.disconnect();
+            dockObserver.observe(dock);
+          }
         }
         if (!document.getElementById(DOCK_STYLE_ID)) {
           const style = document.createElement("style");
@@ -2431,15 +2447,20 @@ ${text}` : text;
         right: 16px;
         z-index: 2147482900;
         display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
         gap: 8px;
+        /* ~8 buttons a row: with every widget on, one long row ran into the
+           page (and off-screen on a narrow window). */
+        max-width: min(calc(100vw - 32px), 312px);
       }
       #${DOCK_ID} .bc-dock-btn {
         width: 32px;
         height: 32px;
         border-radius: 8px;
-        border: 1px solid rgba(255,255,255,0.15);
-        background: rgba(20,16,31,0.85);
-        color: #ece7fb;
+        border: 1px solid var(--bc-border, rgba(255,255,255,0.15));
+        background: var(--bc-bg-elevated, rgba(20,16,31,0.85));
+        color: var(--bc-text, #ece7fb);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -2449,14 +2470,14 @@ ${text}` : text;
       }
       @media (hover: hover) and (pointer: fine) {
         #${DOCK_ID} .bc-dock-btn:hover {
-          background: rgba(139,92,246,0.35);
-          border-color: rgba(139,92,246,0.5);
+          background: color-mix(in srgb, var(--bc-accent, #8b5cf6) 22%, var(--bc-bg-elevated, #14101f));
+          border-color: var(--bc-accent, #8b5cf6);
         }
       }
       #${DOCK_ID} .bc-dock-btn.bc-active {
         background: var(--bc-accent, #8b5cf6);
         border-color: var(--bc-accent, #8b5cf6);
-        color: var(--btn-primary-fg, #fff);
+        color: #fff;
       }
       #${DOCK_ID} .bc-dock-btn svg {
         width: 16px;
@@ -2585,6 +2606,18 @@ ${text}` : text;
           /** Minimal toast/notification affordance shared by plugins. */
           notify(message, { timeout = 3e3 } = {}) {
             host.notify ? host.notify(message, { timeout }) : console.log(`[BetterClaude:${id}]`, message);
+          },
+          /**
+           * Read-only data for the dock widgets: "plan" | "context" | "git" |
+           * "team" | "system" | "streak" | "shortcuts". Resolves null where the host
+           * has no such feed (the browser extension) or nothing is known yet.
+           */
+          widgetData(kind) {
+            return host.widgetData ? Promise.resolve(host.widgetData(kind)).catch(() => null) : Promise.resolve(null);
+          },
+          /** Sets the Code tab's model picker ("default" | "fable" | "opus" | "sonnet" | "haiku"). */
+          setCodeModel(model) {
+            return host.setCodeModel ? Promise.resolve(host.setCodeModel(model)).catch(() => false) : Promise.resolve(false);
           },
           /** Host calls this on unload as a safety net for buttons a plugin forgot to remove(). */
           _removeDockButtons() {
@@ -2849,7 +2882,22 @@ ${text}` : text;
             "quote-of-the-day": false,
             "sticky-notes": false,
             "world-clock": false,
-            "goal-tracker": false
+            "goal-tracker": false,
+            // Session 6 widgets, all off by default for the same reason. The data
+            // ones (plan-usage, context-gauge, git-status, team-wire, system-monitor,
+            // daily-streak) read electron/main.js "widgets:data" only while their
+            // card is open; nothing is logged or sent anywhere.
+            "plan-usage": false,
+            "context-gauge": false,
+            "git-status": false,
+            "team-wire": false,
+            "session-timer": false,
+            "daily-streak": false,
+            "shortcut-sheet": false,
+            "clipboard-history": false,
+            "system-monitor": false,
+            "model-switcher": false,
+            "scratchpad": false
           },
           data: {},
           // filename -> sha256 of the bundled content we last copied into
@@ -3221,6 +3269,16 @@ ${text}` : text;
             // Off by default — "Auto" (Claude Code's own safety-classifier mode)
             // covers the hands-off case without disabling every check.
             allowBypassMode: false
+          },
+          // The CLI tab's `claude` sessions. On by default: a CLI tab is the user's
+          // real Claude Code, exactly as in their terminal — ~/.claude/settings.json
+          // included, with its permission rules, hooks, plugins and its `env` block
+          // (which may point Claude Code at another endpoint or token). Off passes
+          // `--setting-sources project,local` and strips inherited ANTHROPIC_* /
+          // CLAUDE* overrides, so the session runs on the Claude plan login, the way
+          // Code-tab chats do.
+          cli: {
+            loadUserSettings: true
           },
           // The Code tab's full-IDE layout: a VS Code workbench (VSCodium's server,
           // electron/workbench.js; docs/ADR-0001) beside the chat. The engine itself
@@ -8521,6 +8579,7 @@ ${content}
         attemptedSelectors
       } = require_claude_dom();
       var MARKED_TARGETS = Object.keys(TARGETS).filter((key) => TARGETS[key].marker);
+      var AUTH_ROUTE_RE = /^\/(login|signup|sign-up|logout|magic-link|verify|sso-callback|oauth)(\/|$)/i;
       var STATUS_CLASSES = {
         recognized: "bc-layout-recognized",
         partial: "bc-layout-partial",
@@ -8573,6 +8632,7 @@ ${content}
         Object.values(STATUS_CLASSES).forEach((cls) => classList.remove(cls));
         classList.add(STATUS_CLASSES[probe.status] || STATUS_CLASSES.unrecognized);
         classList.toggle("bc-signed-out", !probe.signedIn);
+        classList.toggle("bc-auth-route", !probe.signedIn && AUTH_ROUTE_RE.test(typeof location !== "undefined" && location.pathname || ""));
         probe.regions.forEach((r) => {
           classList.toggle(`bc-miss-${r.key}`, !r.found && !r.absentOk);
         });
@@ -8648,7 +8708,8 @@ ${content}
         attemptedSelectors,
         STATUS_REGIONS,
         ROOT_MARKER_CLASS,
-        STATUS_CLASSES
+        STATUS_CLASSES,
+        AUTH_ROUTE_RE
       };
     }
   });
@@ -9075,11 +9136,11 @@ ${content}
       function isCandidateOverlay(el) {
         return isOwnBodyChild(el) || isForeignDialog(el);
       }
-      function anyBlockingOverlay() {
-        if (!document.body) return false;
+      function findBlockingOverlay() {
+        if (!document.body) return null;
         const viewportArea = (window.innerWidth || 0) * (window.innerHeight || 0);
-        if (viewportArea <= 0) return false;
-        return Array.prototype.some.call(document.body.children, (el) => {
+        if (viewportArea <= 0) return null;
+        return Array.prototype.find.call(document.body.children, (el) => {
           if (!isCandidateOverlay(el)) return false;
           let style;
           try {
@@ -9091,21 +9152,32 @@ ${content}
           if (style.pointerEvents === "none") return false;
           const box = el.getBoundingClientRect();
           return box.width * box.height > viewportArea * BLOCKING_AREA_RATIO;
-        });
+        }) || null;
+      }
+      function anyBlockingOverlay() {
+        return !!findBlockingOverlay();
+      }
+      function blockingOverlayKind() {
+        const el = findBlockingOverlay();
+        if (!el) return null;
+        return isOwnBodyChild(el) ? "own" : "foreign";
       }
       function mountOverlayOcclusionGuard({ onChange } = {}) {
         if (typeof onChange !== "function") return { check() {
         }, unmount() {
         } };
         let last = null;
+        let lastKind = null;
         let scheduled = null;
         let observer = null;
         const watched = /* @__PURE__ */ new Set();
         function check() {
-          const blocking = anyBlockingOverlay();
-          if (blocking === last) return blocking;
+          const kind = blockingOverlayKind();
+          const blocking = kind !== null;
+          if (blocking === last && kind === lastKind) return blocking;
           last = blocking;
-          onChange(blocking);
+          lastKind = kind;
+          onChange(blocking, kind);
           return blocking;
         }
         function checkSoon() {
@@ -9146,7 +9218,131 @@ ${content}
           }
         };
       }
-      module.exports = { mountOverlayOcclusionGuard, anyBlockingOverlay, BLOCKING_AREA_RATIO };
+      module.exports = { mountOverlayOcclusionGuard, anyBlockingOverlay, blockingOverlayKind, BLOCKING_AREA_RATIO };
+    }
+  });
+
+  // core/auth-contrast.js
+  var require_auth_contrast = __commonJS({
+    "core/auth-contrast.js"(exports, module) {
+      var DARK = "#171717";
+      var LIGHT = "#ffffff";
+      var MARK = "data-bc-contrast";
+      function parseColor(css) {
+        const m = /rgba?\(([^)]+)\)/.exec(css || "");
+        if (!m) return null;
+        const p = m[1].split(/[,\s/]+/).filter(Boolean).map(parseFloat);
+        if (p.length < 3 || p.some((n, i) => i < 3 && !Number.isFinite(n))) return null;
+        return { r: p[0], g: p[1], b: p[2], a: p.length > 3 && Number.isFinite(p[3]) ? p[3] : 1 };
+      }
+      function luminance({ r, g, b }) {
+        const f = (c) => {
+          const s = c / 255;
+          return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+      }
+      function contrastRatio(a, b) {
+        const [hi, lo] = a > b ? [a, b] : [b, a];
+        return (hi + 0.05) / (lo + 0.05);
+      }
+      function labelColorFor(fill) {
+        const l = luminance(fill);
+        const white = contrastRatio(luminance({ r: 255, g: 255, b: 255 }), l);
+        const dark = contrastRatio(luminance({ r: 23, g: 23, b: 23 }), l);
+        return white >= dark ? LIGHT : DARK;
+      }
+      function paintedFill(button) {
+        const box = button.getBoundingClientRect();
+        if (box.width < 2 || box.height < 2) return null;
+        const area = box.width * box.height;
+        let fill = null;
+        for (const el of [button, ...button.querySelectorAll("*")]) {
+          if (el.closest("svg") && el.tagName.toLowerCase() !== "svg") continue;
+          let c;
+          try {
+            c = parseColor(getComputedStyle(el).backgroundColor);
+          } catch {
+            continue;
+          }
+          if (!c || c.a < 0.6) continue;
+          const r = el.getBoundingClientRect();
+          if (r.width * r.height < area * 0.6) continue;
+          fill = c;
+        }
+        return fill;
+      }
+      function labelNodes(button) {
+        return [button, ...button.querySelectorAll("*")].filter((el) => !el.closest("svg"));
+      }
+      function fixButton(button) {
+        const fill = paintedFill(button);
+        const nodes = labelNodes(button);
+        if (!fill) {
+          if (button.getAttribute(MARK)) {
+            button.removeAttribute(MARK);
+            for (const el of nodes) {
+              el.style.removeProperty("color");
+              el.style.removeProperty("-webkit-text-fill-color");
+            }
+          }
+          return;
+        }
+        const want = labelColorFor(fill);
+        if (button.getAttribute(MARK) === want) return;
+        button.setAttribute(MARK, want);
+        for (const el of nodes) {
+          el.style.setProperty("color", want, "important");
+          el.style.setProperty("-webkit-text-fill-color", want, "important");
+        }
+      }
+      function fixAuthButtons(root) {
+        const scope = root || document;
+        for (const button of scope.querySelectorAll("button, a[role='button']")) fixButton(button);
+      }
+      function mountAuthContrast({ isActive } = {}) {
+        const active = typeof isActive === "function" ? isActive : () => !!(document.body && document.body.classList.contains("bc-auth-route"));
+        let frame = 0;
+        let observer = null;
+        let headObserver = null;
+        function run() {
+          frame = 0;
+          if (!document.body || !active()) return;
+          fixAuthButtons(document.body);
+        }
+        function schedule() {
+          if (frame || !active()) return;
+          frame = requestAnimationFrame(run);
+        }
+        function attach() {
+          if (observer || typeof MutationObserver !== "function" || !document.body) return;
+          observer = new MutationObserver(schedule);
+          observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+          if (document.head) {
+            headObserver = new MutationObserver(() => {
+              schedule();
+              setTimeout(schedule, 450);
+            });
+            headObserver.observe(document.head, { childList: true, subtree: true, characterData: true });
+          }
+        }
+        if (document.body) attach();
+        else document.addEventListener("DOMContentLoaded", attach, { once: true });
+        schedule();
+        return {
+          run,
+          schedule,
+          unmount() {
+            if (frame) cancelAnimationFrame(frame);
+            frame = 0;
+            if (observer) observer.disconnect();
+            if (headObserver) headObserver.disconnect();
+            observer = null;
+            headObserver = null;
+          }
+        };
+      }
+      module.exports = { mountAuthContrast, fixAuthButtons, labelColorFor, luminance, contrastRatio, parseColor };
     }
   });
 
@@ -9197,6 +9393,7 @@ ${content}
       var { mountCodeTab, measureContentArea } = require_code_tab();
       var { mountClaudeReloadWatch, findReloadPrompt } = require_claude_reload();
       var { mountOverlayOcclusionGuard } = require_overlay_occlusion();
+      var { mountAuthContrast } = require_auth_contrast();
       module.exports = {
         ThemeEngine,
         SELECTORS,
@@ -9278,7 +9475,9 @@ ${content}
         // above, which is BetterClaude's electron-updater surface.
         mountClaudeReloadWatch,
         findReloadPrompt,
-        mountOverlayOcclusionGuard
+        mountOverlayOcclusionGuard,
+        // Readable button labels on the sign-in page, whatever the theme.
+        mountAuthContrast
       };
     }
   });

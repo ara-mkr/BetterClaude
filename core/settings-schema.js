@@ -191,6 +191,21 @@ const DEFAULT_SETTINGS = {
       "sticky-notes": false,
       "world-clock": false,
       "goal-tracker": false,
+      // Session 6 widgets, all off by default for the same reason. The data
+      // ones (plan-usage, context-gauge, git-status, team-wire, system-monitor,
+      // daily-streak) read electron/main.js "widgets:data" only while their
+      // card is open; nothing is logged or sent anywhere.
+      "plan-usage": false,
+      "context-gauge": false,
+      "git-status": false,
+      "team-wire": false,
+      "session-timer": false,
+      "daily-streak": false,
+      "shortcut-sheet": false,
+      "clipboard-history": false,
+      "system-monitor": false,
+      "model-switcher": false,
+      "scratchpad": false,
     },
     data: {},
     // filename -> sha256 of the bundled content we last copied into
@@ -545,6 +560,16 @@ const DEFAULT_SETTINGS = {
       // Off by default — "Auto" (Claude Code's own safety-classifier mode)
       // covers the hands-off case without disabling every check.
       allowBypassMode: false,
+    },
+    // The CLI tab's `claude` sessions. On by default: a CLI tab is the user's
+    // real Claude Code, exactly as in their terminal — ~/.claude/settings.json
+    // included, with its permission rules, hooks, plugins and its `env` block
+    // (which may point Claude Code at another endpoint or token). Off passes
+    // `--setting-sources project,local` and strips inherited ANTHROPIC_* /
+    // CLAUDE* overrides, so the session runs on the Claude plan login, the way
+    // Code-tab chats do.
+    cli: {
+      loadUserSettings: true,
     },
     // The Code tab's full-IDE layout: a VS Code workbench (VSCodium's server,
     // electron/workbench.js; docs/ADR-0001) beside the chat. The engine itself

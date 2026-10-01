@@ -802,8 +802,10 @@ function pickComposerPlaceholder(composerBg, composerFg, naturalMuted) {
 // that must never follow the page's shape preference — without this entry
 // the scaffold's relational-radius button rule flattened every IDE control
 // to whatever --bc-radius resolved to in that document.
-const OWN_CHROME_IDS = ["betterclaude-titlebar", "betterclaude-settings-panel", "betterclaude-hud", "betterclaude-plugin-dock", "bc-code-tab-pill", "bc-ide-shell"];
-const OWN_CHROME_EXCLUDE = OWN_CHROME_IDS.map((id) => `:not(#${id}):not(#${id} *)`).join("");
+const OWN_CHROME_IDS = ["betterclaude-titlebar", "betterclaude-settings-panel", "betterclaude-hud", "betterclaude-plugin-dock", "bc-code-tab-pill", "bc-ide-shell", "bc-code-shell"];
+const OWN_CHROME_EXCLUDE = OWN_CHROME_IDS.map((id) => `:not(#${id}):not(#${id} *)`).join("")
+  // Plugin-owned UI opts out of page restyling with a data-bc-own attribute.
+  + ":not([data-bc-own]):not([data-bc-own] *)";
 // Scope for "every real element of the actual page". Previously
 // `:where(#__next, #root) *`, which silently matched NOTHING (theme text
 // color never applied, though bare-tag rules like `button` still worked)
@@ -1454,6 +1456,7 @@ module.exports = {
   pickButtonFg,
   SCAFFOLD_PAINTED_BUTTON_ATTRS,
   OWN_CHROME_IDS,
+  OWN_CHROME_EXCLUDE,
   pickComposerFg,
   pickComposerPlaceholder,
   buildScaffoldCSS,

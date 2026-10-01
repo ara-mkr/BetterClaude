@@ -396,8 +396,9 @@ function ensureStyleTag(id) {
 // ELEMENT itself: it is a button in its own right, mounted inside Anthropic's
 // nav row, so the descendant form would never match it. #bc-ide-shell is
 // excluded as DESCENDANTS too: the embedded Code workspace's controls carry
-// their own fixed styling and must not follow this page's shape preference.
-const PAGE_BTN = `button:not(#bc-code-tab-pill):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel *):not(#betterclaude-hud *):not(#betterclaude-plugin-dock *):not(#bc-ide-shell *)`;
+// their own fixed styling and must not follow this page's shape preference;
+// so do the CLI tab's (#bc-code-shell), whose active toggles lost their fill.
+const PAGE_BTN = `button:not(#bc-code-tab-pill):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel *):not(#betterclaude-hud *):not(#betterclaude-plugin-dock *):not(#bc-ide-shell *):not(#bc-code-shell *):not([data-bc-own] *)`;
 
 // The exclusion list for the "make every other button transparent" rule
 // below is built directly from tokens.SCAFFOLD_PAINTED_BUTTON_ATTRS — the
@@ -435,7 +436,7 @@ const PAINTED_BUTTON_EXCLUDE = PAINTED_BUTTON_ATTRS.map((attr) => `:not(${attr})
 // --bc-base-size (!important) onto every element of the Code tab and
 // flattened its whole type scale (notes read exactly like replies).
 const OWN_CHROME_IDS = tokens.OWN_CHROME_IDS;
-const OWN_CHROME_EXCLUDE = OWN_CHROME_IDS.map((id) => `:not(#${id}):not(#${id} *)`).join("");
+const OWN_CHROME_EXCLUDE = tokens.OWN_CHROME_EXCLUDE;
 
 // Scope for "every real element of the actual page". Originally
 // `:where(#__next, #root) *`, which silently matched NOTHING (theme text
@@ -674,6 +675,10 @@ ${PAGE_BTN} svg {
 ${layout.compactMode ? `
 ${SELECTORS.chatHeader} { padding: 4px 8px !important; min-height: 0 !important; }
 [data-testid="message"] { padding-top: 4px !important; padding-bottom: 4px !important; }
+` : ""}
+${layout.density === "spacious" && !layout.compactMode ? `
+${SELECTORS.chatHeader} { padding-top: 12px !important; padding-bottom: 12px !important; }
+[data-testid="message"] { padding-top: 14px !important; padding-bottom: 14px !important; }
 ` : ""}
 ${hideRules}
 `.trim();

@@ -38,7 +38,10 @@
 
 #betterclaude-settings-panel .bc-sp-modal {
   width: min(1000px, calc(100vw - 64px));
-  height: min(720px, calc(100vh - 64px));
+  /* The overlay starts below the title bar, so its usable height is
+     100vh - var(--bc-tb-h). Subtracting only 64px left the modal 9px from the
+     bar and the window edge on a short window; this keeps a true 32px. */
+  height: min(720px, calc(100vh - var(--bc-tb-h, 0px) - 64px));
   display: flex;
   border-radius: 16px;
   overflow: hidden;

@@ -37,6 +37,7 @@ const { selfCheck, mountRouteWatcher } = require("../core/claude-dom");
 const { mountCodeTab } = require("../core/code-tab");
 const { mountClaudeReloadWatch } = require("../core/claude-reload");
 const { mountOverlayOcclusionGuard } = require("../core/overlay-occlusion");
+const { mountAuthContrast } = require("../core/auth-contrast");
 
 const { mountTitleBar } = require("../ui/title-bar");
 const { TITLE_BAR_HEIGHT } = require("./window-chrome");
@@ -336,12 +337,8 @@ async function bootstrap() {
       return;
     }
     sources.forEach(({ id, path: pluginPath }) => {
-      // Focus Mode has no shipped product surface yet. Do not resurrect its
-      // launcher from an older persisted `true` value.
-      if (id === "focus-mode") {
-        if (pluginLoader.list().some((p) => p.id === id)) pluginLoader.unload(id);
-        return;
-      }
+      // (Focus Mode used to be held back here for want of a product surface;
+      // Settings → Widgets is that surface now, and it is off by default.)
       const shouldBeEnabled = settings.plugins.enabled[id] !== false;
       const isLoaded = pluginLoader.list().some((p) => p.id === id);
       if (shouldBeEnabled && !isLoaded) {
@@ -457,6 +454,9 @@ async function bootstrap() {
     },
   });
   layoutProbe.check();
+  // The sign-in page's buttons keep readable labels in every theme (no-op elsewhere).
+  const authContrast = mountAuthContrast();
+  layoutChangedHandlers.push(() => authContrast.schedule());
 
   // One-shot adapter self-check against the live page. Runs in packaged builds
   // too: it costs a single resolution pass and is the difference between a user
@@ -541,8 +541,14 @@ async function bootstrap() {
   // pane covers them.
   let codePaneShown = false;
   let idePaneShown = false;
+  // Set by the occlusion guard below: one of BetterClaude's own overlays is up,
+  // so the pane has stepped aside. Whatever claude.ai is showing underneath
+  // (its sign-in page with the hero video, when signed out) must not show
+  // through behind the dialog — ui/overlays.css paints a themed backdrop.
+  let paneBackdropWanted = false;
   function syncPaneCoverClass() {
     document.body.classList.toggle("bc-native-pane-shown", codePaneShown || idePaneShown);
+    document.documentElement.classList.toggle("bc-pane-backdrop", paneBackdropWanted && (codePaneShown || idePaneShown));
   }
   // The title-bar nav rail's pressed state follows main.js's pane truth, not
   // the other way round — the tray, menu, accelerator and `--code` can all open
@@ -602,7 +608,11 @@ async function bootstrap() {
   // core/overlay-occlusion.js for why this is behavioural rather than a list of
   // overlay ids.
   const occlusionGuard = mountOverlayOcclusionGuard({
-    onChange: (blocking) => {
+    onChange: (blocking, kind) => {
+      // Only for OUR overlays: a claude.ai modal over the page is the content
+      // the user asked for, so it keeps showing the page.
+      paneBackdropWanted = blocking && kind === "own";
+      syncPaneCoverClass();
       ipcRenderer.send("code-tab:suspend", blocking);
       ipcRenderer.send("ide-tab:suspend", blocking);
     },
@@ -794,7 +804,11 @@ async function bootstrap() {
     themeEngine,
     getSettings: () => settings,
     setSetting,
-    host: { notify },
+    host: {
+      notify,
+      widgetData: (kind) => ipcRenderer.invoke("widgets:data", kind),
+      setCodeModel: (model) => ipcRenderer.invoke("widgets:set-code-model", model),
+    },
   });
 
   // --- Usage Analytics Dashboard: local event logging ---

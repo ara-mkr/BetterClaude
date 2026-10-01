@@ -62,6 +62,10 @@ const MARKED_TARGETS = Object.keys(TARGETS).filter((key) => TARGETS[key].marker)
 // Body-level status classes. Exactly one is present at a time. Only the
 // `unrecognized` one has styling consequences; the other two exist so the state
 // is visible in devtools without opening the settings panel.
+// claude.ai's signed-out entry points. Anything else signed-out (a shared link,
+// a status page) keeps the generic signed-out geometry.
+const AUTH_ROUTE_RE = /^\/(login|signup|sign-up|logout|magic-link|verify|sso-callback|oauth)(\/|$)/i;
+
 const STATUS_CLASSES = {
   recognized: "bc-layout-recognized",
   partial: "bc-layout-partial",
@@ -213,6 +217,11 @@ function applyLayoutMarkers(probe) {
   // composer, so the old inference marked it signed-out, applied the sign-in
   // geometry branch, and unmounted the cursor FX there.
   classList.toggle("bc-signed-out", !probe.signedIn);
+  // The public sign-in/sign-up surface specifically (a long, scrolling,
+  // centred page), as opposed to a signed-in route that merely hasn't shown its
+  // composer yet. Geometry and contrast fixes for the login page key off this,
+  // so they can never touch the signed-in app while it loads.
+  classList.toggle("bc-auth-route", !probe.signedIn && AUTH_ROUTE_RE.test((typeof location !== "undefined" && location.pathname) || ""));
 
   probe.regions.forEach((r) => {
     classList.toggle(`bc-miss-${r.key}`, !r.found && !r.absentOk);
@@ -337,4 +346,5 @@ module.exports = {
   STATUS_REGIONS,
   ROOT_MARKER_CLASS,
   STATUS_CLASSES,
+  AUTH_ROUTE_RE,
 };
