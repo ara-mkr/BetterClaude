@@ -18,7 +18,6 @@
  *   host.exportPromptLibrary() / host.importPromptLibrary()
  *   host.pickWatchedFile() / host.stopWatchingFile(id) / host.insertWatchedFile(id) / host.setAutoReattach(id, bool)
  *   host.getClipboardBridgeStatus() / host.onClipboardBridgeStatus(cb) / host.pushClipboardNow() / host.testClipboardBridgeConnection()
- *   host.openAnalyticsDashboard()
  *   host.syncTeamNow() / host.getTeamSyncDiff(relPath) / host.applyTeamSyncFile(relPath) / host.keepLocalTeamSyncFile(relPath) / host.openTeamSyncFolder()
  *   host.checkSessionBundlePresence() / host.openSessionBundlesPanel() — Team Sync section's bundle indicator
  *   host.listSessionBundleSessions() / host.scanSessionBundle(sessionIds) / host.exportSessionBundle(opts) — Session Bundles export
@@ -48,7 +47,6 @@ const skillMarketplaceSection = require("./sections/skill-marketplace");
 const promptLibrarySection = require("./sections/prompt-library");
 const fileWatcherSection = require("./sections/file-watcher");
 const clipboardBridgeSection = require("./sections/clipboard-bridge");
-const analyticsSection = require("./sections/analytics");
 const teamSyncSection = require("./sections/team-sync");
 const sessionBundleSection = require("./sections/session-bundle");
 const claudeCodeSection = require("./sections/claude-code");
@@ -101,7 +99,6 @@ const SECTIONS = [
   "Profiles",
   "Automations",
   "Personality",
-  "Usage Analytics",
   "Plugins",
   "Team Sync",
   "Session Bundles",
@@ -240,7 +237,6 @@ class SettingsPanel {
       "Profiles": () => this._renderProfiles(),
       "Automations": () => this._renderAutomations(),
       "Personality": () => this._renderPersonality(),
-      "Usage Analytics": () => this._renderAnalytics(),
       "Plugins": () => this._renderPlugins(),
       "Team Sync": () => this._renderTeamSync(),
       "Session Bundles": () => this._renderSessionBundle(),
@@ -1671,7 +1667,6 @@ Object.assign(
   promptLibrarySection,
   fileWatcherSection,
   clipboardBridgeSection,
-  analyticsSection,
   teamSyncSection,
   sessionBundleSection,
   claudeCodeSection,

@@ -126,8 +126,11 @@ module.exports = {
     if (live && live.model) this.current = live.model;
     const b = this.w.body;
     b.textContent = "";
-    const CHOICES = [["default", "Default", "Your plan's default"], ["fable", "Fable", "Newest, most capable"], ["opus", "Opus", "Deep reasoning"], ["sonnet", "Sonnet", "Everyday pick"], ["haiku", "Haiku", "Fastest, lightest"]];
-    for (const [id, label, hint] of CHOICES) {
+    // The Code tab sends versioned names ("Opus 5.5") once it has them.
+    const labels = (live && live.labels) || {};
+    const CHOICES = [["default", "Default", "Your plan's default"], ["fable", "Fable 5.1", "Newest, most capable"], ["opus", "Opus 5.5", "Deep reasoning"], ["sonnet", "Sonnet 5.5", "Everyday pick"], ["haiku", "Haiku 4.5", "Fastest, lightest"]];
+    for (const [id, fallback, hint] of CHOICES) {
+      const label = typeof labels[id] === "string" && labels[id] ? labels[id] : fallback;
       const btn = el("button", id === this.current ? "bc-on" : "", null);
       btn.type = "button";
       btn.setAttribute("aria-pressed", id === this.current ? "true" : "false");

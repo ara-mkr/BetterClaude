@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, nativeTheme, shell, dialog, screen, globalShortcut, clipboard, Notification, safeStorage, session, net } = require("electron");
+const { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, nativeTheme, shell, dialog, screen, globalShortcut, clipboard, Notification, safeStorage, session, net, utilityProcess } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
@@ -1907,8 +1907,11 @@ async function widgetData(kind) {
       // The Code tab's picker is the authority (its own localStorage).
       if (!ideView || ideView.webContents.isDestroyed()) return null;
       try {
-        const id = await ideView.webContents.executeJavaScript('localStorage.getItem("bc-ide-claude-model")', true);
-        return { model: typeof id === "string" && id ? id : "default" };
+        const [id, labelsJson] = await ideView.webContents.executeJavaScript('[localStorage.getItem("bc-ide-claude-model"), localStorage.getItem("bc-ide-model-labels")]', true);
+        // Versioned names ("Opus 5.5") the Code tab worked out for each alias.
+        let labels = null;
+        try { labels = JSON.parse(labelsJson || "null"); } catch { labels = null; }
+        return { model: typeof id === "string" && id ? id : "default", labels: labels && typeof labels === "object" ? labels : null };
       } catch {
         return null;
       }
@@ -2002,32 +2005,6 @@ function ideChatConfig() {
 }
 
 /**
- * One Code-chat turn, recorded to the local usage database
- * (electron/analytics-db.js) so the Code tab's usage popover and the
- * main-window Analytics dashboard have real numbers. Usage analytics are
- * opt-in (analytics.enabled, off by default) — the main window honours that
- * and so does this. Best-effort: a logging failure never affects the chat.
- */
-function logIdeChatTurn({ role, modelId, tokens = 0, costUsd = 0, project = "" }) {
-  if (!mergeDefaults(store.store).analytics.enabled) return;
-  Promise.resolve(analyticsDbReady)
-    .then(() => {
-      const now = new Date();
-      analyticsDb.logEvent({
-        ts: now.getTime(),
-        day: now.toISOString().slice(0, 10),
-        type: "message",
-        role,
-        tokens: Math.max(0, Math.round(Number(tokens) || 0)),
-        model: modelId || "claude",
-        project: project || null,
-        costUsd: Number(costUsd) || 0,
-      });
-    })
-    .catch((err) => console.error("[BetterClaude] IDE chat usage log failed", err));
-}
-
-/**
  * A session's saved turns as free-model chat history ({role, text}), so a
  * failover mid-conversation — or a switch to a free model — keeps context.
  * Read from Claude Code's own transcript on disk.
@@ -2069,7 +2046,6 @@ async function startFreeModelChat({ prompt, attachments = [], history = [], proj
   ideFreeChats.set(tabId, controller);
   if (!failover) {
     sendIdeChat({ type: "start", tabId });
-    logIdeChatTurn({ role: "user", modelId: preferredModelId || "free", tokens: Math.ceil(prompt.length / 4), costUsd: 0, project: projectName || "" });
   }
   ideActivity.set("working");
 
@@ -2088,8 +2064,6 @@ async function startFreeModelChat({ prompt, attachments = [], history = [], proj
       },
     });
     if (ideFreeChats.get(tabId) === controller) ideFreeChats.delete(tabId);
-    // Free providers cost nothing and never touch the subscription.
-    logIdeChatTurn({ role: "assistant", modelId, tokens: 0, costUsd: 0, project: projectName || "" });
     sendIdeChat({ type: "done", modelId, modelLabel, free: true, usage: null, costUsd: 0, keyless: /^keyless:|^ollama:/.test(modelId || ""), tabId });
     return true;
   } catch (err) {
@@ -2142,7 +2116,6 @@ ideChat = createIdeChatEngine({
   send: (payload) => sendIdeChat(payload),
   getConfig: () => ideChatConfig(),
   locateBinary: () => locateClaude(store.get("codeWindow.claudePath") || undefined),
-  logTurn: ({ role, modelId, tokens, costUsd, cwd }) => logIdeChatTurn({ role, modelId, tokens, costUsd, project: path.basename(String(cwd || "")) }),
   onActivity: () => refreshIdeActivity(),
   notify: (note) => notifyIdeChat(note),
   // Claude hit the plan's usage limit before doing anything this turn: keep
@@ -2717,7 +2690,7 @@ function startIdeSession({ cwd, cols, rows, claudeArgs = null }) {
   });
   session.on("exit", ({ exitCode, signal }) => {
     if (session === ideSession) ideSession = null;
-    if (!target.isDestroyed()) target.send("ide:exit", { exitCode, signal });
+    if (!target.isDestroyed()) target.send("ide:exit", { exitCode, signal, pid: session.pid });
   });
   if (!target.isDestroyed()) target.send("ide:started", { cwd, binaryPath, pid: session.pid, kind: claudeArgs ? "claude" : "shell" });
   return true;
@@ -3588,6 +3561,47 @@ ipcMain.handle("ide:list-sessions", (e, cwd) => {
     title: stored[sessionId] || title,
   }));
 });
+// The Code home card's usage stats, from Claude Code's own data (the same
+// numbers as its /stats; electron/claude-stats.js). Computed in a utility
+// process (a cold scan reads every transcript) and reused for a minute.
+const CLAUDE_STATS_FRESH_MS = 60 * 1000;
+let claudeStatsLast = null;
+let claudeStatsInFlight = null;
+function claudeStatsCompute() {
+  if (claudeStatsInFlight) return claudeStatsInFlight;
+  claudeStatsInFlight = new Promise((resolve) => {
+    let child;
+    try {
+      child = utilityProcess.fork(path.join(__dirname, "claude-stats-worker.js"), [], { serviceName: "BetterClaude usage stats" });
+    } catch (err) {
+      resolve({ ok: false, error: (err && err.message) || "Could not start the stats reader." });
+      return;
+    }
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { child.kill(); } catch { /* already gone */ }
+      resolve(result);
+    };
+    const timer = setTimeout(() => finish({ ok: false, error: "Reading Claude Code's history took too long." }), 3 * 60 * 1000);
+    child.once("message", (msg) => finish(msg && typeof msg === "object" ? msg : { ok: false, error: "No stats came back." }));
+    child.once("exit", () => finish({ ok: false, error: "The stats reader stopped early." }));
+    child.postMessage({ memoPath: path.join(app.getPath("userData"), "claude-stats-memo.json") });
+  }).then((result) => {
+    claudeStatsInFlight = null;
+    if (result.ok) claudeStatsLast = result.stats;
+    return result;
+  });
+  return claudeStatsInFlight;
+}
+ipcMain.handle("ide:claude-stats", async (e, opts) => {
+  if (!isIdeSender(e.sender)) return { ok: false, error: "unauthorized" };
+  const force = !!(opts && opts.force);
+  if (!force && claudeStatsLast && Date.now() - claudeStatsLast.computedAt < CLAUDE_STATS_FRESH_MS) return { ok: true, stats: claudeStatsLast };
+  return claudeStatsCompute();
+});
 // Full past transcript for one saved session, so the chat panel can show it
 // exactly like Claude Code desktop does. Read-only file access (see
 // electron/session-bundle.js); the terminal/pty path is untouched by this.
@@ -3712,6 +3726,16 @@ ipcMain.handle("ide:start-shell", (e, cwd, cols, rows) => {
 ipcMain.handle("ide:attach-agent-session", (e, sessionId, cwd, cols, rows) => {
   if (!isIdeSender(e.sender) || typeof sessionId !== "string" || typeof cwd !== "string") return false;
   return startIdeSession({ cwd: rememberIdeCwd(cwd), cols, rows, claudeArgs: [`--resume=${sessionId}`] });
+});
+// "Sign in to Claude" on an auth error: Claude Code's own claude.ai login
+// (`claude auth login --claudeai`, the subscription, never Console/API
+// billing) in the Terminal panel, where its browser link and any code prompt
+// are visible. Same scrubbed env as the chat engine.
+ipcMain.handle("ide:claude-login", (e, cwd, cols, rows) => {
+  if (!isIdeSender(e.sender)) return false;
+  let dir = os.homedir();
+  try { if (typeof cwd === "string" && cwd) dir = ideWorkspace.realDirectory(cwd); } catch { /* home */ }
+  return startIdeSession({ cwd: dir, cols, rows, claudeArgs: ["auth", "login", "--claudeai"] });
 });
 ipcMain.handle("ide:list-agents", async (e) => {
   if (!isIdeSender(e.sender)) return [];

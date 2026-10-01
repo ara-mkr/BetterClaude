@@ -135,7 +135,7 @@ const AUTO_REASON_GRACE_MS = 3000; // see finishTurn
 const ATTACHMENT_BUDGET_BYTES = 512 * 1024;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LIMIT_TEXT_RE = /(hit your (usage )?limit|usage limit|rate.?limit|limit (has been |was )?reached|out of (extra )?usage|credit balance|insufficient credits|quota exceeded)/i;
-const AUTH_TEXT_RE = /(\/login|not (logged|signed) in|invalid api key|authentication|unauthori[sz]ed|oauth token)/i;
+const AUTH_TEXT_RE = /(\/login|not (logged|signed) in|invalid api key|authenticat|unauthori[sz]ed|oauth (token|session))/i;
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007]*\u0007/g;
 
@@ -192,7 +192,17 @@ function friendlyError(turn, resultEvent, lastStderr) {
   const resultText = resultEvent && typeof resultEvent.result === "string" ? resultEvent.result : "";
   const text = stripAnsi((api && api.text) || resultText || "").trim();
   if ((api && api.kind === "authentication_failed") || AUTH_TEXT_RE.test(text)) {
-    return { code: "auth", message: "Claude Code isn't signed in to your Claude account. Open the CLI tab, run /login, then try again." };
+    // Seen live: "Failed to authenticate: OAuth session expired and could not
+    // be refreshed". The CLI's own claude.ai login (macOS keychain) is
+    // separate from any router/token the user's terminal claude is set up
+    // with, so it can lapse while their terminal still works.
+    const expired = /expired|refresh/i.test(text);
+    return {
+      code: "auth",
+      message: expired
+        ? "Claude Code's sign-in to your Claude account has expired. Sign in again with your Claude account (your subscription, no API key), then send again."
+        : "Claude Code isn't signed in to your Claude account. Sign in with your Claude account (your subscription, no API key), then send again.",
+    };
   }
   if (turn.limitHit || (api && (api.kind === "rate_limit" || api.kind === "billing_error")) || LIMIT_TEXT_RE.test(text)) {
     return { code: "limit", message: text || "You've reached your Claude usage limit for now." };
