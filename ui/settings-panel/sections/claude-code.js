@@ -74,6 +74,16 @@ module.exports = {
       text: "Only needed for a version-managed or non-standard install that a GUI app's PATH doesn't reach. This is a path to an executable — never a config or credential file.",
     }));
 
+    wrap.appendChild(toggleField(
+      "Load my ~/.claude settings in CLI tabs",
+      !(code.cli && code.cli.loadUserSettings === false),
+      (v) => this._set("codeWindow.cli.loadUserSettings", v)
+    ));
+    wrap.appendChild(el("p", {
+      class: "bc-hint",
+      text: "On: a CLI tab is your claude exactly as in a terminal — your permission rules, hooks, plugins, and the file's env block, which can point Claude Code at another endpoint or token. Off: project and local settings only, on your Claude plan login, like Code-tab chats. Applies to tabs opened or restarted after the change.",
+    }));
+
     // --- Code tab chats (electron/ide-chat.js) -------------------------------
     const chat = code.chat || {};
     wrap.appendChild(el("h3", { text: "Code tab chats" }));

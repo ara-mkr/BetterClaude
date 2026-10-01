@@ -197,6 +197,15 @@
       endTurn();
       const el = document.createElement("div");
       el.className = "bc-t-user";
+      // A teammate's message (agent team relay): same place as a prompt of
+      // yours, but labelled with who sent it so it never reads as your own.
+      if (meta.label) {
+        el.dataset.from = "teammate";
+        const label = document.createElement("div");
+        label.className = "bc-t-user-label";
+        label.textContent = meta.label;
+        el.appendChild(label);
+      }
       const bubble = document.createElement("div");
       bubble.className = "bc-t-user-bubble";
       bubble.textContent = text;
@@ -668,7 +677,11 @@
       root.textContent = "";
       turn = null;
       (turns || []).forEach((t, i) => {
-        if (t.role === "user") userMessage(t.text);
+        // A relayed teammate message is saved as a user line under the
+        // relay's header (electron/main.js teamDeliveryText) — label it again.
+        const team = t.role === "user" ? /^\[BetterClaude team · from ([^\]\n]{1,80}?)(?: → you[^\]\n]*)?\]\n/.exec(t.text || "") : null;
+        if (team) userMessage(t.text.slice(team[0].length), { label: `Message from ${team[1]}` });
+        else if (t.role === "user") userMessage(t.text);
         else if (t.role === "assistant") setText(`h${i}`, t.text);
         else if (t.role === "note") note(t.text, "muted");
         else if (t.role === "tool") {
@@ -704,7 +717,7 @@
       welcome,
       hasOpenTurn: () => !!turn,
       isEmpty: () => !root.querySelector(".bc-t-user, .bc-t-turn"),
-      firstUserText: () => { const el = root.querySelector(".bc-t-user-bubble"); return el ? el.textContent : ""; },
+      firstUserText: () => { const el = root.querySelector(".bc-t-user:not([data-from]) .bc-t-user-bubble"); return el ? el.textContent : ""; },
       lastAssistantText: () => {
         const prose = root.querySelectorAll(".bc-t-prose");
         return prose.length ? prose[prose.length - 1].textContent : "";

@@ -21,7 +21,7 @@ const { extractThemeVars } = require("../core/tokens");
 const { attachWindowState, getInitialBounds } = require("./window-state");
 const { BUDDY_CANVAS, BUDDY_HIT_BOX, getBuddy, resolveActiveBuddy } = require("../core/buddies");
 const { titleBarOptions, TITLE_BAR_HEIGHT } = require("./window-chrome");
-const { ClaudeNotFoundError, ClaudeSession, PtySpawnError, applyLoginShellPath, listAgentSessions, locateClaude, subscriptionEnv } = require("./claude-cli");
+const { ClaudeNotFoundError, ClaudeSession, PtySpawnError, applyLoginShellPath, listAgentSessions, locateClaude, stateHookSettings, subscriptionEnv } = require("./claude-cli");
 const { createIdeChatEngine } = require("./ide-chat");
 const { createWorkbench, scrub: scrubWorkbenchLine } = require("./workbench");
 const { buildVSCodeTheme } = require("../core/vscode-theme");
@@ -35,6 +35,7 @@ const sessionBundle = require("./session-bundle");
 const ideWorkspace = require("./ide-workspace");
 const openrouter = require("./openrouter");
 const teamHub = require("./team-hub");
+const { createTeamRelay, isBroadcast: isBroadcastTarget } = require("./team-relay");
 const speech = require("./speech");
 
 // Single source of truth for the repo that backs the update feed and every
@@ -862,10 +863,12 @@ function disposeCodeSessionEntry(entry) {
   if (entry.session) entry.session.dispose();
   entry.session = null;
   codeSessions.delete(entry.id);
+  removeCliStateFile(entry);
   // Curated teammates get a tombstone so the roster shows they left; an
   // auto-bound mesh tab just came from "+" on the tab strip, so it is
   // removed from the roster outright instead of piling up exited entries.
   if (entry.team) {
+    teamRelay.forget(entry.team.memberId);
     if (entry.team.auto) teamHub.removeAgentFile(entry.team.hub, entry.team.memberId);
     else markMemberExited(entry);
   }
@@ -878,6 +881,13 @@ function disposeCodeSession() {
   for (const entry of [...codeSessions.values()]) {
     if (entry.session) entry.session.dispose();
     entry.session = null;
+    removeCliStateFile(entry);
+    // Same roster rule as closing one tab (disposeCodeSessionEntry) — else
+    // every quit left its mesh tabs behind as ghosts in the next run's roster.
+    if (entry.team) {
+      if (entry.team.auto) teamHub.removeAgentFile(entry.team.hub, entry.team.memberId);
+      else markMemberExited(entry);
+    }
   }
   codeSessions.clear();
 }
@@ -1025,6 +1035,27 @@ function startCodeSession({ cwd, cols, rows, args = [], id = null, team = null }
       BC_TEAM_NAME: entry.team.name,
     };
   }
+  // codeWindow.cli.loadUserSettings (default on) keeps a CLI tab exactly like
+  // the user's terminal `claude`. Off: project and local settings only, and
+  // none of BetterClaude's inherited ANTHROPIC_* / CLAUDE* overrides — so
+  // ~/.claude/settings.json's env block can't route the session elsewhere
+  // and it runs on the Claude plan login, as Code-tab chats do.
+  const planOnly = store.get("codeWindow.cli.loadUserSettings") === false;
+  if (planOnly) spawnArgs = [...spawnArgs, "--setting-sources", "project,local"];
+
+  // Every CLI tab reports its turn cycle through Claude Code hooks
+  // (stateHookSettings) into a state file under userData, so team delivery
+  // can tell "idle at the prompt" from "starting up / mid-turn / a dialog is
+  // up". Observation only — the hooks never write to the session.
+  removeCliStateFile(entry);
+  entry.gen = (entry.gen || 0) + 1;
+  entry.hook = { state: "starting", at: Date.now() };
+  entry.lastOutputAt = 0;
+  entry.lastInputAt = 0;
+  entry.draftLen = 0;
+  entry.interruptAt = 0;
+  entry.stateFile = cliStateFileFor(entry);
+  if (entry.stateFile) spawnArgs = [...spawnArgs, "--settings", stateHookSettings(entry.stateFile)];
 
   try {
     // Keep all spawn paths (initial launch, restart and resume) bounded even
@@ -1042,6 +1073,7 @@ function startCodeSession({ cwd, cols, rows, args = [], id = null, team = null }
       cols: finalCols,
       rows: finalRows,
       env: spawnEnv,
+      baseEnv: planOnly ? subscriptionEnv({ binaryPath }) : null,
     });
   } catch (err) {
     if (err instanceof PtySpawnError) {
@@ -1060,6 +1092,9 @@ function startCodeSession({ cwd, cols, rows, args = [], id = null, team = null }
   session.on("data", (chunk) => {
     // Timing/pattern only, never stored - feeds the nav-rail status dot.
     codeActivity.feed(chunk);
+    // Timing only: team delivery waits for a quiet screen (a working CLI
+    // repaints its spinner constantly; one at its prompt is silent).
+    if (session === entry.session) entry.lastOutputAt = Date.now();
     // Guarded on every chunk, not just at startup: a pty can emit between the
     // window closing and the child dying, and send() on destroyed webContents
     // throws.
@@ -1067,7 +1102,10 @@ function startCodeSession({ cwd, cols, rows, args = [], id = null, team = null }
     target.send("code:data", { id: entry.id, chunk });
   });
   session.on("exit", ({ exitCode, signal }) => {
-    if (session === entry.session) entry.session = null;
+    if (session === entry.session) {
+      entry.session = null;
+      entry.hook = { state: "exited", at: Date.now() };
+    }
     codeActivity.reset("idle");
     if (entry.team) markMemberExited(entry);
     broadcastTeamSnapshot();
@@ -1102,14 +1140,18 @@ function sameDir(a, b) {
 
 // --- Team hub wiring ---------------------------------------------------------
 //
-// One watcher set across every project folder that currently has teammates.
-// Hub file changes are what drive the Team sidebar AND cross-agent message
-// delivery, so the callback does both: refresh the cached snapshot and push it
-// to the pane.
+// One watcher set across every project folder that currently has teammates —
+// CLI tabs and Code-tab chats alike. Hub file changes drive the Team sidebar
+// AND message relay: electron/team-relay.js decides which message reaches
+// whom and when; the functions below say who is ready to take input and do
+// the actual write.
 
 let teamWatcherStop = null;
 const teamHubCache = new Map(); // hubRoot -> { root, hub }
-let deliveredMessageIds = new Set();
+const teamRelay = createTeamRelay();
+// Code-tab chat sessions on a team, keyed by the IDE renderer's tab id:
+// tabId -> { tabId, cwd, team, liveState, blocked }.
+const ideTeamMembers = new Map();
 // Per-folder "what changed on disk" summaries (team-hub.gitSummary results),
 // refreshed on demand and included in every snapshot.
 const teamDiffCache = {};
@@ -1119,6 +1161,7 @@ async function refreshTeamDiffs() {
   for (const entry of codeSessions.values()) {
     if (entry.team && entry.cwd) cwds.add(entry.cwd);
   }
+  for (const member of ideTeamMembers.values()) cwds.add(member.cwd);
   for (const cwd of cwds) {
     const summary = await teamHub.gitSummary(cwd);
     if (summary) {
@@ -1131,23 +1174,61 @@ async function refreshTeamDiffs() {
   }
 }
 
+/** Everyone on `root`'s team in this run, live or not: CLI tabs, then Code-tab chats. */
+function hubMembers(root) {
+  const out = [];
+  for (const entry of codeSessions.values()) {
+    if (entry.team && entry.team.hubRoot === root) out.push({ id: entry.team.memberId, name: entry.team.name, aliases: entry.team.aliases || [], live: !!entry.session });
+  }
+  for (const member of ideTeamMembers.values()) {
+    if (member.team.hubRoot === root) out.push({ id: member.team.memberId, name: member.team.name, aliases: member.team.aliases || [], live: true });
+  }
+  return out;
+}
+
+function findTeamMember(memberId) {
+  for (const entry of codeSessions.values()) {
+    if (entry.team && entry.team.memberId === memberId) return { kind: "cli", entry, team: entry.team };
+  }
+  for (const member of ideTeamMembers.values()) {
+    if (member.team.memberId === memberId) return { kind: "chat", chat: member, team: member.team };
+  }
+  return null;
+}
+
+/**
+ * The hub for `root`, loaded for this run: created (and .gitignore'd) if
+ * needed, roster files left behind by crashed sessions pruned, and every
+ * message already on disk marked as seen — the relay only ever delivers what
+ * arrives from here on.
+ */
+function cacheHub(root) {
+  let cache = teamHubCache.get(root);
+  if (cache) return cache;
+  const hub = teamHub.ensureHub(root);
+  cache = { root, hub };
+  teamHubCache.set(root, cache);
+  try { teamHub.pruneStaleMembers(hub, new Set(hubMembers(root).map((m) => m.id))); } catch { /* best-effort */ }
+  teamRelay.seed(root, teamHub.listMessages(hub, Infinity).map((m) => m.id));
+  return cache;
+}
+
 function rebuildTeamWatchers() {
   const roots = new Set();
   for (const entry of codeSessions.values()) {
     if (entry.team) roots.add(entry.team.hubRoot);
   }
+  for (const member of ideTeamMembers.values()) roots.add(member.team.hubRoot);
 
   // Forget caches for folders with no teammates left.
   for (const root of [...teamHubCache.keys()]) {
     if (!roots.has(root)) teamHubCache.delete(root);
   }
   for (const root of roots) {
-    if (!teamHubCache.has(root)) {
-      try {
-        teamHubCache.set(root, { root, hub: teamHub.ensureHub(root) });
-      } catch {
-        // Unwritable project folder — that teammate simply has no hub.
-      }
+    try {
+      cacheHub(root);
+    } catch {
+      // Unwritable project folder — that teammate simply has no hub.
     }
   }
 
@@ -1161,6 +1242,9 @@ function rebuildTeamWatchers() {
       relayHubMessages();
       broadcastTeamSnapshot();
     });
+    // A fresh watcher ignores what landed while it was starting; one read
+    // catches up (anything already relayed is simply seen again).
+    relayHubMessages();
   }
 }
 
@@ -1179,67 +1263,370 @@ function markMemberExited(entry) {
   }
 }
 
+// --- CLI tab turn-cycle state -------------------------------------------------
+//
+// Each CLI tab's `claude` runs with stateHookSettings (electron/claude-cli.js):
+// its hooks write the latest turn event to <userData>/cli-state/<run>-<tab>-<gen>.json.
+// `gen` bumps on every (re)spawn, so a late write from a replaced process is
+// ignored; files from earlier runs are cleared the first time the folder is used.
+
+const CLI_STATE_RUN = crypto.randomBytes(4).toString("hex");
+let cliStateDirPath = null;
+let cliStateWatcher = null;
+const HOOK_EVENT_STATE = {
+  SessionStart: "idle",
+  UserPromptSubmit: "working",
+  PreToolUse: "working",
+  PostToolUse: "working",
+  Stop: "idle",
+  StopFailure: "idle",
+};
+
+function cliStateDir() {
+  if (cliStateDirPath) return cliStateDirPath;
+  const dir = path.join(app.getPath("userData"), "cli-state");
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.startsWith(`${CLI_STATE_RUN}-`)) fs.rmSync(path.join(dir, name), { force: true });
+    }
+  } catch {
+    return null;
+  }
+  cliStateDirPath = dir;
+  cliStateWatcher = chokidar.watch(dir, { ignoreInitial: true, depth: 0, awaitWriteFinish: { stabilityThreshold: 40, pollInterval: 20 } });
+  cliStateWatcher.on("add", onCliStateFile);
+  cliStateWatcher.on("change", onCliStateFile);
+  return dir;
+}
+
+function cliStateFileFor(entry) {
+  const dir = cliStateDir();
+  return dir ? path.join(dir, `${CLI_STATE_RUN}-${entry.id}-${entry.gen}.json`) : null;
+}
+
+function removeCliStateFile(entry) {
+  if (!entry || !entry.stateFile) return;
+  try { fs.rmSync(entry.stateFile, { force: true }); } catch { /* already gone */ }
+  entry.stateFile = null;
+}
+
+function onCliStateFile(file) {
+  const match = /^([0-9a-f]+)-(s\d+)-(\d+)\.json$/.exec(path.basename(file));
+  if (!match || match[1] !== CLI_STATE_RUN) return;
+  const entry = codeSessions.get(match[2]);
+  if (!entry || !entry.session || String(entry.gen) !== match[3]) return;
+  let data;
+  try { data = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return; }
+  const event = (data && (data.e || data.hook_event_name)) || "";
+  let state = HOOK_EVENT_STATE[event] || null;
+  if (event === "Notification") {
+    const type = String(data.notification_type || "");
+    if (type === "auth_success") return;
+    // A permission / question dialog (or a notification this build doesn't
+    // know) means "someone must answer" — the one state nothing may type into.
+    // The 60-second idle nudge is only believed when no dialog is pending.
+    state = type === "idle_prompt" ? (entry.hook && entry.hook.state === "waiting" ? null : "idle") : "waiting";
+  }
+  if (!state) return;
+  entry.hook = { state, at: Date.now() };
+  if (entry.team) {
+    try { teamHub.setAgentLiveState(entry.team.hub, entry.team.memberId, state, entry.team.name); } catch { /* best-effort */ }
+    broadcastTeamSnapshot();
+  }
+  flushTeamRelay();
+}
+
 /**
- * Builds the full Team snapshot the sidebar renders: live sessions first
- * (they're the source of truth for liveness), then any roster-only members
- * found in the hubs, plus messages, tasks, work logs, and a per-folder git
- * summary of what has actually changed on disk.
+ * The user's own keystrokes, reduced to timing and a rough "is there unsent
+ * text in the prompt" count — never stored. A relayed message must not land in
+ * the middle of what the user is typing, or submit their half-written prompt.
+ */
+function noteUserTyping(entry, data) {
+  // Focus in/out reports (ESC[I / ESC[O, sent by xterm because `claude` asks
+  // for them) and mouse reports aren't typing — clicking the Team sidebar
+  // must not read as "the user is typing in this terminal".
+  const typed = String(data).replace(/\x1b\[[IO]|\x1b\[<[\d;]+[Mm]|\x1b\[M[\s\S]{3}/g, "");
+  if (!typed) return;
+  const t = Date.now();
+  entry.lastInputAt = t;
+  if (typed === "\x1b" || typed === "\x03") entry.interruptAt = t;
+  let rest = typed.replace(/\x1b\[200~([\s\S]*?)\x1b\[201~/g, (_m, inner) => {
+    entry.draftLen = (entry.draftLen || 0) + inner.length;
+    return "";
+  });
+  rest = rest.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]|\x1bO.|\x1b/g, "");
+  for (const ch of rest) {
+    if (ch === "\r" || ch === "\x03" || ch === "\x15") entry.draftLen = 0;
+    else if (ch === "\x7f" || ch === "\b") entry.draftLen = Math.max(0, (entry.draftLen || 0) - 1);
+    else if (ch >= " ") entry.draftLen = (entry.draftLen || 0) + 1;
+  }
+  // The user pressing Enter in a teammate's terminal is them taking part —
+  // it re-opens any back-and-forth the relay had paused for that member.
+  if (rest.includes("\r") && entry.team) teamRelay.userActed(entry.team.memberId);
+}
+
+// --- Readiness and delivery ---------------------------------------------------
+
+const TYPING_GRACE_MS = 4000;
+const QUIET_BEFORE_DELIVERY_MS = 1200;
+const DELIVERY_CONFIRM_MS = 15000;
+const STARTUP_FORCE_MS = 20000;
+
+/**
+ * Whether a CLI tab's `claude` can take a pasted message right now, and if
+ * not, why (shown on its card). Ready means its hooks last said the turn ended
+ * (or it just started) AND its screen has gone quiet AND the user isn't typing
+ * in it. `force` (the card's Deliver-now) skips the courtesy checks but never
+ * types into a dialog.
+ */
+function cliReadiness(entry, force = false) {
+  if (!entry.session) return { ready: false, why: "offline" };
+  const hook = entry.hook || { state: "starting", at: 0 };
+  const t = Date.now();
+  const quiet = t - (entry.lastOutputAt || 0) >= QUIET_BEFORE_DELIVERY_MS;
+  // Esc / Ctrl-C ends a turn without a Stop hook; once the screen settles
+  // after one, the prompt is back.
+  // Never while a permission dialog is up: Esc there may only leave its "Tab
+  // to amend" editor, and a paste + Enter would then pick "Yes". A dialog is
+  // only over once a hook says so (PostToolUse/Stop, or the user's next prompt).
+  const interrupted = hook.state !== "waiting" && (entry.interruptAt || 0) > hook.at && quiet;
+  if (hook.state === "waiting") return { ready: false, why: "waiting on a permission prompt" };
+  // Before its first SessionStart the CLI may be showing the folder-trust
+  // prompt, whose default answer is "No, exit".
+  if (hook.state === "starting" && (!force || t - hook.at < STARTUP_FORCE_MS)) return { ready: false, why: "starting up" };
+  if (force) return { ready: true };
+  if (t - (entry.lastInputAt || 0) < TYPING_GRACE_MS) return { ready: false, why: "you're typing in its terminal" };
+  if ((entry.draftLen || 0) > 0) return { ready: false, why: "you have unsent text in its prompt" };
+  if (!quiet) return { ready: false, why: "busy" };
+  if (hook.state === "idle" || interrupted) return { ready: true };
+  if (hook.state === "delivering" && t - hook.at > DELIVERY_CONFIRM_MS) return { ready: false, why: "didn't confirm the last message" };
+  return { ready: false, why: { starting: "starting up", working: "working", delivering: "reading a message" }[hook.state] || "busy" };
+}
+
+function chatReadiness(member) {
+  if (member.blocked) return { ready: false, why: member.blocked };
+  if (ideFreeChats.has(member.tabId)) return { ready: false, why: "answering on a free model" };
+  const state = ideChat ? ideChat.tabState(member.tabId) : "closed";
+  if (state === "waiting") return { ready: false, why: "waiting on an approval card" };
+  if (state === "working") return { ready: false, why: "working" };
+  return { ready: true };
+}
+
+function memberReadiness(memberId, force = false) {
+  const found = findTeamMember(memberId);
+  if (!found) return { ready: false, why: "offline" };
+  return found.kind === "cli" ? cliReadiness(found.entry, force) : chatReadiness(found.chat);
+}
+
+/** The delivered text: each item under a header saying who it's from. */
+function teamDeliveryText(items) {
+  return items.map((item) => {
+    if (!item.user) {
+      // Verified live: without this line an agent answers in its own
+      // terminal, which the sender never sees.
+      return `[BetterClaude team · from ${item.fromName} → you${item.kind && item.kind !== "chat" ? ` · ${item.kind}` : ""}]\n${item.body}\n`
+        + `(${item.fromName} can't see your terminal — if this needs an answer, send it as a team message file to ${item.fromName}.)`;
+    }
+    const header = item.fromName === "the user" ? "[BetterClaude team · from the user, via the Team sidebar]" : "[BetterClaude]";
+    return `${header}\n${item.body}`;
+  }).join("\n\n");
+}
+
+/**
+ * Hands a batch to one member. A CLI tab gets it as a bracketed paste (so the
+ * CLI takes it as one pasted block, not keystrokes) followed by Enter — the
+ * way the user would hand it text. A Code-tab chat gets a user turn through
+ * its engine. Only ever called by the relay, and only for a member that
+ * memberReadiness just said can take it.
+ */
+function deliverToTeamMember(memberId, items) {
+  const found = findTeamMember(memberId);
+  if (!found) return false;
+  const text = teamDeliveryText(items);
+  if (found.kind === "cli") {
+    const entry = found.entry;
+    const session = entry.session;
+    if (!session) return false;
+    session.write(`\x1b[200~${text}\x1b[201~`);
+    // Enter a beat later, as its own keystroke: in the same write it can
+    // arrive before the CLI has finished taking in the paste.
+    setTimeout(() => { if (entry.session === session) session.write("\r"); }, 120);
+    entry.hook = { state: "delivering", at: Date.now() };
+    return true;
+  }
+  const member = found.chat;
+  const from = [...new Set(items.map((i) => i.fromName))].join(", ");
+  const result = ideChat ? ideChat.deliver(member.tabId, text, {
+    cwd: member.cwd,
+    team: { from, body: items.map((i) => i.body).join("\n\n") },
+  }) : null;
+  if (result && result.ok) return true;
+  if (result && result.error === "billing") member.blocked = "can't start — its settings would bill something other than your Claude plan";
+  return false;
+}
+
+let teamRelayTick = null;
+
+/** Delivers whatever can go now; keeps a 1 s tick alive while anything waits. */
+function flushTeamRelay(force = null) {
+  const { delivered } = teamRelay.flush({
+    isReady: (memberId, forced) => memberReadiness(memberId, forced).ready,
+    deliver: deliverToTeamMember,
+    force: force || new Set(),
+  });
+  if (delivered) broadcastTeamSnapshot();
+  if (teamRelay.hasQueued() && !teamRelayTick) {
+    teamRelayTick = setInterval(() => {
+      if (!teamRelay.hasQueued()) {
+        clearInterval(teamRelayTick);
+        teamRelayTick = null;
+        broadcastTeamSnapshot();
+        return;
+      }
+      flushTeamRelay();
+    }, 1000);
+    if (teamRelayTick.unref) teamRelayTick.unref();
+  }
+  return delivered;
+}
+
+/** Hands every new hub message to the relay, then delivers what's ready. */
+function relayHubMessages() {
+  let queued = 0;
+  for (const cache of teamHubCache.values()) {
+    queued += teamRelay.observe(cache.root, teamHub.listMessages(cache.hub, 200), hubMembers(cache.root));
+  }
+  flushTeamRelay();
+  if (queued) broadcastTeamSnapshot();
+  return queued;
+}
+
+/**
+ * Builds the full Team snapshot the sidebar renders: members of this run
+ * first (CLI tabs, then Code-tab chats — they're the authority on liveness),
+ * then roster-only entries from earlier runs, plus messages with their
+ * delivery state, relay notes, tasks, work logs, and a per-folder git summary.
+ * Everything carries its `hubRoot` so the sidebar can show one folder's team.
  */
 function buildTeamSnapshot() {
   const members = [];
   const seen = new Set();
+  const queueInfo = (memberId, readiness) => {
+    const pending = teamRelay.pending(memberId);
+    return {
+      queued: pending.count,
+      paused: pending.paused,
+      heldWhy: pending.count && !readiness.ready ? readiness.why : "",
+    };
+  };
+  const agentFileOf = (team) => {
+    try { return teamHub.readJsonSafe(path.join(team.hub, "agents", `${team.memberId}.json`), null); } catch { return null; }
+  };
   for (const entry of codeSessions.values()) {
     if (!entry.team) continue;
     seen.add(entry.team.memberId);
-    let agentStatus = null;
-    try {
-      agentStatus = teamHub.readJsonSafe(
-        path.join(entry.team.hub, "agents", `${entry.team.memberId}.json`),
-        null
-      );
-    } catch { /* ignore */ }
+    const agentFile = agentFileOf(entry.team);
+    const hookState = entry.session ? (entry.hook ? entry.hook.state : "starting") : "exited";
     members.push({
       id: entry.team.memberId,
       sessionId: entry.id,
+      chatTabId: null,
+      kind: "cli",
+      hubRoot: entry.team.hubRoot,
       name: entry.team.name,
+      aliases: entry.team.aliases || [],
       cwd: entry.cwd,
       live: !!entry.session,
       status: entry.session ? "running" : "exited",
-      currentTask: agentStatus && typeof agentStatus.currentTask === "string" ? agentStatus.currentTask : "",
-      agentStatus: agentStatus && typeof agentStatus.status === "string" ? agentStatus.status : null,
+      liveState: hookState === "delivering" ? "working" : hookState,
+      currentTask: agentFile && typeof agentFile.currentTask === "string" ? agentFile.currentTask : "",
+      // A restarted tab's file can still say "exited" from its last run.
+      agentStatus: agentFile && typeof agentFile.status === "string" && !(entry.session && agentFile.status === "exited") ? agentFile.status : null,
+      ...queueInfo(entry.team.memberId, cliReadiness(entry)),
+    });
+  }
+  for (const member of ideTeamMembers.values()) {
+    seen.add(member.team.memberId);
+    const agentFile = agentFileOf(member.team);
+    const state = ideChat ? ideChat.tabState(member.tabId) : "idle";
+    members.push({
+      id: member.team.memberId,
+      sessionId: null,
+      chatTabId: member.tabId,
+      kind: "chat",
+      hubRoot: member.team.hubRoot,
+      name: member.team.name,
+      aliases: member.team.aliases || [],
+      cwd: member.cwd,
+      live: true,
+      status: "running",
+      liveState: state === "closed" ? "idle" : state,
+      currentTask: agentFile && typeof agentFile.currentTask === "string" ? agentFile.currentTask : "",
+      agentStatus: agentFile && typeof agentFile.status === "string" ? agentFile.status : null,
+      ...queueInfo(member.team.memberId, chatReadiness(member)),
     });
   }
 
   const messages = [];
   const tasks = [];
   const changes = {};
+  const notes = [];
+  const names = {};
   for (const cache of teamHubCache.values()) {
+    Object.assign(names, teamHub.rememberedNames(cache.hub));
     for (const agentFile of teamHub.listMembersFromFiles(cache.hub)) {
       if (seen.has(agentFile.id)) continue;
       seen.add(agentFile.id);
+      // Not a session of this run: it can't be messaged, whatever its file says.
       members.push({
         id: agentFile.id,
         sessionId: null,
+        chatTabId: null,
+        kind: "roster",
+        hubRoot: cache.root,
         name: agentFile.name || agentFile.id,
+        aliases: Array.isArray(agentFile.aliases) ? agentFile.aliases : [],
         cwd: typeof agentFile.cwd === "string" ? agentFile.cwd : cache.root,
         live: false,
-        status: typeof agentFile.status === "string" ? agentFile.status : "unknown",
-        currentTask: typeof agentFile.currentTask === "string" ? agentFile.currentTask : "",
+        status: agentFile.status === "exited" ? "exited" : "offline",
+        liveState: "offline",
+        currentTask: "",
         agentStatus: null,
+        lastSeen: typeof agentFile.updated === "string" ? agentFile.updated : null,
+        queued: 0,
+        paused: 0,
+        heldWhy: "",
       });
     }
-    messages.push(...teamHub.listMessages(cache.hub));
-    tasks.push(...teamHub.listTasks(cache.hub));
+    for (const msg of teamHub.listMessages(cache.hub)) {
+      const status = teamRelay.statusOf(cache.root, msg.id);
+      messages.push({
+        ...msg,
+        hubRoot: cache.root,
+        delivery: status ? {
+          state: status.state,
+          why: status.why || "",
+          recipients: status.recipients || [],
+          delivered: status.delivered || [],
+        } : null,
+      });
+    }
+    for (const task of teamHub.listTasks(cache.hub)) tasks.push({ ...task, hubRoot: cache.root });
     Object.assign(changes, teamHub.listChanges(cache.hub));
+    for (const note of teamRelay.notesFor(cache.root)) notes.push({ ...note, hubRoot: cache.root });
   }
-  messages.sort((a, b) => a.ts - b.ts);
+  messages.sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
   return {
     members,
+    names,
     messages: messages.slice(-300),
+    notes,
     tasks,
     changes,
     diffs: teamDiffCache,
+    hubs: [...teamHubCache.values()].map((c) => ({ root: c.root, name: path.basename(c.root) })),
   };
 }
 
@@ -1259,68 +1646,29 @@ function broadcastTeamSnapshot() {
 }
 
 /**
- * Delivers an inter-agent (or user-authored) message into a LIVE teammate's
- * pty. Bracketed-paste wrapping means the receiving CLI treats the whole thing
- * as one pasted block rather than interpreting its characters as keystrokes,
- * and the trailing \r submits it — which is exactly how the user themselves
- * would hand the agent text. This stdin write applies ONLY to sessions that
- * joined a team (entry.team set); plain sessions never receive synthetic input.
+ * The next default name nobody on this hub's roster is using — live, left
+ * behind by an earlier run, or a name a renamed teammate used to have (so a
+ * new "Agent 001" never collides with an agent that still signs its messages
+ * that way): "Agent 001", "Agent 002", …
  */
-function deliverToTeammate(entry, message) {
-  if (!entry || !entry.session || !entry.team) return false;
-  const fromName = message.fromName || message.from;
-  const body = String(message.body || "").slice(0, 4000);
-  const header = message.kind === "task"
-    ? `[BetterClaude team · ${fromName} → you] task update`
-    : `[BetterClaude team · ${fromName} → you]`;
-  const text =
-    `\n\x1b[200~${header}\n${body}\n\x1b[201~\r`;
-  entry.session.write(text);
-  return true;
-}
-
-/**
- * Reads each watched hub's newest messages and relays any addressed to another
- * live teammate into that teammate's pty. Each message file is delivered at
- * most once per app run (deliveredMessageIds), which keeps the direct-send path
- * (which writes the file AND delivers inline) from double-typing.
- */
-function relayHubMessages() {
-  for (const cache of teamHubCache.values()) {
-    for (const msg of teamHub.listMessages(cache.hub, 40)) {
-      if (deliveredMessageIds.has(msg.id)) continue;
-      deliveredMessageIds.add(msg.id);
-      if (deliveredMessageIds.size > 2000) deliveredMessageIds = new Set([...deliveredMessageIds].slice(-1000));
-      if (msg.to === "all") {
-        // Broadcast: typed into every OTHER live teammate's pty (the sender
-        // already knows what it said). This is what makes "talking to the
-        // whole team" a real delivery rather than a feed-only note.
-        for (const entry of codeSessions.values()) {
-          if (entry.team && entry.session && entry.team.memberId !== msg.from) {
-            deliverToTeammate(entry, msg);
-          }
-        }
-        continue;
-      }
-      for (const entry of codeSessions.values()) {
-        if (entry.team && entry.team.memberId === msg.to && entry.session) {
-          deliverToTeammate(entry, msg);
-          break;
-        }
-      }
-    }
-  }
-}
-
-function nextMemberName() {
+function nextMemberName(hub) {
   const taken = new Set();
+  const take = (name) => { if (name) taken.add(String(name).toLowerCase()); };
   for (const entry of codeSessions.values()) {
-    if (entry.team) taken.add(entry.team.name);
+    if (entry.team) { take(entry.team.name); (entry.team.aliases || []).forEach(take); }
   }
-  for (const name of teamHub.MEMBER_NAMES) {
-    if (!taken.has(name)) return name;
+  for (const member of ideTeamMembers.values()) {
+    take(member.team.name);
+    (member.team.aliases || []).forEach(take);
   }
-  return `Agent ${codeSessionSeq + 1}`;
+  if (hub) {
+    for (const file of teamHub.listMembersFromFiles(hub)) { take(file.name); (file.aliases || []).forEach(take); }
+  }
+  for (let n = 1; n < 1000; n += 1) {
+    const name = teamHub.formatAgentName(n);
+    if (!taken.has(name.toLowerCase())) return name;
+  }
+  return `Agent ${Date.now().toString(36)}`;
 }
 
 /**
@@ -1329,13 +1677,9 @@ function nextMemberName() {
  */
 function teamBindingFor(cwd) {
   const root = cwd;
-  let cache = teamHubCache.get(root);
-  if (!cache) {
-    cache = { root, hub: teamHub.ensureHub(root) };
-    teamHubCache.set(root, cache);
-  }
+  const cache = cacheHub(root);
   const memberId = teamHub.newId("agent");
-  const name = nextMemberName();
+  const name = nextMemberName(cache.hub);
   try {
     teamHub.writeAgentFile(cache.hub, {
       id: memberId,
@@ -1344,8 +1688,56 @@ function teamBindingFor(cwd) {
       status: "working",
       currentTask: "Joining the team…",
     });
+    // Remembered beyond the agent file (removed when an auto-joined session
+    // ends), so this member's old messages keep showing its name.
+    teamHub.setMemberName(cache.hub, memberId, name, []);
   } catch { /* best-effort */ }
-  return { hubRoot: root, hub: cache.hub, memberId, name };
+  return { hubRoot: root, hub: cache.hub, memberId, name, aliases: [] };
+}
+
+/**
+ * The user renaming a teammate from its Team card. The id never changes; the
+ * old name stays resolvable (an alias) because the agent still signs its
+ * messages with it and its teammates learned it from files they already read.
+ * Returns { ok, name } or { ok:false, error } — the error is shown on the card.
+ */
+function renameTeamMember(memberId, rawName) {
+  const found = findTeamMember(memberId);
+  if (!found) return { ok: false, error: "That teammate isn't on a team any more." };
+  const name = teamHub.cleanMemberName(rawName);
+  if (!name) return { ok: false, error: `Use 1–${teamHub.MEMBER_NAME_MAX} letters, numbers, spaces, . _ or -.` };
+  const team = found.team;
+  if (name === team.name) return { ok: true, name };
+  const key = name.toLowerCase();
+  // Words the relay treats as addressing everyone (or the user) can't be a name.
+  if (key === "you" || isBroadcastTarget(key)) return { ok: false, error: `“${name}” is reserved — pick another name.` };
+  const others = [
+    ...hubMembers(team.hubRoot),
+    ...teamHub.listMembersFromFiles(team.hub).map((f) => ({ id: f.id, name: f.name, aliases: f.aliases })),
+  ];
+  const clash = others.some((m) => m.id !== team.memberId && [m.name, ...(m.aliases || [])].some((n) => String(n).toLowerCase() === key));
+  if (clash) return { ok: false, error: `“${name}” is already taken on this team.` };
+
+  team.aliases = [...new Set([...(team.aliases || []), team.name])].filter((a) => a.toLowerCase() !== key).slice(-8);
+  team.name = name;
+  try { teamHub.setMemberName(team.hub, team.memberId, name, team.aliases); } catch { /* best-effort */ }
+  // The roster file teammates read shows the new name too (the agent may
+  // rewrite it under the old one; the next hook write puts this one back).
+  try {
+    const agentPath = path.join(team.hub, "agents", `${team.memberId}.json`);
+    const current = teamHub.readJsonSafe(agentPath, null);
+    if (current) teamHub.writeJsonSafe(agentPath, { ...current, name });
+  } catch { /* best-effort */ }
+  if (found.kind === "chat") sendToIdePage("ide:team-renamed", { memberId: team.memberId, name });
+  broadcastTeamSnapshot();
+  return { ok: true, name };
+}
+
+/** The hub a Team-sidebar action from CLI tab `sessionId` belongs to. */
+function teamHubForSession(sessionId) {
+  const entry = codeSessionEntry(sessionId);
+  if (entry && entry.team) return teamHubCache.get(entry.team.hubRoot) || null;
+  return teamHubCache.size === 1 ? [...teamHubCache.values()][0] : null;
 }
 
 /**
@@ -1412,6 +1804,8 @@ function disposeIdeChat(tabId) {
     ideFreeChats.delete(tabId);
     try { free.abort(); } catch {}
   }
+  // A closed tab can't take team messages any more.
+  leaveChatTeam(tabId);
   if (ideChat) ideChat.dispose(tabId);
 }
 
@@ -1419,6 +1813,7 @@ function disposeIdeChat(tabId) {
 // sessions can never leave an orphaned `claude` behind.
 function disposeAllIdeChats() {
   for (const tabId of Array.from(ideFreeChats.keys())) disposeIdeChat(tabId);
+  for (const tabId of Array.from(ideTeamMembers.keys())) leaveChatTeam(tabId);
   if (ideChat) ideChat.disposeAll();
 }
 
@@ -1430,8 +1825,124 @@ function disposeIdeChatProcess() {
 // Every `ide:chat-event` carries the `tabId` it belongs to so the renderer can
 // route it to the right open session; callers pass it in the payload.
 function sendIdeChat(payload) {
+  noteWidgetChatEvent(payload);
   if (ideView && !ideView.webContents.isDestroyed()) ideView.webContents.send("ide:chat-event", payload);
 }
+
+// --- Widget data (Settings -> Widgets) ----------------------------------------
+// A narrow, read-only feed for the dock widgets: the latest plan-usage reading
+// and context size from Code-tab chats (the CLI's own numbers, never scraped),
+// plus git / team / system summaries on request. Nothing here is logged or
+// leaves the machine; each kind returns only what its widget draws.
+const widgetState = { plan: null, context: null };
+
+function noteWidgetChatEvent(payload) {
+  if (!payload) return;
+  if (payload.type === "plan-usage" && payload.info) {
+    widgetState.plan = { ...payload.info, at: Date.now() };
+  } else if (payload.type === "done" && payload.usage && !payload.free) {
+    const u = payload.usage;
+    const used = (Number(u.input_tokens) || 0) + (Number(u.cache_read_input_tokens) || 0) + (Number(u.cache_creation_input_tokens) || 0);
+    const model = String(payload.modelId || "");
+    widgetState.context = { used, window: /\[1m\]|1m/i.test(model) ? 1000000 : 200000, model, at: Date.now() };
+  }
+}
+
+function widgetActiveCwd() {
+  const cfg = store.get("codeWindow", {}) || {};
+  return cfg.ideLastCwd || cfg.lastCwd || null;
+}
+
+async function widgetData(kind) {
+  switch (kind) {
+    case "plan": return widgetState.plan;
+    case "context": return widgetState.context;
+    case "git": {
+      const cwd = widgetActiveCwd();
+      if (!cwd) return null;
+      try {
+        const info = await ideWorkspace.getGitInfo(cwd);
+        if (!info || !info.isRepo) return { folder: path.basename(cwd), repo: false };
+        return {
+          folder: path.basename(cwd),
+          repo: true,
+          branch: info.branch || null,
+          ahead: Number(info.ahead) || 0,
+          changed: Number(info.changedFiles) || 0,
+          added: Number((/(\d+) insertion/.exec(info.diffStat || "") || [])[1]) || 0,
+          removed: Number((/(\d+) deletion/.exec(info.diffStat || "") || [])[1]) || 0,
+        };
+      } catch {
+        return { folder: path.basename(cwd), repo: false };
+      }
+    }
+    case "team": {
+      // Just the newest few messages and live names — not a whole snapshot
+      // (every hub's messages, tasks, logs and diffs) every 5 seconds.
+      const live = [
+        ...[...codeSessions.values()].filter((e) => e.team && e.session).map((e) => ({ id: e.team.memberId, name: e.team.name })),
+        ...[...ideTeamMembers.values()].map((m) => ({ id: m.team.memberId, name: m.team.name })),
+      ];
+      const nameOf = (ref) => {
+        if (ref === "you") return "you";
+        if (isBroadcastTarget(ref)) return "everyone";
+        const m = [...live, ...roster].find((x) => x.id === ref || String(x.name).toLowerCase() === String(ref).toLowerCase());
+        return m ? m.name : (remembered[ref] || String(ref).slice(0, 24));
+      };
+      const recent = [];
+      const roster = [];
+      const remembered = {};
+      for (const cache of teamHubCache.values()) {
+        Object.assign(remembered, teamHub.rememberedNames(cache.hub));
+        recent.push(...teamHub.listMessages(cache.hub, 5));
+        for (const a of teamHub.listMembersFromFiles(cache.hub)) roster.push({ id: a.id, name: a.name || a.id });
+      }
+      recent.sort((a, b) => a.ts - b.ts);
+      return {
+        live: live.length,
+        messages: recent.slice(-5).map((m) => ({ from: nameOf(m.from), to: nameOf(m.to), kind: m.kind, body: String(m.body).slice(0, 160), ts: m.ts })),
+      };
+    }
+    case "code-model": {
+      // The Code tab's picker is the authority (its own localStorage).
+      if (!ideView || ideView.webContents.isDestroyed()) return null;
+      try {
+        const id = await ideView.webContents.executeJavaScript('localStorage.getItem("bc-ide-claude-model")', true);
+        return { model: typeof id === "string" && id ? id : "default" };
+      } catch {
+        return null;
+      }
+    }
+    case "system": {
+      const metrics = app.getAppMetrics();
+      const appMemMb = Math.round(metrics.reduce((n, p) => n + ((p.memory && p.memory.workingSetSize) || 0), 0) / 1024);
+      const appCpu = Math.round(metrics.reduce((n, p) => n + ((p.cpu && p.cpu.percentCPUUsage) || 0), 0));
+      return {
+        cores: os.cpus().length,
+        load: Math.round(os.loadavg()[0] * 100) / 100,
+        memTotalGb: Math.round(os.totalmem() / 1073741824 * 10) / 10,
+        memFreeGb: Math.round(os.freemem() / 1073741824 * 10) / 10,
+        appMemMb,
+        appCpu,
+      };
+    }
+    case "streak": {
+      const streak = (store.get("personality", {}) || {}).streak || {};
+      return { count: Number(streak.count) || 0, lastActiveDate: streak.lastActiveDate || null };
+    }
+    case "shortcuts": return { ...(store.get("keyboardShortcuts", {}) || {}) };
+    default: return null;
+  }
+}
+
+ipcMain.handle("widgets:data", (e, kind) => (isAppSender(e) ? widgetData(String(kind || "")) : null));
+
+// The Model switcher widget: the Code tab's picker, set from the dock.
+ipcMain.handle("widgets:set-code-model", (e, model) => {
+  if (!isAppSender(e) || !["default", "fable", "opus", "sonnet", "haiku"].includes(model)) return false;
+  if (ideView && !ideView.webContents.isDestroyed()) ideView.webContents.send("ide:set-model", model);
+  return true;
+});
 
 /**
  * Settings for the free-model fallback, merged so installs predating the
@@ -1608,6 +2119,8 @@ function refreshIdeActivity() {
     ideActivity.set(ideActivityWasWorking && !ideViewAttached ? "done" : "idle");
     ideActivityWasWorking = false;
   }
+  // A chat teammate that just finished a turn may have messages waiting.
+  refreshChatTeamStates();
 }
 
 /** OS notification for "needs approval" / "finished" — only while the user is looking elsewhere. */
@@ -2453,12 +2966,15 @@ ipcMain.on("code:ready", (e, { cols, rows }) => {
 // The user's own keystrokes for ONE session, forwarded verbatim. This is the
 // ONLY renderer path into any child's stdin, and it never synthesises, replays,
 // or rewrites input. (Team message delivery writes into teammate ptys from the
-// MAIN process only — see deliverToTeammate — and never via this channel.)
+// MAIN process only — see deliverToTeamMember — and never via this channel.)
 ipcMain.on("code:input", (e, payload) => {
   if (!isCodeSender(e.sender)) return;
   if (!payload || typeof payload.data !== "string") return;
   const entry = codeSessionEntry(payload.id);
-  if (entry && entry.session) entry.session.write(payload.data);
+  if (entry && entry.session) {
+    entry.session.write(payload.data);
+    noteUserTyping(entry, payload.data);
+  }
 });
 
 ipcMain.on("code:resize", (e, { id, cols, rows }) => {
@@ -2641,52 +3157,37 @@ ipcMain.handle("code:team:join", (e, opts) => {
     return null;
   }
   entry.team = team;
-  deliverToTeammate(entry, {
-    from: "BetterClaude",
-    fromName: "BetterClaude",
-    kind: "task",
+  // Queued like any delivery: it's typed only once this `claude` is idle at
+  // its prompt, never into a dialog or over the user's typing.
+  teamRelay.enqueueDirect(team.memberId, {
     body: teamHub.buildJoinPrompt({ hub: team.hub, id: team.memberId, name: team.name }),
+    hubKey: team.hubRoot,
   });
   rebuildTeamWatchers();
+  flushTeamRelay();
   refreshTeamDiffs().then(() => sendTeamSnapshot());
   broadcastTeamSnapshot();
   return { id: entry.id, memberId: team.memberId, name: team.name };
 });
 
-// User-authored chat from the sidebar composer. Written to the hub like any
-// agent message AND delivered straight into the target's pty when it's live,
-// so the conversation stays active in both directions. Pre-registering the
-// message id keeps relayHubMessages from typing it twice.
+const TEAM_TARGET_RE = /^[A-Za-z0-9_-]{1,80}$/;
+const TEAM_TASK_STATES = new Set(["todo", "doing", "done"]);
+
+// User-authored chat from the sidebar composer, to one teammate or "all" of
+// the SENDING tab's team (never every folder's). Written to the hub like any
+// agent message, marked as the user's own, and handed to the relay — which
+// delivers it as soon as each recipient is free.
 ipcMain.handle("code:team:send", (e, opts) => {
   if (!isCodeSender(e.sender) || !opts) return false;
-  const body = typeof opts.body === "string" ? opts.body.trim() : "";
-  if (!body) return false;
-  for (const cache of teamHubCache.values()) {
-    const msg = teamHub.addMessage(cache.hub, {
-      from: "you",
-      to: opts.to === "all" ? "all" : String(opts.to),
-      kind: "chat",
-      body,
-    });
-    if (!msg) continue;
-    deliveredMessageIds.add(msg.id);
-    if (opts.to !== "all") {
-      for (const entry of codeSessions.values()) {
-        if (entry.team && entry.team.memberId === opts.to) {
-          deliverToTeammate(entry, { ...msg, fromName: "you" });
-          break;
-        }
-      }
-    } else {
-      // Broadcast to the whole team: every live teammate gets it typed into
-      // its own terminal, same as an agent broadcast does.
-      for (const entry of codeSessions.values()) {
-        if (entry.team && entry.session) {
-          deliverToTeammate(entry, { ...msg, fromName: "you" });
-        }
-      }
-    }
-  }
+  const body = typeof opts.body === "string" ? opts.body.trim().slice(0, 4000) : "";
+  const to = opts.to === "all" ? "all" : String(opts.to || "");
+  if (!body || !TEAM_TARGET_RE.test(to)) return false;
+  const cache = teamHubForSession(opts.id);
+  if (!cache) return false;
+  const msg = teamHub.addMessage(cache.hub, { from: "you", to, kind: "chat", body });
+  if (!msg) return false;
+  teamRelay.trust(cache.root, msg.id);
+  relayHubMessages();
   broadcastTeamSnapshot();
   return true;
 });
@@ -2695,50 +3196,67 @@ ipcMain.handle("code:team:send", (e, opts) => {
 // edits; agents write through their own tools, and the watcher reconciles.
 ipcMain.handle("code:team:add-task", (e, opts) => {
   if (!isCodeSender(e.sender) || !opts || !String(opts.title || "").trim()) return false;
-  for (const cache of teamHubCache.values()) {
-    const tasks = teamHub.listTasks(cache.hub);
-    tasks.push({
-      id: teamHub.newId("task"),
-      title: String(opts.title).trim(),
-      assignee: null,
-      state: "todo",
-    });
-    teamHub.saveTasks(cache.hub, tasks);
-  }
+  const cache = teamHubForSession(opts.id);
+  if (!cache) return false;
+  const tasks = teamHub.listTasks(cache.hub);
+  tasks.push({
+    id: teamHub.newId("task"),
+    title: String(opts.title).trim().slice(0, 300),
+    assignee: null,
+    state: "todo",
+  });
+  teamHub.saveTasks(cache.hub, tasks);
   broadcastTeamSnapshot();
   return true;
 });
 
 ipcMain.handle("code:team:update-task", (e, opts) => {
   if (!isCodeSender(e.sender) || !opts || typeof opts.taskId !== "string") return false;
+  // Task ids are unique per hub; only the hub that holds this one is written.
   for (const cache of teamHubCache.values()) {
     const tasks = teamHub.listTasks(cache.hub);
     const task = tasks.find((t) => t.id === opts.taskId);
     if (!task) continue;
-    if ("state" in opts) task.state = String(opts.state);
-    if ("assignee" in opts) task.assignee = opts.assignee == null ? null : String(opts.assignee);
+    if ("state" in opts && TEAM_TASK_STATES.has(opts.state)) task.state = opts.state;
+    if ("assignee" in opts) task.assignee = opts.assignee == null ? null : String(opts.assignee).slice(0, 80);
     teamHub.saveTasks(cache.hub, tasks);
+    break;
   }
   broadcastTeamSnapshot();
   return true;
 });
 
-// Ask one teammate for a status check-in. Delivered like a message; harmless
-// when they're mid-turn because the CLI queues input.
+// Ask one teammate for a status check-in — queued like any delivery.
 ipcMain.handle("code:team:nudge", (e, opts) => {
-  if (!isCodeSender(e.sender) || !opts) return false;
-  for (const entry of codeSessions.values()) {
-    if (entry.team && entry.team.memberId === opts.memberId) {
-      deliverToTeammate(entry, {
-        from: "you",
-        fromName: "you",
-        kind: "chat",
-        body: "Status check-in requested: please update your status file (current task + status) and post a one-line update to the team feed.",
-      });
-      return true;
-    }
-  }
-  return false;
+  if (!isCodeSender(e.sender) || !opts || typeof opts.memberId !== "string") return false;
+  const found = findTeamMember(opts.memberId);
+  if (!found) return false;
+  teamRelay.enqueueDirect(opts.memberId, {
+    fromName: "the user",
+    kind: "chat",
+    hubKey: found.team.hubRoot,
+    body: "Status check-in requested: please update your status file (current task + status) and post a one-line update to the team feed.",
+  });
+  flushTeamRelay();
+  broadcastTeamSnapshot();
+  return true;
+});
+
+// A member's card: rename the teammate (the id, files and history are untouched).
+ipcMain.handle("code:team:rename", (e, opts) => {
+  if (!isCodeSender(e.sender) || !opts || typeof opts.memberId !== "string") return { ok: false, error: "Not allowed." };
+  return renameTeamMember(opts.memberId, opts.name);
+});
+
+// A member's card: re-open a paused back-and-forth and deliver what's waiting
+// now — skipping the courtesy waits, but still never into an open dialog.
+ipcMain.handle("code:team:resume", (e, opts) => {
+  if (!isCodeSender(e.sender) || !opts || typeof opts.memberId !== "string") return false;
+  if (!findTeamMember(opts.memberId)) return false;
+  teamRelay.userActed(opts.memberId);
+  flushTeamRelay(new Set([opts.memberId]));
+  broadcastTeamSnapshot();
+  return true;
 });
 
 // --- In-window tab plumbing (sender: the claude.ai renderer) ---
@@ -2944,6 +3462,84 @@ ipcMain.handle("ide:chat-dispose", (e, tabId) => {
   const key = ideTabId(tabId);
   if (key) disposeIdeChat(key);
   return true;
+});
+
+// --- Code-tab chats on a team ------------------------------------------------
+//
+// A chat session joins its project folder's Team Hub like a CLI tab does: it
+// gets a roster identity, the coordination protocol rides along with every
+// process the tab spawns (--append-system-prompt, the session resumed), and
+// teammates' messages reach it through the relay as a user turn — only once
+// its current turn has ended and no approval card is open (see chatReadiness
+// and ide-chat.js's deliver).
+
+function leaveChatTeam(tabId) {
+  const member = ideTeamMembers.get(tabId);
+  if (!member) return false;
+  ideTeamMembers.delete(tabId);
+  teamRelay.forget(member.team.memberId);
+  teamHub.removeAgentFile(member.team.hub, member.team.memberId);
+  if (ideChat) ideChat.setTeam(tabId, null);
+  rebuildTeamWatchers();
+  broadcastTeamSnapshot();
+  return true;
+}
+
+/** Mirrors each chat member's engine state into its roster file, then retries deliveries. */
+function refreshChatTeamStates() {
+  if (!ideTeamMembers.size) return;
+  let changed = false;
+  for (const member of ideTeamMembers.values()) {
+    const state = ideChat ? ideChat.tabState(member.tabId) : "idle";
+    const live = state === "closed" ? "idle" : state;
+    if (live === member.liveState) continue;
+    member.liveState = live;
+    changed = true;
+    try { teamHub.setAgentLiveState(member.team.hub, member.team.memberId, live); } catch { /* best-effort */ }
+  }
+  if (changed) broadcastTeamSnapshot();
+  flushTeamRelay();
+}
+
+ipcMain.handle("ide:team:join", (e, payload = {}) => {
+  if (!isIdeSender(e.sender) || !payload || !ideChat) return null;
+  const tabId = ideTabId(payload.tabId);
+  if (!tabId || typeof payload.cwd !== "string") return null;
+  const existing = ideTeamMembers.get(tabId);
+  if (existing) return { memberId: existing.team.memberId, name: existing.team.name };
+  let cwd;
+  let team;
+  try {
+    cwd = rememberIdeCwd(payload.cwd);
+    team = teamBindingFor(cwd);
+  } catch {
+    return null;
+  }
+  ideTeamMembers.set(tabId, { tabId, cwd, team, liveState: "idle", blocked: null });
+  ideChat.setTeam(tabId, {
+    prompt: teamHub.buildTeamPrompt({ hub: team.hub, id: team.memberId, name: team.name }),
+    cwd,
+    sessionId: typeof payload.sessionId === "string" ? payload.sessionId : null,
+    permissionMode: typeof payload.permissionMode === "string" ? payload.permissionMode : null,
+  });
+  rebuildTeamWatchers();
+  refreshTeamDiffs().then(() => sendTeamSnapshot());
+  broadcastTeamSnapshot();
+  return { memberId: team.memberId, name: team.name };
+});
+
+// The chat's mode chip moved while it is on a team: teammate turns follow it.
+ipcMain.handle("ide:team:set-mode", (e, payload = {}) => {
+  if (!isIdeSender(e.sender) || !payload || !ideChat) return false;
+  const tabId = ideTabId(payload.tabId);
+  if (!tabId || !ideTeamMembers.has(tabId) || typeof payload.permissionMode !== "string") return false;
+  return ideChat.setTeamMode(tabId, payload.permissionMode.slice(0, 40));
+});
+
+ipcMain.handle("ide:team:leave", (e, payload = {}) => {
+  if (!isIdeSender(e.sender) || !payload) return false;
+  const tabId = ideTabId(payload.tabId);
+  return tabId ? leaveChatTeam(tabId) : false;
 });
 ipcMain.handle("ide:git-diff", async (e, cwd) => isIdeSender(e.sender) ? ideWorkspace.getGitDiff(rememberIdeCwd(cwd)) : { isRepo: false, diff: "" });
 // Commit (only when the renderer confirms), push, and `gh pr create` for the
@@ -3315,6 +3911,7 @@ ipcMain.handle("ide:install-extension", async (e, id) => {
   const result = await ideWorkspace.installExtension({ id });
   return result;
 });
+ipcMain.handle("ide:extension-install-dir", (e) => (isIdeSender(e.sender) ? ideWorkspace.installDirLabel() : null));
 ipcMain.handle("ide:uninstall-extension", (e, id) => isIdeSender(e.sender) ? ideWorkspace.uninstallExtension(id) : { ok: false });
 // The OpenRouter key: write-only from the page. Its value never comes back to
 // a renderer — only whether one is saved (see the Secrets block above).
@@ -3607,9 +4204,15 @@ function createWindow() {
 }
 
 function buildTray() {
-  const icon = nativeImage.createFromPath(TRAY_ICON_PATH);
-  // Full-color logo mark, not a template image -- template mode would strip
-  // the color and render only the alpha silhouette.
+  // Windows/Linux have no template images; a black glyph would vanish on a
+  // dark taskbar, so they get the app icon.
+  const icon = process.platform === "darwin"
+    ? nativeImage.createFromPath(TRAY_ICON_PATH)
+    : nativeImage.createFromPath(APP_ICON_PATH).resize({ width: 16, height: 16 });
+  // Just the mark, no background: a template image (black + alpha, built by
+  // assets/make-icons.py) that macOS draws white on a dark or tinted menu bar
+  // and dark on a light one. createFromPath picks up tray-icon@2x.png.
+  if (process.platform === "darwin" && !icon.isEmpty()) icon.setTemplateImage(true);
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.setToolTip("BetterClaude");
 
@@ -3756,7 +4359,24 @@ function buildAppMenu() {
 // --- IPC: settings ---
 ipcMain.handle("settings:get", () => mergeDefaults(store.store));
 
-ipcMain.handle("settings:set", (_e, keyPath, value) => {
+/**
+ * True for BetterClaude's own renderers: the top frame of a window that has
+ * one of our preloads, showing claude.ai or a bundled file:// page. Anything
+ * else (a subframe, a page the main window was navigated away to) is refused.
+ */
+function isAppSender(e) {
+  try {
+    if (!e || !e.sender || e.sender.isDestroyed()) return false;
+    if (e.senderFrame && e.senderFrame !== e.sender.mainFrame) return false;
+    const url = new URL(e.sender.getURL());
+    return url.protocol === "file:" || (url.protocol === "https:" && (url.hostname === "claude.ai" || url.hostname.endsWith(".claude.ai")));
+  } catch {
+    return false;
+  }
+}
+
+ipcMain.handle("settings:set", (e, keyPath, value) => {
+  if (!isAppSender(e) || typeof keyPath !== "string" || !keyPath) return mergeDefaults(store.store);
   store.set(keyPath, value);
   // Only prompt shortcuts touch globalShortcut, and this handler also fires
   // on every slider "input" tick elsewhere in the app, so it's gated to the
@@ -4370,12 +4990,6 @@ ipcMain.handle("sessionBundle:open-panel", () => {
 // claude.ai has no public API to register a Skill programmatically, so
 // nothing here attempts to call one. Users upload the result themselves via
 // claude.ai's own Settings -> Capabilities UI.
-function broadcastSettings() {
-  const updated = mergeDefaults(store.store);
-  broadcastSettingsUpdated(updated);
-  return updated;
-}
-
 ipcMain.handle("skills:search", (_e, params) => searchSkillsRemote(params));
 
 ipcMain.handle("skills:refresh-cache", async () => {

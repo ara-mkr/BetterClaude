@@ -269,13 +269,6 @@ function locateClaude(explicit) {
   );
 }
 
-/**
- * Copies the current environment for the child.
- *
- * Passed through essentially untouched, deliberately (see the compliance note
- * at the top of this file). The single override is TERM, which must agree with
- * the emulator we render into.
- */
 /** Just TERM plus the caller's extras — what childEnv() lays over process.env. */
 function childEnvOverrides(extra) {
   const env = { TERM: "xterm-256color" };
@@ -287,11 +280,45 @@ function childEnvOverrides(extra) {
   return env;
 }
 
+// Markers a Claude Code / Claude desktop HOST sets on processes it launches.
+// They describe BetterClaude's parent, not the user's configuration: when the
+// app is started from a terminal inside Claude Code they arrive in
+// process.env, and passed on they make a CLI tab's `claude` believe it is a
+// nested or SDK-hosted session. The user's own settings (ANTHROPIC_*,
+// CLAUDE_CODE_USE_*, model overrides …) are deliberately NOT in this list —
+// a CLI tab in terminal-parity mode keeps those.
+const HOST_SESSION_ENV = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_SSE_PORT",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_HOST_SESSION_ID",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_MESSAGING_SOCKET",
+  "CLAUDE_CODE_MESSAGING_TOKEN",
+  "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH",
+  "CLAUDE_CODE_SESSION_ATTENDED",
+  "CLAUDE_CODE_EXECPATH",
+  "CLAUDE_CODE_DESKTOP_APP_VERSION",
+  "CLAUDE_AGENT_SDK_VERSION",
+  "CLAUDE_PID",
+];
+
+/**
+ * Copies the current environment for the child.
+ *
+ * Passed through essentially untouched, deliberately (see the compliance note
+ * at the top of this file): the user's own variables all survive. Two
+ * exceptions — TERM, which must agree with the emulator we render into, and
+ * the HOST_SESSION_ENV markers above, which belong to whatever launched
+ * BetterClaude rather than to the user.
+ */
 function childEnv(extra) {
   const env = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (typeof value === "string") env[key] = value;
   }
+  for (const key of HOST_SESSION_ENV) delete env[key];
   env.TERM = "xterm-256color";
   // Team sessions carry BC_TEAM_* variables pointing at their shared hub so
   // scripts/hooks inside the agent can find it without parsing the prompt.
@@ -301,6 +328,46 @@ function childEnv(extra) {
     }
   }
   return env;
+}
+
+/** POSIX single-quoting: safe for any path, quotes and `$` included. */
+function shQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * `--settings` JSON that makes a CLI tab's `claude` report where it is in its
+ * turn cycle by writing a tiny state file — the only reliable way to know
+ * whether it's sitting idle at its prompt without parsing its screen:
+ *
+ *   SessionStart (startup|resume|clear) -> at the prompt, ready
+ *   UserPromptSubmit / PreToolUse / PostToolUse -> mid-turn
+ *   Notification -> its JSON verbatim (permission_prompt = a dialog is up)
+ *   Stop / StopFailure -> the turn ended, back at the prompt
+ *
+ * Team message delivery (electron/main.js) types into a pty only in that last
+ * state: a paste + Enter anywhere else answers whatever dialog is up — it
+ * picked "No, exit" on the folder-trust prompt and would approve a permission
+ * prompt. The hooks are additive (they never replace the user's own), write
+ * nothing to stdout (which UserPromptSubmit/SessionStart would feed to the
+ * model), and carry no tool data: only Notification's small payload is kept.
+ */
+function stateHookSettings(stateFile) {
+  const tmp = `${shQuote(`${stateFile}.tmp`)}.$$`;
+  const commit = `&& mv -f ${tmp} ${shQuote(stateFile)}`;
+  const mark = (event) => ({ type: "command", command: `printf '%s' '{"e":"${event}"}' > ${tmp} ${commit}`, timeout: 5 });
+  const raw = { type: "command", command: `cat > ${tmp} ${commit}`, timeout: 5 };
+  return JSON.stringify({
+    hooks: {
+      SessionStart: [{ matcher: "startup|resume|clear", hooks: [mark("SessionStart")] }],
+      UserPromptSubmit: [{ hooks: [mark("UserPromptSubmit")] }],
+      PreToolUse: [{ hooks: [mark("PreToolUse")] }],
+      PostToolUse: [{ hooks: [mark("PostToolUse")] }],
+      Notification: [{ hooks: [raw] }],
+      Stop: [{ hooks: [mark("Stop")] }],
+      StopFailure: [{ hooks: [mark("StopFailure")] }],
+    },
+  });
 }
 
 /**
@@ -448,10 +515,13 @@ module.exports = {
   ClaudeNotFoundError,
   ClaudeSession,
   DOCS_URL,
+  HOST_SESSION_ENV,
   PtySpawnError,
   applyLoginShellPath,
+  childEnv,
   listAgentSessions,
   locateClaude,
   resolveLoginPath,
+  stateHookSettings,
   subscriptionEnv,
 };

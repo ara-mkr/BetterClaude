@@ -299,6 +299,11 @@ html.bc-ide-resizing, html.bc-ide-resizing * { cursor: col-resize !important; us
 .bc-t-user-bubble { max-width: 85%; padding: 9px 14px; border-radius: 16px 16px 4px 16px; background: var(--bc-ide-bubble-user); font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .bc-t-user-files { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
 .bc-t-user-files span { padding: 1px 7px; border: 1px solid var(--bc-ide-line); border-radius: 999px; color: var(--bc-ide-muted); font: 11px var(--bc-ide-code-font); }
+/* A teammate's relayed message: on the other side from your prompts, outlined
+   rather than filled, and labelled with the sender — never mistakable for you. */
+.bc-t-user[data-from="teammate"] { align-items: flex-start; }
+.bc-t-user[data-from="teammate"] .bc-t-user-bubble { border: 1px solid color-mix(in srgb, var(--bc-ide-accent) 45%, var(--bc-ide-line)); border-radius: 16px 16px 16px 4px; background: color-mix(in srgb, var(--bc-ide-accent) 8%, transparent); }
+.bc-t-user-label { color: var(--bc-ide-muted); font-size: 11.5px; font-weight: 600; letter-spacing: .01em; }
 
 .bc-t-turn { display: flex; flex-direction: column; gap: 8px; }
 .bc-t-body { display: flex; flex-direction: column; gap: 10px; }

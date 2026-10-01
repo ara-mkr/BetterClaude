@@ -130,6 +130,21 @@ function classifyInjectedUserText(text) {
  * the first `type:"user"` line that carries real text (not a tool_result,
  * not an isMeta/compact-summary bookkeeping line).
  */
+/**
+ * A prompt the Team Hub typed in (main.js teamDeliveryText) as a title
+ * source: a "[BetterClaude]" system delivery (the join prompt) is no title
+ * at all; a "[BetterClaude team · …]" message is titled by its first body,
+ * without the header or the "can't see your terminal" trailer.
+ */
+function teamDeliveryBody(text) {
+  if (/^\[BetterClaude\]/.test(text)) return "";
+  if (!/^\[BetterClaude team · /.test(text)) return text;
+  const body = text.split(/\n\n(?=\[BetterClaude)/)[0]
+    .replace(/^\[BetterClaude team · [^\n]*\]\n?/, "")
+    .replace(/\n\([^\n]*can't see your terminal[^\n]*\)\s*$/, "");
+  return body.trim();
+}
+
 function deriveSessionTitle(lines) {
   for (const line of lines || []) {
     if (line && line.type === "summary" && typeof line.summary === "string" && line.summary.trim()) {
@@ -146,7 +161,7 @@ function deriveSessionTitle(lines) {
     const raw = extractMessageText(line).trim();
     const injected = classifyInjectedUserText(raw);
     if (injected && injected.kind !== "user") continue;
-    const text = injected ? injected.text : cleanPromptText(raw);
+    const text = teamDeliveryBody(injected ? injected.text : cleanPromptText(raw));
     if (text) return collapseTitle(text);
   }
   return "";

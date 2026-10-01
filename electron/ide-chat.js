@@ -219,6 +219,11 @@ function friendlyError(turn, resultEvent, lastStderr) {
  */
 function createIdeChatEngine(host) {
   const procs = new Map(); // tabId -> proc
+  // What a tab last ran with — { cwd, sessionId, model, permissionMode } — so
+  // a team delivery can respawn a tab whose process was released as idle.
+  const tabMeta = new Map();
+  // Tabs on an agent team: tabId -> { prompt } (the protocol appendix).
+  const teams = new Map();
   let seq = 0;
 
   const send = (tabId, payload) => {
@@ -321,6 +326,10 @@ function createIdeChatEngine(host) {
     args.push("--setting-sources", config.loadUserSettings === true ? "user,project,local" : "project,local");
     if (!config.loadMcpServers) args.push("--strict-mcp-config");
     args.push("--no-chrome");
+    // A tab on an agent team carries the coordination protocol in every
+    // process it spawns; the session itself resumes as usual.
+    const team = teams.get(tabId);
+    if (team && team.prompt) args.push("--append-system-prompt", team.prompt);
 
     const isWinScript = process.platform === "win32" && /\.(cmd|bat)$/i.test(binaryPath);
     const env = subscriptionEnv({ binaryPath, extra: { TERM: "dumb" } });
@@ -562,6 +571,8 @@ function createIdeChatEngine(host) {
         proc.sessionId = ev.session_id;
         send(tabId, { type: "session", sessionId: ev.session_id });
       }
+      const meta = tabMeta.get(tabId);
+      if (meta && ev.session_id && procs.get(tabId) === proc) meta.sessionId = ev.session_id;
       proc.apiKeySource = ev.apiKeySource || null;
       if (ev.permissionMode) proc.cliMode = ev.permissionMode;
       // Billing guard — `init` precedes the turn's first API request.
@@ -753,6 +764,10 @@ function createIdeChatEngine(host) {
     }
     cancelPending(proc);
     scheduleIdle(proc);
+    // Joined (or left) a team mid-turn: this process lacks (or still has) the
+    // protocol. Release it once the turn is done; the next message resumes
+    // the session in a process spawned with the right prompt.
+    if (proc.respawnForTeam) setTimeout(() => { if (!proc.turn && !proc.pending.size && !proc.tasks.size) disposeProc(proc, { quiet: true }); }, 0);
     activity();
 
     if (turn.stopping) {
@@ -799,6 +814,68 @@ function createIdeChatEngine(host) {
   // --- public API ---------------------------------------------------------------
 
   /**
+   * The tab's process, spawned (resuming `sessionId`) when there is none or
+   * the running one is for another project or model. The billing guard runs
+   * before any spawn. Returns { proc, cold } or { error }.
+   */
+  function ensureProc({ tabId, cwd, sessionId, model, permissionMode }) {
+    let proc = procs.get(tabId);
+    if (proc && (proc.exited || proc.cwd !== cwd || proc.model !== model)) {
+      disposeProc(proc, { quiet: true });
+      proc = null;
+    }
+    if (proc) return { proc, cold: false };
+    const config = host.getConfig() || {};
+    // Billing guard, part one: settings files that would route this chat
+    // off the user's Claude plan are caught before anything is spawned.
+    if (!config.allowApiKeyBilling) {
+      const overrides = settingsProviderOverrides({ cwd, loadUserSettings: config.loadUserSettings === true });
+      if (overrides.length) {
+        const where = overrides.map((o) => `${o.label} ${o.scope === "user" || o.scope === "managed" ? "set" : "sets"} ${o.detail}`).join("; ");
+        send(tabId, {
+          type: "error",
+          code: "billing",
+          scopes: overrides.map((o) => o.scope),
+          message: `Stopped before sending anything: ${where} — so this chat would not run on your Claude plan.`,
+        });
+        return { error: "billing" };
+      }
+    }
+    try {
+      enforceCap(tabId);
+      return { proc: spawnProc({ tabId, cwd, sessionId, mode: permissionMode, model }), cold: true };
+    } catch (err) {
+      send(tabId, { type: "error", code: err && err.name === "ClaudeNotFoundError" ? "not-found" : "spawn", message: (err && err.message) || "Claude Code could not start." });
+      return { error: "spawn" };
+    }
+  }
+
+  /** Opens a turn and writes its user line. False (and the process released) if the CLI won't take it. */
+  function startTurn(proc, { content, prompt, attachments = [], auto = false, startPayload }) {
+    clearTimeout(proc.idleTimer);
+    proc.lastUsedAt = Date.now();
+    // A queued task notification now rides along with this prompt.
+    proc.autoReason = null;
+    proc.turn = newTurn({ prompt, attachments, auto });
+    send(proc.tabId, startPayload);
+    const wrote = writeLine(proc, {
+      type: "user",
+      message: { role: "user", content },
+      parent_tool_use_id: null,
+      session_id: "",
+    });
+    if (!wrote) {
+      proc.turn.ended = true;
+      proc.turn = null;
+      send(proc.tabId, { type: "error", code: "spawn", message: "Claude Code isn't accepting input right now. Try again." });
+      disposeProc(proc, { quiet: true });
+      return false;
+    }
+    activity();
+    return true;
+  }
+
+  /**
    * Sends one user turn. Reuses the tab's warm process when its project and
    * model still match; otherwise (re)spawns, resuming the session when known.
    */
@@ -808,10 +885,7 @@ function createIdeChatEngine(host) {
     if (proc && proc.turn) return { ok: false, error: "busy" };
     const model = claudeModel || null;
     const knownSession = (proc && proc.sessionId) || (sessionId && UUID_RE.test(sessionId) ? sessionId : null);
-    if (proc && (proc.exited || proc.cwd !== cwd || proc.model !== model)) {
-      disposeProc(proc, { quiet: true });
-      proc = null;
-    }
+    tabMeta.set(tabId, { cwd, sessionId: knownSession, model, permissionMode });
 
     let fullPrompt = prompt.trim();
     let used = 0;
@@ -825,31 +899,11 @@ function createIdeChatEngine(host) {
     }
 
     const config = host.getConfig() || {};
-    const cold = !proc;
-    if (!proc) {
-      // Billing guard, part one: settings files that would route this chat
-      // off the user's Claude plan are caught before anything is spawned.
-      if (!config.allowApiKeyBilling) {
-        const overrides = settingsProviderOverrides({ cwd, loadUserSettings: config.loadUserSettings === true });
-        if (overrides.length) {
-          const where = overrides.map((o) => `${o.label} ${o.scope === "user" || o.scope === "managed" ? "set" : "sets"} ${o.detail}`).join("; ");
-          send(tabId, {
-            type: "error",
-            code: "billing",
-            scopes: overrides.map((o) => o.scope),
-            message: `Stopped before sending anything: ${where} — so this chat would not run on your Claude plan.`,
-          });
-          return { ok: false, error: "billing" };
-        }
-      }
-      try {
-        enforceCap(tabId);
-        proc = spawnProc({ tabId, cwd, sessionId: knownSession, mode: permissionMode, model });
-      } catch (err) {
-        send(tabId, { type: "error", code: err && err.name === "ClaudeNotFoundError" ? "not-found" : "spawn", message: (err && err.message) || "Claude Code could not start." });
-        return { ok: false, error: "spawn" };
-      }
-    } else {
+    const ensured = ensureProc({ tabId, cwd, sessionId: knownSession, model, permissionMode });
+    if (ensured.error) return { ok: false, error: ensured.error };
+    proc = ensured.proc;
+    const cold = ensured.cold;
+    if (!cold) {
       const wanted = cliModeFor(permissionMode, !!config.allowBypassMode);
       if (wanted !== proc.cliMode) {
         const response = await controlRequest(proc, { subtype: "set_permission_mode", mode: wanted });
@@ -864,31 +918,103 @@ function createIdeChatEngine(host) {
       if (proc.exited || proc.turn) return { ok: false, error: proc.turn ? "busy" : "exited" };
     }
 
-    clearTimeout(proc.idleTimer);
-    proc.lastUsedAt = Date.now();
-    // A queued task notification now rides along with this prompt.
-    proc.autoReason = null;
-    proc.turn = newTurn({ prompt, attachments });
-    // `cold`: a process was just spawned, so the CLI is still starting up.
-    send(tabId, { type: "start", sessionId: proc.sessionId, modelLabel: "Claude", cold });
     if (host.logTurn) {
       try { host.logTurn({ role: "user", modelId: model || "claude", tokens: Math.ceil(prompt.length / 4), costUsd: 0, cwd }); } catch {}
     }
-    const wrote = writeLine(proc, {
-      type: "user",
-      message: { role: "user", content: fullPrompt },
-      parent_tool_use_id: null,
-      session_id: "",
+    // `cold`: a process was just spawned, so the CLI is still starting up.
+    const started = startTurn(proc, {
+      content: fullPrompt,
+      prompt,
+      attachments,
+      startPayload: { type: "start", sessionId: proc.sessionId, modelLabel: "Claude", cold },
     });
-    if (!wrote) {
-      proc.turn.ended = true;
-      proc.turn = null;
-      send(tabId, { type: "error", code: "spawn", message: "Claude Code isn't accepting input right now. Try again." });
-      disposeProc(proc, { quiet: true });
-      return { ok: false, error: "write" };
+    return started ? { ok: true } : { ok: false, error: "write" };
+  }
+
+  /**
+   * A teammate's message for a tab on an agent team, as a user turn of its
+   * own. Only when the tab is truly free — no turn running (a user line
+   * written mid-turn would ride into it) and no approval card open (a user
+   * line can never answer one, but it mustn't queue behind one either). A tab
+   * whose process was released is respawned, resuming its session.
+   */
+  function deliver(tabId, text, { cwd = null, team = null } = {}) {
+    if (typeof text !== "string" || !text.trim()) return { ok: false, error: "empty" };
+    const existing = procs.get(tabId);
+    if (existing && (existing.turn || existing.pending.size || existing.killing)) return { ok: false, error: "busy" };
+    const meta = tabMeta.get(tabId) || (cwd ? { cwd, sessionId: null, model: null, permissionMode: "default" } : null);
+    if (!meta) return { ok: false, error: "no-session" };
+    tabMeta.set(tabId, meta);
+    const ensured = ensureProc({ tabId, cwd: meta.cwd, sessionId: meta.sessionId, model: meta.model, permissionMode: meta.permissionMode || "default" });
+    if (ensured.error) return { ok: false, error: ensured.error };
+    const started = startTurn(ensured.proc, {
+      content: text,
+      prompt: text,
+      auto: true,
+      startPayload: {
+        type: "start",
+        auto: true,
+        cold: ensured.cold,
+        sessionId: ensured.proc.sessionId,
+        reason: team && team.from ? `Message from ${team.from}` : "Message from a teammate",
+        team: team ? { from: String(team.from || "a teammate"), body: String(team.body || "") } : null,
+      },
+    });
+    return started ? { ok: true } : { ok: false, error: "write" };
+  }
+
+  /**
+   * Puts a tab on (or takes it off) an agent team. The protocol goes in at
+   * spawn time, so a warm process is released — right away when idle, else
+   * after its current turn — and the next turn resumes in a fresh one.
+   */
+  function setTeam(tabId, team) {
+    if (team && team.prompt) {
+      teams.set(tabId, { prompt: String(team.prompt) });
+      const known = tabMeta.get(tabId);
+      if (known) {
+        // Joined (or re-joined) with a mode chip that may have moved since the
+        // tab last sent something: the chip at join time is the authority.
+        if (team.permissionMode) known.permissionMode = team.permissionMode;
+      } else if (team.cwd) {
+        // The chat's own mode chip, never a looser default: a teammate's turn
+        // gets exactly the approvals the user's own would.
+        tabMeta.set(tabId, { cwd: team.cwd, sessionId: team.sessionId && UUID_RE.test(team.sessionId) ? team.sessionId : null, model: null, permissionMode: team.permissionMode || "default" });
+      }
+    } else {
+      teams.delete(tabId);
     }
-    activity();
-    return { ok: true };
+    const proc = procs.get(tabId);
+    if (!proc || proc.exited) return;
+    if (!proc.turn && !proc.pending.size && !proc.tasks.size) disposeProc(proc, { quiet: true });
+    else proc.respawnForTeam = true;
+  }
+
+  /**
+   * The mode chip moved on a chat that is on a team. A teammate's message can
+   * start a turn before the user sends anything, so the stored mode has to
+   * follow the chip — otherwise tightening to "Ask" still let the next teammate
+   * turn edit files unasked. A warm process runs in its old mode, so it is
+   * released (now if idle, else after its turn) and the next turn resumes
+   * in a fresh one started in the new mode.
+   */
+  function setTeamMode(tabId, permissionMode) {
+    const meta = tabMeta.get(tabId);
+    if (!meta || !teams.has(tabId) || typeof permissionMode !== "string" || !permissionMode) return false;
+    if (meta.permissionMode === permissionMode) return true;
+    meta.permissionMode = permissionMode;
+    const proc = procs.get(tabId);
+    if (!proc || proc.exited) return true;
+    if (!proc.turn && !proc.pending.size && !proc.tasks.size) disposeProc(proc, { quiet: true });
+    else proc.respawnForTeam = true;
+    return true;
+  }
+
+  /** "waiting" (an approval card is open), "working", "idle", or "closed" (nothing known about the tab). */
+  function tabState(tabId) {
+    const proc = procs.get(tabId);
+    if (proc && !proc.exited) return proc.pending.size ? "waiting" : proc.turn ? "working" : "idle";
+    return tabMeta.has(tabId) || teams.has(tabId) ? "idle" : "closed";
   }
 
   /** The renderer's answer to a permission / question / plan card. */
@@ -944,10 +1070,14 @@ function createIdeChatEngine(host) {
 
   function dispose(tabId) {
     disposeProc(procs.get(tabId), { quiet: true });
+    tabMeta.delete(tabId);
+    teams.delete(tabId);
   }
 
   function disposeAll() {
     for (const proc of Array.from(procs.values())) disposeProc(proc, { quiet: true });
+    tabMeta.clear();
+    teams.clear();
   }
 
   /**
@@ -976,7 +1106,7 @@ function createIdeChatEngine(host) {
     return !!(proc && proc.turn);
   };
 
-  return { sendMessage, respondPermission, stop, dispose, disposeAll, disposeIdle, aggregateState, isBusy };
+  return { sendMessage, respondPermission, stop, dispose, disposeAll, disposeIdle, aggregateState, isBusy, deliver, setTeam, setTeamMode, tabState };
 }
 
 module.exports = { createIdeChatEngine, pickAlwaysOption, friendlyError, cliModeFor, settingsProviderOverrides, isBillingOverrideNotice, SUBSCRIPTION_KEY_SOURCES, CLI_MODES };

@@ -501,6 +501,11 @@ function pickInstallHost() {
   return EXTENSION_HOSTS[0];
 }
 
+/** Where Install writes, as "~/.vscode/extensions" — shown on the button. */
+function installDirLabel() {
+  return `~/${pickInstallHost().dir}/extensions`;
+}
+
 async function readManifestEntry(extensionDir, hostLabel) {
   let manifest;
   try {
@@ -637,6 +642,7 @@ module.exports = {
   getGitDiff,
   getGitInfo,
   installExtension,
+  installDirLabel,
   listInstalledExtensions,
   listProjectIndex,
   listProjectTree,

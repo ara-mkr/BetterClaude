@@ -391,8 +391,9 @@
 
   function evictRecords() {
     if (records.length <= MAX_OPEN_RECORDS) return;
+    // A teammate stays open: closing it would take it off the team.
     const idle = records
-      .filter((r) => !r.busy && !r.waiting && r.tabId !== activeTabId && !(r.draft && (r.draft.text.trim() || r.draft.attachments.length)))
+      .filter((r) => !r.busy && !r.waiting && !r.team && r.tabId !== activeTabId && !(r.draft && (r.draft.text.trim() || r.draft.attachments.length)))
       .sort((a, b) => a.viewedAt - b.viewedAt);
     while (records.length > MAX_OPEN_RECORDS && idle.length) {
       const r = idle.shift();
@@ -487,7 +488,8 @@
     const r = activeRecord();
     $("bc-ide-session-title").textContent = r ? (r.title || "New session") : "Claude Code";
     const branch = scmInfo && scmInfo.branch ? ` › ${scmInfo.branch}` : "";
-    $("bc-ide-session-meta").textContent = activeProject ? `${activeProject.name}${branch}` : "";
+    const teammate = r && r.team ? ` · teammate ${r.team.name}` : "";
+    $("bc-ide-session-meta").textContent = activeProject ? `${activeProject.name}${branch}${teammate}` : "";
     const tag = $("bc-ide-plan-tag");
     if (r && r.subscription === true) {
       tag.hidden = false; tag.dataset.kind = "plan"; tag.textContent = "Claude plan";
@@ -573,6 +575,9 @@
     const r = activeRecord() || (PER_SESSION_MODES.has(next) && activeProject ? newSession() : null);
     if (r) r.permMode = next;
     syncModeChip();
+    // A chat on the agent team takes teammate messages between your own: its
+    // stored mode has to follow the chip, not just apply at your next send.
+    if (r && r.team && api.teamSetMode) api.teamSetMode({ tabId: r.tabId, permissionMode: r.permMode }).catch(() => {});
     if (r && r.busy) toast("The new mode applies from your next message.");
   }
 
@@ -711,7 +716,13 @@
       case "start":
         r.busy = true;
         if (event.cold) t.setWorking("Starting Claude Code…");
-        if (event.auto) {
+        if (event.auto && event.team) {
+          // A teammate's message, relayed from the agent team — it's the
+          // prompt of this turn, so it sits where yours would, labelled.
+          t.userMessage(event.team.body || "", { label: `Message from ${event.team.from || "a teammate"}` });
+          if (!r.firstPrompt && event.team.body) r.firstPrompt = event.team.body;
+          t.setWorking(event.cold ? "Starting Claude Code…" : "Working…");
+        } else if (event.auto) {
           // Claude Code started this turn itself — typically a background
           // task it launched earlier just finished — so there is no prompt of
           // yours above it; say why it's talking.
@@ -861,9 +872,14 @@
 
   async function maybeNameSession(r) {
     if (!r || r.titleGenerated || !r.sessionId) return;
+    // A turn with no prompt (the team join prompt, a background-task turn)
+    // gave the titler nothing — it answered "Empty Conversation Start". Wait
+    // for a real prompt instead.
+    const prompt = r.firstPrompt || r.transcript.firstUserText();
+    if (!prompt.trim()) return;
     r.titleGenerated = true;
     try {
-      const title = await api.generateSessionTitle({ cwd: r.cwd, sessionId: r.sessionId, prompt: r.firstPrompt || r.transcript.firstUserText(), reply: r.transcript.lastAssistantText() });
+      const title = await api.generateSessionTitle({ cwd: r.cwd, sessionId: r.sessionId, prompt, reply: r.transcript.lastAssistantText() });
       if (title) {
         r.title = title;
         const list = sessionsByCwd.get(r.cwd) || [];
@@ -1901,11 +1917,11 @@
 
   function prMenuRows() {
     return [
-      { label: "Open PR draft in browser", hint: "gh pr create --web", run: () => runCreatePr({ web: true }) },
-      { label: "Create PR directly", hint: "gh pr create --fill", run: () => runCreatePr({}) },
-      { label: "Commit & push only", hint: "No pull request", run: () => runCreatePr({ pushOnly: true }) },
+      { icon: "UPLOAD", label: "Open PR draft in browser", hint: "gh pr create --web", run: () => runCreatePr({ web: true }) },
+      { icon: "GIT_BRANCH", label: "Create PR directly", hint: "gh pr create --fill", run: () => runCreatePr({}) },
+      { icon: "CHECK", label: "Commit & push only", hint: "No pull request", run: () => runCreatePr({ pushOnly: true }) },
       { divider: true },
-      { label: "Copy diff", run: copyDiff },
+      { icon: "COPY", label: "Copy diff", run: copyDiff },
     ];
   }
 
@@ -2139,6 +2155,11 @@
       host.appendChild(row);
     });
   }
+  // Where the lightweight Install writes (your own editor's folder), for the
+  // button's hint. Fetched once; the hint just says "Install" until then.
+  let extInstallDir = null;
+  if (api.extensionInstallDir) api.extensionInstallDir().then((dir) => { extInstallDir = dir || null; }).catch(() => {});
+
   function renderBrowseExtensions() {
     const host = $("bc-ide-extension-list");
     if (extensionTab !== "browse") return;
@@ -2153,7 +2174,7 @@
       const busy = installingIds.has(extension.id);
       row.innerHTML = extensionRow({
         iconHtml: extension.icon ? `<img src="${extension.icon}" alt="" />` : icon("EXTENSIONS"),
-        actionHtml: `<button type="button" class="bc-ide-btn bc-ide-ext-install" ${installed ? "disabled" : ""}>${busy ? "Installing…" : installed ? "Installed" : "Install"}</button>`,
+        actionHtml: `<button type="button" class="bc-ide-btn bc-ide-ext-install" title="${escapeHtml(extInstallDir ? `Installs into ${extInstallDir} — your own editor's extensions folder` : "Install")}" ${installed ? "disabled" : ""}>${busy ? "Installing…" : installed ? "Installed" : "Install"}</button>`,
       });
       row.querySelector("strong").textContent = extension.displayName;
       row.querySelector("small").textContent = [extension.publisher, extension.source === "registry" ? (extension.downloads != null ? `${extension.downloads.toLocaleString()} installs` : "registry") : extension.category].filter(Boolean).join(" · ");
@@ -2301,8 +2322,52 @@
       { divider: true },
       { icon: "CODE", label: "Open in the CLI tab", hint: "Interactive claude", run: () => api.openCli() },
       { icon: "EXTENSIONS", label: "VS Code extensions", run: () => openPanel("extensions") },
+      ...teamMenuRows(),
     ]);
   });
+
+  // --- Agent team (the CLI tab's Team Hub) ------------------------------------
+  // A chat session can join its project's team: teammates in CLI tabs (and
+  // other chats) message it through the hub, and their messages arrive here as
+  // turns of their own — labelled, and only once the current turn is done.
+  function teamMenuRows() {
+    if (!api.teamJoin || !activeProject) return [];
+    const r = activeRecord();
+    const rows = [{ divider: true }];
+    if (r && r.team) rows.push({ icon: "CHAT", label: "Leave the agent team", hint: r.team.name, run: () => leaveTeam(r) });
+    else rows.push({ icon: "CHAT", label: "Join the agent team", hint: "CLI-tab teammates can message this chat", run: () => joinTeam(r || newSession()) });
+    rows.push({ icon: "NEW_CHAT", label: "New teammate", hint: "A new chat on this team", run: () => newTeammate() });
+    return rows;
+  }
+
+  async function joinTeam(r) {
+    if (!r) return null;
+    if (r.team) return r;
+    let res = null;
+    try { res = await api.teamJoin({ tabId: r.tabId, cwd: r.cwd, sessionId: r.sessionId, permissionMode: r.permMode }); } catch { res = null; }
+    if (!res) { toast("Couldn't join the agent team in this folder."); return null; }
+    r.team = { memberId: res.memberId, name: res.name };
+    r.transcript.note(`On the agent team as ${res.name}. Teammates can message this chat from the CLI tab's Team sidebar; their messages start a turn here once Claude is free.`, "muted");
+    if (r.tabId === activeTabId) syncChrome();
+    renderSidebar();
+    return r;
+  }
+
+  async function leaveTeam(r) {
+    if (!r || !r.team) return;
+    try { await api.teamLeave({ tabId: r.tabId }); } catch { /* the tab is gone anyway */ }
+    r.transcript.note(`Left the agent team (was ${r.team.name}).`, "muted");
+    r.team = null;
+    if (r.tabId === activeTabId) syncChrome();
+    renderSidebar();
+  }
+
+  async function newTeammate() {
+    if (!activeProject) { toast("Add a project folder first."); return; }
+    const record = makeRecord({ cwd: activeProject.cwd });
+    activate(record.tabId);
+    await joinTeam(record);
+  }
   document.querySelectorAll("[data-panel-tab]").forEach((b) => b.addEventListener("click", () => openPanel(b.dataset.panelTab)));
   on("bc-ide-pr", "click", () => runCreatePr({ web: true }));
   on("bc-ide-pr-more", "click", (e) => { e.stopPropagation(); popMenu("bc-ide-pr-menu", "bc-ide-pr-more", prMenuRows()); });
@@ -2420,6 +2485,25 @@
     syncModeChip();
     syncLayoutToggle();
   });
+  if (api.onSetModel) {
+    api.onSetModel((model) => {
+      const id = model === "default" ? "" : String(model || "");
+      if (!CLAUDE_MODEL_CHOICES.some((c) => c.id === id)) return;
+      selectModel("claude", id);
+      toast(`Code tab model: ${CLAUDE_MODEL_CHOICES.find((c) => c.id === id).label}`);
+    });
+  }
+
+  if (api.onTeamRenamed) {
+    api.onTeamRenamed(({ memberId, name } = {}) => {
+      let touched = false;
+      for (const r of records) {
+        if (r.team && r.team.memberId === memberId && typeof name === "string" && name) { r.team.name = name; touched = true; }
+      }
+      if (touched) syncChrome();
+    });
+  }
+
   api.onProjectPicked(async ({ cwd } = {}) => {
     if (!cwd) return;
     try {

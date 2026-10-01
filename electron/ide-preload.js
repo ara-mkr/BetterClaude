@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld("betterClaudeIDE", {
   listExtensions: () => ipcRenderer.invoke("ide:list-extensions"),
   searchExtensions: (query) => ipcRenderer.invoke("ide:search-extensions", query),
   installExtension: (id) => ipcRenderer.invoke("ide:install-extension", id),
+  extensionInstallDir: () => ipcRenderer.invoke("ide:extension-install-dir"),
   uninstallExtension: (id) => ipcRenderer.invoke("ide:uninstall-extension", id),
   listFreeModels: (force) => ipcRenderer.invoke("ide:list-free-models", { force: !!force }),
   // The OpenRouter key is write-only from here: status says whether one is
@@ -60,6 +61,12 @@ contextBridge.exposeInMainWorld("betterClaudeIDE", {
   respondPermission: (payload) => ipcRenderer.invoke("ide:chat-permission", payload),
   // Release a closed session tab's Claude Code process.
   disposeChat: (tabId) => ipcRenderer.invoke("ide:chat-dispose", tabId),
+  // Put a session on its project's agent team (the CLI tab's Team Hub), or
+  // take it off: { tabId, cwd, sessionId? } -> { memberId, name } | null.
+  teamJoin: (payload) => ipcRenderer.invoke("ide:team:join", payload),
+  teamLeave: (payload) => ipcRenderer.invoke("ide:team:leave", payload),
+  // The mode chip moved on a chat that is on a team: { tabId, permissionMode }.
+  teamSetMode: (payload) => ipcRenderer.invoke("ide:team:set-mode", payload),
   // Terminal panel: a login shell in the project folder.
   startShell: (cwd, cols, rows) => ipcRenderer.invoke("ide:start-shell", cwd, cols, rows),
   write: (data) => ipcRenderer.send("ide:input", String(data)),
@@ -88,6 +95,10 @@ contextBridge.exposeInMainWorld("betterClaudeIDE", {
     onBridge: forward("workbench:bridge"),
   },
   onProjectPicked: forward("ide:project-picked"),
+  // The dock's Model switcher widget (main "widgets:set-code-model").
+  onSetModel: forward("ide:set-model"),
+  // A teammate was renamed from the CLI tab's Team card: { memberId, name }.
+  onTeamRenamed: forward("ide:team-renamed"),
   onWorkspaceSettings: (callback) => {
     ipcRenderer.on("betterclaude:settings-changed", (_event, payload) => callback(payload));
   },
