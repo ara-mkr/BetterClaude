@@ -29,7 +29,6 @@ const { createActivityTracker } = require("./claude-activity");
 const { autoUpdater } = require("electron-updater");
 const { pickLoadingTip } = require("../core/motion-fx");
 const { deriveChannelId, encryptText, decryptText } = require("../core/clipboard-bridge");
-const analyticsDb = require("./analytics-db");
 const teamSync = require("./team-sync");
 const sessionBundle = require("./session-bundle");
 const ideWorkspace = require("./ide-workspace");
@@ -90,7 +89,6 @@ let mainWindow = null;
 let tray = null;
 let isQuitting = false;
 let splashWindow = null;
-let analyticsDbReady = null;
 let buddyWindow = null;
 let buddyDrag = null;        // { offsetX, offsetY } while a drag is in flight
 let buddyWorking = false;    // last reported "Claude is generating" state
@@ -4525,13 +4523,18 @@ ipcMain.handle("appearance:select-theme", (_e, themeId) => {
   // nothing but freeze every OTHER section's current defaults into
   // config.json — after which a changed default never reached that user
   // (it froze codeWindow.chat.loadUserSettings: true).
+  // The accent resets to the theme's OWN --bc-accent, not the schema default:
+  // accentColor is applied as an inline style that beats the theme sheet, so
+  // resetting it to the default painted every theme BetterClaude Default's
+  // indigo (Matcha's green, Nord's frost blue, ... never showed anywhere).
+  const themeAccent = (extractThemeVars(themes[themeId]) || {})["--bc-accent"] || "";
   const next = {
     appearance: {
       ...current.appearance,
       activeTheme: themeId,
       customThemeBase: null,
       customThemeCSS: "",
-      accentColor: defaults.appearance.accentColor,
+      accentColor: /^#[0-9a-f]{6}$/i.test(themeAccent) ? themeAccent : defaults.appearance.accentColor,
       colorBlindSafe: defaults.appearance.colorBlindSafe,
       contrastBoost: defaults.appearance.contrastBoost,
       glassPanels: defaults.appearance.glassPanels,
@@ -5294,71 +5297,6 @@ ipcMain.handle("clipboardBridge:test-connection", async () => {
   return res.json();
 });
 
-// --- Usage Analytics Dashboard ---
-// All storage is local (electron/analytics-db.js, a WASM SQLite database
-// under userData/analytics.sqlite) — no external analytics service is ever
-// contacted. Every handler awaits analyticsDbReady since init is async
-// (loading the WASM engine + any existing on-disk database) and can run
-// after the renderer's first analytics call.
-function csvEscape(value) {
-  const s = value == null ? "" : String(value);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-ipcMain.handle("analytics:log-plugin-tick", async (_e, { ts, day, pluginIds }) => {
-  await analyticsDbReady;
-  try {
-    (pluginIds || []).forEach((pluginId) => analyticsDb.logEvent({ ts, day, type: "plugin", pluginId }));
-  } catch (err) {
-    console.error("[BetterClaude] analytics plugin log failed", err);
-  }
-});
-
-ipcMain.handle("analytics:query", async (_e, range) => {
-  await analyticsDbReady;
-  try {
-    return analyticsDb.queryAnalytics(range);
-  } catch (err) {
-    console.error("[BetterClaude] analytics query failed", err);
-    return null;
-  }
-});
-
-ipcMain.handle("analytics:export-csv", async (_e, range) => {
-  await analyticsDbReady;
-  const rows = analyticsDb.exportRows(range);
-  const result = await dialog.showSaveDialog(mainWindow, {
-    title: "Export Usage Analytics",
-    defaultPath: `betterclaude-usage-${range.from}_${range.to}.csv`,
-    filters: [{ name: "CSV", extensions: ["csv"] }],
-  });
-  if (result.canceled || !result.filePath) return null;
-  const header = "ts,day,type,role,tokens,model,project,pluginId,costUsd";
-  const lines = [header, ...rows.map((r) =>
-    [r.ts, r.day, r.type, csvEscape(r.role), r.tokens || 0, csvEscape(r.model), csvEscape(r.project), csvEscape(r.pluginId), r.costUsd || 0].join(",")
-  )];
-  fs.writeFileSync(result.filePath, lines.join("\n"), "utf8");
-  return result.filePath;
-});
-
-ipcMain.handle("analytics:save-png", async (_e, { dataUrl, suggestedName }) => {
-  const result = await dialog.showSaveDialog(mainWindow, {
-    title: "Export Chart",
-    defaultPath: suggestedName || "betterclaude-chart.png",
-    filters: [{ name: "PNG", extensions: ["png"] }],
-  });
-  if (result.canceled || !result.filePath) return null;
-  const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
-  fs.writeFileSync(result.filePath, Buffer.from(base64, "base64"));
-  return result.filePath;
-});
-
-ipcMain.handle("analytics:clear", async () => {
-  await analyticsDbReady;
-  analyticsDb.clearAll();
-  return true;
-});
-
 // --- Smart Notification Digest: native OS notification ---
 // Used both for a flushed digest and for any "urgent" (failure) notify()
 // call — see electron/preload.js's notify(). Electron's Notification API is
@@ -5462,7 +5400,6 @@ const isDev = process.argv.includes("--dev");
 const DEV_HARD_RELAUNCH_FILES = [
   path.join(__dirname, "main.js"),
   path.join(__dirname, "window-state.js"),
-  path.join(__dirname, "analytics-db.js"),
   path.join(__dirname, "team-sync.js"),
 ];
 const DEV_SOFT_RELOAD_PATHS = [
@@ -5552,10 +5489,6 @@ app.whenReady().then(() => {
   screen.on("display-removed", reseatBuddy);
   screen.on("display-added", reseatBuddy);
   screen.on("display-metrics-changed", reseatBuddy);
-  analyticsDbReady = analyticsDb.initAnalyticsDb(app.getPath("userData")).catch((err) => {
-    console.error("[BetterClaude] analytics DB init failed", err);
-    return null;
-  });
   startTeamSync();
   // Background check shortly after launch; silent (no native OS dialog) —
   // the renderer surfaces it via betterclaude:update-status instead so it
@@ -5608,7 +5541,6 @@ app.on("will-quit", () => {
   fileWatchers.forEach((w) => w.close());
   fileWatchers.clear();
   stopClipboardBridge();
-  analyticsDb.shutdown();
   stopTeamSync();
 });
 

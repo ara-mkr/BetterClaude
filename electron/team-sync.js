@@ -1,8 +1,8 @@
 /**
  * Team/Shared Plugin Sync — Electron main-process only (child_process +
- * fs), so this lives in electron/, not /core, same split as electron/
- * analytics-db.js. Shells out to the system `git` binary (clone once, then
- * fetch + hard-reset on every subsequent sync) rather than a JS git
+ * fs), so this lives in electron/, not /core. Shells out to the system
+ * `git` binary (clone once, then fetch + hard-reset on every subsequent
+ * sync) rather than a JS git
  * library — this app already keeps dependencies light, and a real git repo
  * is exactly what the spec asks for, so this is a thin wrapper rather than
  * a from-scratch git implementation.

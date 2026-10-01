@@ -250,13 +250,6 @@ const DEFAULT_SETTINGS = {
     // indicator.js's marker()), not stored separately.
     watched: [],
   },
-  // Usage Analytics Dashboard — off by default, like the other background-
-  // logging features (skillMarketplace). Historical charts are built from
-  // usage events logged locally as you go (electron/analytics-db.js, a WASM
-  // SQLite database under userData/analytics.sqlite).
-  analytics: {
-    enabled: false,
-  },
   // Team/Shared Plugin Sync — off by default. Points at a git repo of
   // *.claudeplugin.js / theme *.css files (electron/team-sync.js shells out
   // to the system `git` to clone/pull it), copied into the same userData/

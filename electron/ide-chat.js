@@ -222,7 +222,6 @@ function friendlyError(turn, resultEvent, lastStderr) {
  * @param {(payload:object)=>void} host.send            post an ide:chat-event to the renderer
  * @param {()=>object} host.getConfig                    { loadUserSettings, loadMcpServers, allowApiKeyBilling, allowBypassMode }
  * @param {()=>string} host.locateBinary                 absolute path to `claude` (throws when missing)
- * @param {(row:object)=>void} [host.logTurn]            analytics row { role, modelId, tokens, costUsd, cwd }
  * @param {(ctx:object)=>boolean} [host.onLimit]         usage-limit failover; return true when it took the turn over
  * @param {()=>void} [host.onActivity]                   aggregate working/waiting state changed
  * @param {(n:object)=>void} [host.notify]               OS notification (host decides when the window is unfocused)
@@ -800,11 +799,6 @@ function createIdeChatEngine(host) {
       return;
     }
 
-    if (host.logTurn) {
-      // Cache reads are re-reads of context already counted, not new work.
-      const tokens = usage ? (Number(usage.input_tokens) || 0) + (Number(usage.output_tokens) || 0) + (Number(usage.cache_creation_input_tokens) || 0) : 0;
-      try { host.logTurn({ role: "assistant", modelId: turn.modelId || proc.model || "claude", tokens, costUsd: costDelta, cwd: proc.cwd }); } catch {}
-    }
     if (host.notify) {
       try { host.notify({ title: "Claude finished", body: "The reply is ready in BetterClaude.", done: true }); } catch {}
     }
@@ -928,9 +922,6 @@ function createIdeChatEngine(host) {
       if (proc.exited || proc.turn) return { ok: false, error: proc.turn ? "busy" : "exited" };
     }
 
-    if (host.logTurn) {
-      try { host.logTurn({ role: "user", modelId: model || "claude", tokens: Math.ceil(prompt.length / 4), costUsd: 0, cwd }); } catch {}
-    }
     // `cold`: a process was just spawned, so the CLI is still starting up.
     const started = startTurn(proc, {
       content: fullPrompt,

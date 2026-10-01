@@ -200,7 +200,7 @@ html.bc-ide-resizing, html.bc-ide-resizing * { cursor: col-resize !important; us
 .bc-ide-empty { max-width: var(--bc-ide-read); margin: 0 auto; padding: 8vh 24px 24px; box-sizing: border-box; }
 
 /* Usage stats card (renderStatsCard): Claude Code's own /stats numbers. */
-.bc-ide-stats { --bc-ide-heat: var(--bc-ide-info); margin-top: 22px; padding: 12px 16px 14px; border: 1px solid var(--bc-ide-hairline); border-radius: 12px; background: var(--bc-ide-panel); }
+.bc-ide-stats { --bc-ide-heat: var(--bc-ide-accent); margin-top: 22px; padding: 12px 16px 14px; border: 1px solid var(--bc-ide-hairline); border-radius: 12px; background: var(--bc-ide-panel); }
 .bc-ide-stats:empty { display: none; }
 .bc-ide-stats[data-state="loading"], .bc-ide-stats[data-state="error"] { padding: 4px 16px; }
 .bc-ide-stats-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
