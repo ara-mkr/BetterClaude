@@ -848,7 +848,7 @@ function auditSession7Fixes() {
   const panelJs = read("ui/code-window/team-panel.js");
   record(S, "the feed and the Mini-Wire fall back to remembered names before a raw id", /snapshot\.names && snapshot\.names\[key\]/.test(panelJs) && /remembered\[ref\]/.test(main), "snapshot.names + widget");
   const winCss = stripCssComments(read("ui/code-window.css"));
-  record(S, "a long sender shrinks before the recipient, in the feed and in the narrow rail", /\.bc-team-msg-meta > \.bc-team-msg-from\s*\{[^}]*flex-shrink:\s*4/.test(winCss) && /\.bc-rail-route > \.bc-rail-name:first-child\s*\{[^}]*flex-shrink:\s*4/.test(winCss) && /\.bc-rail-route > \.bc-rail-kind\s*\{[^}]*flex:\s*0 0 auto/.test(winCss), "flex-shrink 4 + fixed chip");
+  record(S, "a long sender shrinks before the recipient, in the feed and in the narrow rail", /\.bc-team-msg-meta > \.bc-team-msg-from\s*\{[^}]*flex-shrink:\s*4/.test(winCss) && /\.bc-rail-route > \.bc-rail-name:first-child\s*\{[^}]*flex-shrink:\s*4/.test(winCss) && /\.bc-rail-route > \.bc-rail-kind\s*\{[^}]*flex:\s*0 0 auto/.test(winCss) && /\.bc-rail-event \.bc-rail-who\s*\{[^}]*white-space:\s*nowrap/.test(winCss), "flex-shrink 4 + fixed chip + one-line names");
   record(S, "the Model Switcher stays in step with the Code tab while its card is open", /pollMs:\s*3000/.test(read("plugins/model-switcher.claudeplugin.js")), "pollMs 3000");
   // --- The sign-in page: reachable and readable in every theme. ---
   const { labelColorFor } = require("../core/auth-contrast");
@@ -858,7 +858,7 @@ function auditSession7Fixes() {
   record(S, "the auth-route marker matches the public sign-in paths only", ["/login", "/login/", "/signup", "/logout", "/magic-link/abc"].every((p) => AUTH_ROUTE_RE.test(p)) && ["/", "/new", "/chat/123", "/settings", "/login-help", "/projects"].every((p) => !AUTH_ROUTE_RE.test(p)), "login/signup/logout/magic-link");
   const titleCss = stripCssComments(read("ui/title-bar.css"));
   record(S, "on auth routes the page keeps its natural height (the form can't be pushed above the window)", /body\.bc-auth-route > #root[^{]*\{[^}]*height:\s*auto !important[^}]*max-height:\s*none !important/.test(titleCss) && /body\.bc-auth-route > #root > div > div > div[^{]*\{[^}]*height:\s*auto !important/.test(titleCss), "height:auto on root + wrappers");
-  record(S, "the widget dock is hidden on the sign-in page", /body\.bc-auth-route #betterclaude-plugin-dock\s*\{[^}]*display:\s*none !important/.test(titleCss), "dock hidden");
+  record(S, "the widget dock and any open widget card are hidden on the sign-in page", /body\.bc-auth-route #betterclaude-plugin-dock,\s*body\.bc-auth-route \[data-bc-own\]\s*\{[^}]*display:\s*none !important/.test(titleCss), "dock + cards hidden");
   record(S, "the contrast fixer is mounted, re-runs on theme changes, and is exported with the core", /mountAuthContrast\(\)/.test(read("electron/preload.js")) && /headObserver/.test(read("core/auth-contrast.js")) && /mountAuthContrast/.test(read("core/index.js")), "preload + head observer + index");
 }
 

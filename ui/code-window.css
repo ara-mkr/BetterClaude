@@ -586,6 +586,12 @@ html.bc-team-rail-resizing {
 .bc-rail-event .bc-rail-who {
   font-weight: 600;
   color: var(--bc-text, #ece7fb);
+  /* "Agent 001" wrapped onto two lines in a narrow rail. */
+  flex: 0 1 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .bc-rail-event .bc-rail-what {

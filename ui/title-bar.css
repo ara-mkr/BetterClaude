@@ -478,9 +478,11 @@ body.bc-auth-route > .bc-claude-root > div > div > div {
   max-height: none !important;
 }
 
-/* Widgets belong to the chat. On the sign-in page the dock only sat on top of
-   Claude's header ("Try Claude") and the form. */
-body.bc-auth-route #betterclaude-plugin-dock {
+/* Widgets belong to the chat. On the sign-in page the dock sat on top of
+   Claude's header ("Try Claude"), and open widget cards (Quick Prompts'
+   floating chips) sat on top of the form. Plugin UI marks itself data-bc-own. */
+body.bc-auth-route #betterclaude-plugin-dock,
+body.bc-auth-route [data-bc-own] {
   display: none !important;
 }
 

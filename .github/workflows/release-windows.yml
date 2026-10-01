@@ -50,3 +50,15 @@ jobs:
           tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
           files: dist/*.exe
           fail_on_unmatched_files: true
+
+      # The update feed electron-updater reads on Windows (latest.yml) and the
+      # blockmap it uses for differential downloads. Without latest.yml the app
+      # never sees a new Windows version. Optional: never fail the .exe upload.
+      - name: Attach Windows update feed
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+          files: |
+            dist/latest.yml
+            dist/*.exe.blockmap
+          fail_on_unmatched_files: false
