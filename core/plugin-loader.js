@@ -48,12 +48,27 @@ function reorderDockChildren(dock, order) {
 // what let three unrelated plugins stack directly on top of each other.
 // The dock auto-flows left from the right edge, so N buttons just add up
 // instead of overlapping.
+let dockObserver = null; // see ensureDock: keeps --bc-dock-bottom current
+
 function ensureDock() {
   let dock = document.getElementById(DOCK_ID);
   if (!dock) {
     dock = document.createElement("div");
     dock.id = DOCK_ID;
     document.body.appendChild(dock);
+    // Widget cards open below the dock, wherever it wraps to: publish its
+    // bottom edge as --bc-dock-bottom (read by every widget's panel CSS).
+    // One observer for the page, re-pointed when the dock is re-created.
+    if (typeof ResizeObserver === "function") {
+      if (!dockObserver) {
+        dockObserver = new ResizeObserver((entries) => {
+          const r = entries[0] && entries[0].target.getBoundingClientRect();
+          if (r && r.height) document.documentElement.style.setProperty("--bc-dock-bottom", `${Math.round(r.bottom)}px`);
+        });
+      }
+      dockObserver.disconnect();
+      dockObserver.observe(dock);
+    }
   }
   if (!document.getElementById(DOCK_STYLE_ID)) {
     const style = document.createElement("style");
@@ -69,15 +84,20 @@ function ensureDock() {
         right: 16px;
         z-index: 2147482900;
         display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
         gap: 8px;
+        /* ~8 buttons a row: with every widget on, one long row ran into the
+           page (and off-screen on a narrow window). */
+        max-width: min(calc(100vw - 32px), 312px);
       }
       #${DOCK_ID} .bc-dock-btn {
         width: 32px;
         height: 32px;
         border-radius: 8px;
-        border: 1px solid rgba(255,255,255,0.15);
-        background: rgba(20,16,31,0.85);
-        color: #ece7fb;
+        border: 1px solid var(--bc-border, rgba(255,255,255,0.15));
+        background: var(--bc-bg-elevated, rgba(20,16,31,0.85));
+        color: var(--bc-text, #ece7fb);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -87,14 +107,14 @@ function ensureDock() {
       }
       @media (hover: hover) and (pointer: fine) {
         #${DOCK_ID} .bc-dock-btn:hover {
-          background: rgba(139,92,246,0.35);
-          border-color: rgba(139,92,246,0.5);
+          background: color-mix(in srgb, var(--bc-accent, #8b5cf6) 22%, var(--bc-bg-elevated, #14101f));
+          border-color: var(--bc-accent, #8b5cf6);
         }
       }
       #${DOCK_ID} .bc-dock-btn.bc-active {
         background: var(--bc-accent, #8b5cf6);
         border-color: var(--bc-accent, #8b5cf6);
-        color: var(--btn-primary-fg, #fff);
+        color: #fff;
       }
       #${DOCK_ID} .bc-dock-btn svg {
         width: 16px;
@@ -244,6 +264,20 @@ function createPluginAPI({ id, themeEngine, getSettings, setSetting, host }) {
     /** Minimal toast/notification affordance shared by plugins. */
     notify(message, { timeout = 3000 } = {}) {
       host.notify ? host.notify(message, { timeout }) : console.log(`[BetterClaude:${id}]`, message);
+    },
+
+    /**
+     * Read-only data for the dock widgets: "plan" | "context" | "git" |
+     * "team" | "system" | "streak" | "shortcuts". Resolves null where the host
+     * has no such feed (the browser extension) or nothing is known yet.
+     */
+    widgetData(kind) {
+      return host.widgetData ? Promise.resolve(host.widgetData(kind)).catch(() => null) : Promise.resolve(null);
+    },
+
+    /** Sets the Code tab's model picker ("default" | "fable" | "opus" | "sonnet" | "haiku"). */
+    setCodeModel(model) {
+      return host.setCodeModel ? Promise.resolve(host.setCodeModel(model)).catch(() => false) : Promise.resolve(false);
     },
 
     /** Host calls this on unload as a safety net for buttons a plugin forgot to remove(). */

@@ -28,7 +28,7 @@ function dateKey(d = new Date()) {
 
 module.exports = {
   name: "Quote of the Day",
-  version: "1.0.0",
+  version: "1.0.1",
 
   onLoad(api) {
     this.api = api;
@@ -37,23 +37,23 @@ module.exports = {
 
     api.injectCSS(`
       #bc-quote-panel {
-        position: fixed; top: 88px; right: 16px; width: 260px;
-        z-index: 2147482950; background: rgba(20,16,31,0.98);
-        border: 1px solid rgba(255,255,255,0.15); border-radius: 10px;
+        position: fixed; top: calc(var(--bc-dock-bottom, 120px) + 8px); right: 16px; width: 260px;
+        z-index: 2147482950; background: var(--bc-bg-elevated, rgba(20,16,31,0.98));
+        border: 1px solid var(--bc-border, rgba(255,255,255,0.15)); border-radius: 10px;
         display: none; flex-direction: column; gap: 10px; padding: 14px;
-        font: 12px -apple-system, sans-serif; color: #ece7fb;
+        font: 12px -apple-system, sans-serif; color: var(--bc-text, #ece7fb);
       }
       #bc-quote-panel.bc-open { display: flex; }
       .bc-quote-text { line-height: 1.5; font-style: italic; }
       .bc-quote-row { display: flex; gap: 6px; }
       .bc-quote-row button, .bc-quote-add button {
-        padding: 6px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15);
-        background: transparent; color: #ece7fb; cursor: pointer; font: inherit;
+        padding: 6px 10px; border-radius: 6px; border: 1px solid var(--bc-border, rgba(255,255,255,0.15));
+        background: transparent; color: var(--bc-text, #ece7fb); cursor: pointer; font: inherit;
       }
-      .bc-quote-row button:hover, .bc-quote-add button:hover { background: rgba(139,92,246,0.25); }
+      .bc-quote-row button:hover, .bc-quote-add button:hover { background: color-mix(in srgb, var(--bc-accent, #8b5cf6) 25%, transparent); }
       .bc-quote-add { display: flex; gap: 6px; }
       .bc-quote-add input {
-        flex: 1; background: #14101f; border: 1px solid #3a2e5c; color: #ece7fb;
+        flex: 1; background: var(--bc-bg, #14101f); border: 1px solid var(--bc-border, #3a2e5c); color: var(--bc-text, #ece7fb);
         border-radius: 6px; padding: 6px 8px; font: inherit;
       }
     `);
@@ -62,6 +62,7 @@ module.exports = {
 
     const panel = document.createElement("div");
     panel.id = "bc-quote-panel";
+    panel.dataset.bcOwn = ""; // themed with --bc-* tokens; keep page resets off it
     document.body.appendChild(panel);
     this._panel = panel;
 

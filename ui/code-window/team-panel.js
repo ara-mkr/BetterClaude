@@ -7,21 +7,25 @@
  * hub (electron/team-hub.js) that the main process pushes over
  * `code:team:update`, and sends user intent back through code:team:* handlers.
  *
+ * The sidebar shows ONE folder's team — the on-screen tab's (or, with no team
+ * tab on screen, the only/first hub) — so two projects' teams never mix.
+ *
  * What it shows, top to bottom:
- *   - WHO'S DOING WHAT: every teammate, live or not, with its current task.
- *   - TEAM CHAT: inter-agent messages as they land, plus a composer so the
- *     user can talk to one teammate or broadcast to all.
- *   - WORK BOARD: the shared task list used to break work up; agents claim
- *     tasks through their own tools, this board edits the same file.
- *   - MADE SO FAR: git's view of what has actually changed on disk in each
- *     teammate folder, so "what has everyone built" has ground truth beyond
- *     agents' self-reporting.
+ *   - WHO'S DOING WHAT: every teammate (CLI tabs and Code-tab chats), its live
+ *     state, what it says it's on, and anything the relay is holding for it.
+ *   - TEAM CHAT: inter-agent messages with their delivery state, the relay's
+ *     own notes, and a composer to talk to one teammate or the whole team.
+ *   - WORK BOARD: the shared task list; agents claim tasks through their own
+ *     tools, this board edits the same file.
+ *   - MADE SO FAR: git's view of what has actually changed on disk in the
+ *     team's folder, beyond agents' self-reporting.
  *
  * It also drives the LIVE RAIL (#bc-team-rail, the tiny right-edge wire):
  * one compact entry per inter-session message and per delegated work event
  * (task claims, assignments, completions, focus changes), diffed from the
- * same snapshots. The rail is rendered even while hidden so its history is
- * intact when re-opened; its left-edge pull bar widens or narrows it.
+ * same snapshots and kept in timestamp order. The rail spans every team, is
+ * rendered even while hidden so its history is intact when re-opened, and
+ * its left-edge pull bar widens or narrows it.
  */
 
 (function () {
@@ -34,6 +38,7 @@
   const teamToggleBtn = document.getElementById("bc-code-team-btn");
   const hideBtn = document.getElementById("bc-team-hide-btn");
   const addBtn = document.getElementById("bc-team-add-btn");
+  const titleEl = panel ? panel.querySelector(".bc-team-title") : null;
   const membersList = document.getElementById("bc-team-members");
   const feed = document.getElementById("bc-team-feed");
   const composeForm = document.getElementById("bc-team-compose");
@@ -46,12 +51,11 @@
 
   if (!panel || !teamToggleBtn) return;
 
-  let snapshot = { members: [], messages: [], tasks: [], changes: {}, diffs: {} };
+  let snapshot = { members: [], messages: [], notes: [], tasks: [], changes: {}, diffs: {}, hubs: [] };
   let opened = false;
   // Timestamp of the newest message the user has actually SEEN (the feed being
   // visible counts). Messages newer than this badge the recipient's tab.
   let lastSeenTs = Date.now();
-  const elCache = new Map();
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -60,11 +64,35 @@
     return node;
   }
 
+  function activeTabId() {
+    const tabs = window.BetterClaudeTabs;
+    return tabs && tabs.activeId ? tabs.activeId : null;
+  }
+
+  // --- Which team is on screen ------------------------------------------------
+
+  /** The folder whose team the sidebar shows: the on-screen tab's, else the first hub. */
+  function currentHubRoot() {
+    const id = activeTabId();
+    const mine = id ? (snapshot.members || []).find((m) => m.sessionId === id) : null;
+    if (mine && mine.hubRoot) return mine.hubRoot;
+    const hubs = snapshot.hubs || [];
+    return hubs.length ? hubs[0].root : null;
+  }
+
+  function inHub(item) {
+    const root = currentHubRoot();
+    return !root || !item || !item.hubRoot || item.hubRoot === root;
+  }
+
+  const hubMembers = () => (snapshot.members || []).filter(inHub);
+
   // --- Visibility -----------------------------------------------------------
 
   function setVisible(visible) {
     panel.dataset.visible = visible ? "true" : "false";
     teamToggleBtn.dataset.active = visible ? "true" : "false";
+    teamToggleBtn.setAttribute("aria-pressed", visible ? "true" : "false");
     if (visible && !opened) {
       opened = true;
       api.teamSnapshot().then((snap) => {
@@ -79,19 +107,43 @@
     setVisible(panel.dataset.visible !== "true");
   });
   hideBtn.addEventListener("click", () => setVisible(false));
+  // Escape inside the sidebar closes it (the terminal keeps Escape for itself).
+  panel.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    event.preventDefault();
+    setVisible(false);
+    teamToggleBtn.focus();
+  });
 
   // --- Snapshot handling ------------------------------------------------------
 
-  function applySnapshot(next) {
-    snapshot = next;
+  function render() {
+    renderTitle();
     renderMembers();
     renderFeed();
     renderComposerTargets();
     renderTasks();
     renderDiff();
-    renderRail();
     if (panel.dataset.visible === "true") markAllSeen();
     else renderBadges();
+  }
+
+  function applySnapshot(next) {
+    snapshot = next;
+    syncTabNames();
+    render();
+    renderRail();
+  }
+
+  /** A CLI tab is labelled with its teammate's name, so a rename shows there too. */
+  function syncTabNames() {
+    const tabs = window.BetterClaudeTabs;
+    if (!tabs) return;
+    for (const member of snapshot.members || []) {
+      if (member.kind !== "cli" || !member.sessionId || !member.name) continue;
+      const tab = tabs.byId(member.sessionId);
+      if (tab && tab.setName) tab.setName(member.name);
+    }
   }
 
   api.onTeamUpdate((snap) => {
@@ -99,126 +151,54 @@
     applySnapshot(snap);
   });
 
+  // Switching tabs can switch folders, and with it the team on screen.
+  document.addEventListener("betterclaude:active-session", () => render());
+
   function memberBySession(sessionId) {
     return (snapshot.members || []).find((m) => m.sessionId === sessionId) || null;
   }
 
   function activeMember() {
-    const tabs = window.BetterClaudeTabs;
-    if (!tabs || !tabs.activeId) return null;
-    return memberBySession(tabs.activeId);
+    const id = activeTabId();
+    return id ? memberBySession(id) : null;
+  }
+
+  function renderTitle() {
+    if (!titleEl) return;
+    const hubs = snapshot.hubs || [];
+    const root = currentHubRoot();
+    const hub = hubs.find((h) => h.root === root);
+    // The folder only matters once there's more than one team to tell apart.
+    titleEl.textContent = hubs.length > 1 && hub ? `Agent team · ${hub.name}` : "Agent team";
+    titleEl.title = root || "";
   }
 
   // --- Roster -----------------------------------------------------------------
 
-  const STATUS_CLASS = {
-    running: "st-running",
+  // Dot colour follows what BetterClaude KNOWS (the session's live state from
+  // Claude Code's hooks / the chat engine), not what the agent last wrote.
+  const LIVE_CLASS = {
     working: "st-running",
+    waiting: "st-blocked",
+    idle: "st-done",
+    starting: "st-idle",
     exited: "st-exited",
-    blocked: "st-blocked",
-    done: "st-done",
-    idle: "st-idle",
+    offline: "st-idle",
   };
-
-  function statusClass(member) {
-    if (member.status === "running") return STATUS_CLASS.running;
-    return STATUS_CLASS[member.agentStatus] || STATUS_CLASS[member.status] || STATUS_CLASS.idle;
-  }
-
-  function statusLabel(member) {
-    if (member.status === "running") return member.agentStatus || "running";
-    return member.status || "unknown";
-  }
+  const LIVE_LABEL = {
+    working: "working",
+    waiting: "waiting on you",
+    idle: "at its prompt",
+    starting: "starting",
+    exited: "exited",
+    offline: "offline",
+  };
 
   function leaf(path) {
     if (!path) return "";
     const parts = String(path).split("/");
     return parts[parts.length - 1] || path;
   }
-
-  function renderMembers() {
-    membersList.textContent = "";
-    const members = snapshot.members || [];
-    if (!members.length) {
-      membersList.appendChild(el("div", "bc-team-empty", "No teammates yet — “+ Teammate” starts one in this folder."));
-      renderJoinButton();
-      return;
-    }
-    for (const member of members) {
-      const card = el("div", "bc-team-member");
-
-      const top = el("div", "bc-team-member-top");
-      const dot = el("span", `bc-code-dot ${statusClass(member)}`);
-      dot.title = statusLabel(member);
-      top.append(dot, el("span", "bc-team-member-name", member.name));
-      if (member.cwd) top.appendChild(el("span", "bc-team-member-cwd", leaf(member.cwd)));
-      card.appendChild(top);
-
-      const what = member.currentTask || (member.live ? "Working…" : "Offline.");
-      card.appendChild(el("div", "bc-team-member-task", what));
-
-      const actions = el("div", "bc-team-member-actions");
-      if (member.live && member.sessionId) {
-        const nudgeBtn = el("button", "bc-team-chip-btn", "Ask for update");
-        nudgeBtn.type = "button";
-        nudgeBtn.addEventListener("click", () => {
-          api.teamNudge({ memberId: member.id }).catch(() => {});
-        });
-        actions.appendChild(nudgeBtn);
-      } else if (!member.live && member.sessionId === null) {
-        const offlineNote = el("span", "bc-team-chip-btn", "not attached");
-        offlineNote.style.cursor = "default";
-        actions.appendChild(offlineNote);
-      }
-      if (actions.childElementCount) card.appendChild(actions);
-
-      // Work log: what this teammate says it has made (it records its own
-      // file edits in the hub per the protocol). Git's independent view of
-      // the same disk lives in the "Made so far" section below.
-      const log = (snapshot.changes || {})[member.id];
-      if (log) {
-        const made = el("div", "bc-team-made");
-        if (log.summary) made.appendChild(el("div", "bc-team-made-summary", log.summary));
-        const files = Array.isArray(log.files) ? log.files.slice(0, 3) : [];
-        for (const f of files) {
-          if (!f || typeof f.path !== "string") continue;
-          const line = el("div", "bc-team-diff-file");
-          line.appendChild(el("span", "bc-team-diff-path", f.path));
-          line.appendChild(el("span", "bc-team-diff-stats", f.added || ""));
-          made.appendChild(line);
-        }
-        card.appendChild(made);
-      }
-
-      membersList.appendChild(card);
-    }
-    renderJoinButton();
-  }
-
-  /** "Join team" applies to whichever session is on screen but not yet on a team. */
-  function renderJoinButton() {
-    const tabs = window.BetterClaudeTabs;
-    let existing = document.getElementById("bc-team-join-btn");
-    const canJoin = !!(tabs && tabs.activeId) && !activeMember() && !!snapshot.members;
-    if (!canJoin) {
-      if (existing) existing.remove();
-      return;
-    }
-    if (!existing) {
-      existing = el("button", "bc-team-chip-btn", "Add the session on screen to this team");
-      existing.id = "bc-team-join-btn";
-      existing.type = "button";
-      existing.addEventListener("click", () => {
-        const id = window.BetterClaudeTabs.activeId;
-        if (!id) return;
-        existing.disabled = true;
-        Promise.resolve(api.teamJoin({ id })).catch(() => {}).finally(() => { existing.disabled = false; });
-      });
-      membersList.appendChild(existing);
-    }
-  }
-
-  // --- Chat -------------------------------------------------------------------
 
   function timeLabel(ts) {
     try {
@@ -228,11 +208,220 @@
     }
   }
 
-  function nameOf(id) {
-    if (id === "you") return "you";
-    if (id === "all") return "everyone";
-    const member = (snapshot.members || []).find((m) => m.id === id);
-    return member ? member.name : id;
+  // Renaming a teammate: `editing` survives the re-renders every snapshot causes,
+  // so a state change mid-typing doesn't throw the field away. `renameNote` is
+  // the reason a rename was refused, shown on that card until the next try.
+  let editing = null; // { memberId, value, focus }
+  let renameNote = null; // { memberId, text }
+  let rendering = false;
+
+  function startRename(member) {
+    renameNote = null;
+    editing = { memberId: member.id, value: member.name, focus: true };
+    renderMembers();
+  }
+
+  async function finishRename(member, commit) {
+    if (!editing || editing.memberId !== member.id) return;
+    const next = String(editing.value || "").trim();
+    editing = null;
+    if (!commit || !next || next === member.name) { renderMembers(); return; }
+    let result = null;
+    try { result = await api.teamRename({ memberId: member.id, name: next }); } catch { /* falls through to the note */ }
+    renameNote = result && result.ok ? null : { memberId: member.id, text: (result && result.error) || "Couldn't rename this teammate." };
+    if (result && result.ok) api.teamSnapshot().then((snap) => { if (snap) applySnapshot(snap); }).catch(() => {});
+    else renderMembers();
+  }
+
+  function renameField(member) {
+    const input = el("input", "bc-team-rename-input");
+    input.type = "text";
+    input.value = editing.value;
+    input.maxLength = 32;
+    input.spellcheck = false;
+    input.setAttribute("aria-label", `Rename ${member.name}`);
+    input.addEventListener("input", () => { if (editing) editing.value = input.value; });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { event.preventDefault(); finishRename(member, true); }
+      else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); finishRename(member, false); }
+    });
+    // Leaving the field saves, like a file rename — but not the blur a re-render causes.
+    input.addEventListener("blur", () => { if (!rendering) finishRename(member, true); });
+    return input;
+  }
+
+  function renderMembers() {
+    rendering = true;
+    membersList.textContent = "";
+    const members = hubMembers();
+    if (!members.length) {
+      membersList.appendChild(el("div", "bc-team-empty", "No teammates yet — “+ Teammate” starts one in this folder."));
+      renderJoinButton();
+      rendering = false;
+      return;
+    }
+    for (const member of members) {
+      const card = el("div", "bc-team-member");
+      card.dataset.kind = member.kind || "cli";
+      card.dataset.live = member.live ? "true" : "false";
+
+      const top = el("div", "bc-team-member-top");
+      const state = member.liveState || (member.live ? "working" : "offline");
+      const dot = el("span", `bc-code-dot ${LIVE_CLASS[state] || "st-idle"}`);
+      dot.title = LIVE_LABEL[state] || state;
+      const renamable = member.live && member.kind !== "roster";
+      if (editing && editing.memberId === member.id && renamable) {
+        top.append(dot, renameField(member));
+      } else {
+        const nameEl = el("span", "bc-team-member-name", member.name);
+        nameEl.title = member.name;
+        if (renamable) {
+          nameEl.dataset.renamable = "";
+          nameEl.title = `${member.name} — double-click to rename`;
+          nameEl.addEventListener("dblclick", () => startRename(member));
+        }
+        top.append(dot, nameEl);
+      }
+      if (member.kind === "chat") top.appendChild(el("span", "bc-team-member-tag", "Code tab"));
+      if (member.cwd) top.appendChild(el("span", "bc-team-member-cwd", leaf(member.cwd)));
+      card.appendChild(top);
+
+      let what;
+      if (member.kind === "roster") {
+        what = member.status === "exited" ? "Left the team." : `Offline — from an earlier session${member.lastSeen ? ` (last seen ${timeLabel(member.lastSeen)})` : ""}.`;
+      } else if (!member.live) {
+        what = "Exited.";
+      } else {
+        const task = member.currentTask && member.currentTask !== "Joining the team…" ? member.currentTask : "";
+        what = task ? `${task} · ${LIVE_LABEL[state] || state}` : (LIVE_LABEL[state] || "working").replace(/^./, (c) => c.toUpperCase()) + ".";
+      }
+      card.appendChild(el("div", "bc-team-member-task", what));
+
+      // Messages the relay is holding for this member, and why.
+      if (member.queued) {
+        const held = el("div", "bc-team-member-held");
+        const noun = member.queued === 1 ? "message" : "messages";
+        const why = member.paused ? "paused after a long back-and-forth" : member.heldWhy || "delivering…";
+        held.appendChild(el("span", "", `${member.queued} ${noun} waiting — ${why}`));
+        const canPush = member.paused || (member.heldWhy && !/permission|approval|offline|starting/.test(member.heldWhy));
+        if (canPush) {
+          const btn = el("button", "bc-team-chip-btn", member.paused ? "Resume" : "Deliver now");
+          btn.type = "button";
+          btn.title = member.paused
+            ? "Let this back-and-forth continue"
+            : "Deliver now, without waiting for a quiet moment (never into an open dialog)";
+          btn.addEventListener("click", () => {
+            btn.disabled = true;
+            Promise.resolve(api.teamResume && api.teamResume({ memberId: member.id })).catch(() => {}).finally(() => { btn.disabled = false; });
+          });
+          held.appendChild(btn);
+        }
+        card.appendChild(held);
+      }
+
+      const actions = el("div", "bc-team-member-actions");
+      if (member.live && member.kind !== "roster") {
+        const nudgeBtn = el("button", "bc-team-chip-btn", "Ask for update");
+        nudgeBtn.type = "button";
+        nudgeBtn.title = "Ask this teammate to post a one-line status update";
+        nudgeBtn.addEventListener("click", () => {
+          api.teamNudge({ memberId: member.id }).catch(() => {});
+        });
+        actions.appendChild(nudgeBtn);
+        const renameBtn = el("button", "bc-team-chip-btn", "Rename");
+        renameBtn.type = "button";
+        renameBtn.title = "Give this teammate a name of your own (its work and history stay the same)";
+        renameBtn.addEventListener("click", () => startRename(member));
+        actions.appendChild(renameBtn);
+      }
+      if (actions.childElementCount) card.appendChild(actions);
+      if (renameNote && renameNote.memberId === member.id) card.appendChild(el("div", "bc-team-member-error", renameNote.text));
+
+      // Work log: what this teammate says it has made (it records its own
+      // file edits in the hub per the protocol). Git's independent view of
+      // the same disk lives in the "Made so far" section below.
+      const log = (snapshot.changes || {})[member.id];
+      if (log && typeof log === "object") {
+        const made = el("div", "bc-team-made");
+        if (typeof log.summary === "string" && log.summary) made.appendChild(el("div", "bc-team-made-summary", log.summary));
+        const files = Array.isArray(log.files) ? log.files.slice(0, 3) : [];
+        for (const f of files) {
+          if (!f || typeof f.path !== "string") continue;
+          const line = el("div", "bc-team-diff-file");
+          line.appendChild(el("span", "bc-team-diff-path", f.path));
+          line.appendChild(el("span", "bc-team-diff-stats", typeof f.note === "string" ? f.note : ""));
+          made.appendChild(line);
+        }
+        if (made.childElementCount) card.appendChild(made);
+      }
+
+      membersList.appendChild(card);
+    }
+    renderJoinButton();
+    const field = membersList.querySelector(".bc-team-rename-input");
+    if (field && editing && editing.focus) {
+      editing.focus = false;
+      field.focus();
+      field.select();
+    } else if (field) {
+      field.focus();
+      field.setSelectionRange(field.value.length, field.value.length);
+    }
+    rendering = false;
+  }
+
+  /** "Join team" applies to whichever session is on screen but not yet on a team. */
+  function renderJoinButton() {
+    let existing = document.getElementById("bc-team-join-btn");
+    const canJoin = !!activeTabId() && !activeMember() && !!snapshot.members;
+    if (!canJoin) {
+      if (existing) existing.remove();
+      return;
+    }
+    if (!existing) {
+      existing = el("button", "bc-team-chip-btn", "Add the session on screen to this team");
+      existing.id = "bc-team-join-btn";
+      existing.type = "button";
+      existing.addEventListener("click", () => {
+        const id = activeTabId();
+        if (!id) return;
+        existing.disabled = true;
+        Promise.resolve(api.teamJoin({ id })).catch(() => {}).finally(() => { existing.disabled = false; });
+      });
+    }
+    membersList.appendChild(existing);
+  }
+
+  // --- Chat -------------------------------------------------------------------
+
+  /** Display name for a message end: an id or a name an agent wrote, "you", or a broadcast. */
+  function nameOf(ref) {
+    const key = String(ref == null ? "" : ref).trim();
+    if (key === "you") return "you";
+    if (/^@?(all|everyone|team|\*)$/i.test(key)) return "everyone";
+    const members = snapshot.members || [];
+    const bare = key.replace(/^@/, "").toLowerCase();
+    const member = members.find((m) => m.id === key)
+      || members.find((m) => String(m.name).toLowerCase() === bare)
+      || members.find((m) => (m.aliases || []).some((a) => String(a).toLowerCase() === bare));
+    return member ? member.name : (snapshot.names && snapshot.names[key]) || key || "unknown";
+  }
+
+  /** One short line for a message the relay did NOT (or hasn't yet) delivered. */
+  function deliveryLine(msg) {
+    const d = msg.delivery;
+    if (!d) return "";
+    switch (d.state) {
+      case "queued": {
+        const waiting = (d.recipients || []).filter((id) => !(d.delivered || []).includes(id)).map(nameOf);
+        return waiting.length ? `Waiting to reach ${waiting.join(", ")}` : "";
+      }
+      case "unverified": return "Not relayed — the sender isn't on this team";
+      case "undeliverable": return `Not delivered — ${d.why || "no recipient"}`;
+      case "duplicate": return "Not delivered again — identical to a message moments earlier";
+      case "dropped": return "Dropped — the recipient's queue was full";
+      default: return "";
+    }
   }
 
   function nearBottom(node) {
@@ -240,30 +429,47 @@
   }
 
   function renderFeed() {
-    const messages = snapshot.messages || [];
+    const rows = [
+      ...(snapshot.messages || []).filter(inHub).map((m) => ({ type: "msg", ts: m.ts, item: m })),
+      ...(snapshot.notes || []).filter(inHub).map((n) => ({ type: "note", ts: n.ts, item: n })),
+    ].sort((a, b) => a.ts - b.ts);
     const stick = nearBottom(feed);
     feed.textContent = "";
-    if (!messages.length) {
+    if (!rows.length) {
       feed.appendChild(el("div", "bc-team-empty", "Messages between teammates land here."));
       return;
     }
-    for (const msg of messages) {
+    for (const { type, item } of rows) {
+      if (type === "note") {
+        const row = el("div", "bc-team-msg");
+        row.dataset.kind = "system";
+        const meta = el("div", "bc-team-msg-meta");
+        meta.appendChild(el("span", "bc-team-msg-from", "BetterClaude"));
+        const when = el("span", "bc-team-msg-time", timeLabel(item.ts));
+        meta.appendChild(when);
+        row.appendChild(meta);
+        row.appendChild(el("div", "", item.text));
+        feed.appendChild(row);
+        continue;
+      }
+      const msg = item;
       const row = el("div", "bc-team-msg");
-      row.dataset.broadcast = msg.to === "all" ? "true" : "false";
+      row.dataset.broadcast = nameOf(msg.to) === "everyone" ? "true" : "false";
       row.dataset.from = msg.from;
       row.dataset.kind = msg.kind || "chat";
+      if (msg.delivery && msg.delivery.state) row.dataset.delivery = msg.delivery.state;
 
       const meta = el("div", "bc-team-msg-meta");
       meta.appendChild(el("span", "bc-team-msg-from", nameOf(msg.from)));
       meta.appendChild(el("span", "", "→"));
       meta.appendChild(el("span", "", nameOf(msg.to)));
-      const when = el("span", "");
-      when.style.marginLeft = "auto";
-      when.textContent = timeLabel(msg.ts);
-      meta.appendChild(when);
+      if (msg.kind && msg.kind !== "chat") meta.appendChild(el("span", "bc-team-msg-kind", msg.kind));
+      meta.appendChild(el("span", "bc-team-msg-time", timeLabel(msg.ts)));
       row.appendChild(meta);
 
-      row.appendChild(el("div", "", msg.body));
+      row.appendChild(el("div", "", msg.body.length > 4000 ? `${msg.body.slice(0, 4000)}…` : msg.body));
+      const status = deliveryLine(msg);
+      if (status) row.appendChild(el("div", "bc-team-msg-status", status));
       feed.appendChild(row);
     }
     if (stick) feed.scrollTop = feed.scrollHeight;
@@ -273,9 +479,9 @@
     const previous = composeTo.value;
     composeTo.textContent = "";
     composeTo.appendChild(new Option("everyone", "all"));
-    for (const member of snapshot.members || []) {
-      if (!member.live) continue;
-      composeTo.appendChild(new Option(member.name, member.id));
+    for (const member of hubMembers()) {
+      if (!member.live || member.kind === "roster") continue;
+      composeTo.appendChild(new Option(member.kind === "chat" ? `${member.name} (Code tab)` : member.name, member.id));
     }
     if ([...composeTo.options].some((o) => o.value === previous)) composeTo.value = previous;
   }
@@ -285,12 +491,12 @@
     const body = composeInput.value.trim();
     if (!body) return;
     composeInput.value = "";
-    api.teamSend({ to: composeTo.value || "all", body }).catch(() => {});
+    api.teamSend({ to: composeTo.value || "all", body, id: activeTabId() }).catch(() => {});
   });
 
   addBtn.addEventListener("click", () => {
     setVisible(true);
-    Promise.resolve(api.teamCreateTeammate({})).catch(() => {});
+    Promise.resolve(api.teamCreateTeammate({ id: activeTabId() })).catch(() => {});
   });
 
   // --- Live rail ---------------------------------------------------------------
@@ -298,7 +504,8 @@
   // The tiny right-edge wire: one compact entry per inter-session message and
   // per piece of delegated work (task claims, assignments, completions, focus
   // changes). Fed from the SAME snapshots as this sidebar, so it stays current
-  // even while hidden; entries accumulate (capped), newest at the bottom.
+  // even while hidden; entries accumulate (capped), in timestamp order —
+  // a message that lands late but was sent earlier slots into its place.
   //
   // Delegation events are synthesised here by diffing consecutive snapshots of
   // the shared task board and the members' self-reported focus — the hub files
@@ -314,17 +521,17 @@
   let railVisible = false;
   let railSeeded = false; // first snapshot baselines the board without emitting a fake event burst
   const railSeenMessages = new Set();
+  const railSeenNotes = new Set();
   const railLastTasks = new Map(); // taskId -> { title, state, assignee }
   const railLastFocus = new Map(); // memberId -> currentTask text
   const railLastLive = new Map(); // memberId -> boolean
-  let railEntryCount = 0;
 
   try {
     railVisible = localStorage.getItem(RAIL_VISIBLE_KEY) !== "off";
   } catch { /* storage unavailable: default to visible */ }
 
   function railGlyph(kind) {
-    return { claim: "◆", assign: "→", done: "✓", focus: "…", todo: "○", exit: "✕" }[kind] || "•";
+    return { claim: "◆", assign: "→", done: "✓", focus: "…", todo: "○", exit: "✕", system: "‖" }[kind] || "•";
   }
 
   function railNearBottom() {
@@ -335,17 +542,20 @@
     if (force || railNearBottom()) railFeed.scrollTop = railFeed.scrollHeight;
   }
 
-  function railAppend(row) {
+  /** Inserts `row` at its timestamp's place (ties keep arrival order). */
+  function railInsert(row, ts) {
+    const stick = railNearBottom();
     const empty = railFeed.querySelector(".bc-team-empty");
     if (empty) empty.remove();
-    railFeed.appendChild(row);
-    railEntryCount += 1;
-    if (railEntryCount > RAIL_MAX_ENTRIES) {
-      const first = railFeed.firstElementChild;
-      if (first) first.remove();
-      railEntryCount = RAIL_MAX_ENTRIES;
+    row.dataset.ts = String(ts);
+    let before = null;
+    for (let node = railFeed.lastElementChild; node; node = node.previousElementSibling) {
+      if (Number(node.dataset.ts) <= ts) break;
+      before = node;
     }
-    railScrollToBottom(false);
+    railFeed.insertBefore(row, before);
+    while (railFeed.childElementCount > RAIL_MAX_ENTRIES) railFeed.firstElementChild.remove();
+    if (stick) railScrollToBottom(true);
   }
 
   function railAddMessage(msg) {
@@ -353,6 +563,7 @@
     railSeenMessages.add(msg.id);
     const row = el("div", "bc-rail-entry");
     row.dataset.kind = msg.kind || "chat";
+    row.dataset.id = msg.id;
     const route = el("div", "bc-rail-route");
     const from = el("span", "bc-rail-name", nameOf(msg.from));
     from.dataset.from = msg.from;
@@ -362,7 +573,7 @@
     row.appendChild(route);
     const firstLine = String(msg.body || "").split("\n").find((l) => l.trim()) || "";
     row.appendChild(el("div", "bc-rail-body", firstLine));
-    railAppend(row);
+    railInsert(row, msg.ts);
   }
 
   function railAddEvent(kind, who, what, ts) {
@@ -376,22 +587,29 @@
       el("span", "bc-rail-time", timeLabel(ts)),
     );
     row.appendChild(line);
-    railAppend(row);
+    railInsert(row, ts);
   }
 
   function renderRail() {
     if (!rail || !railFeed) return;
 
-    // 1. Inter-session messages. A bounded tail keeps the first paint cheap;
-    //    later snapshots only ever add a few.
+    // 1. Inter-session messages (every team). A bounded tail keeps the first
+    //    paint cheap; later snapshots only ever add a few.
     const messages = snapshot.messages || [];
     if (railSeenMessages.size > 600) {
       railSeenMessages.clear();
       for (const m of messages.slice(-200)) railSeenMessages.add(m.id);
     }
-    for (const msg of messages.slice(-40)) railAddMessage(msg);
+    for (const msg of messages.slice(-60)) railAddMessage(msg);
 
-    // 2. Delegation: diff the task board against the previous snapshot.
+    // 2. The relay's own notes (a paused back-and-forth, a dropped message).
+    for (const note of snapshot.notes || []) {
+      if (railSeenNotes.has(note.id)) continue;
+      railSeenNotes.add(note.id);
+      if (railSeeded) railAddEvent("system", "BetterClaude", note.text, note.ts);
+    }
+
+    // 3. Delegation: diff the task board against the previous snapshot.
     const tasks = snapshot.tasks || [];
     const seenTaskIds = new Set();
     const now = Date.now();
@@ -418,8 +636,9 @@
       if (!seenTaskIds.has(id)) railLastTasks.delete(id);
     }
 
-    // 3. Focus + liveness: what each session says it is on right now.
+    // 4. Focus + liveness: what each session says it is on right now.
     for (const member of snapshot.members || []) {
+      if (member.kind === "roster") continue;
       const focus = typeof member.currentTask === "string" ? member.currentTask.trim() : "";
       const prevFocus = railLastFocus.get(member.id);
       const wasLive = railLastLive.get(member.id);
@@ -440,7 +659,10 @@
   function setRailVisible(visible) {
     railVisible = !!visible;
     rail.dataset.visible = railVisible ? "true" : "false";
-    if (railToggleBtn) railToggleBtn.dataset.active = railVisible ? "true" : "false";
+    if (railToggleBtn) {
+      railToggleBtn.dataset.active = railVisible ? "true" : "false";
+      railToggleBtn.setAttribute("aria-pressed", railVisible ? "true" : "false");
+    }
     try {
       localStorage.setItem(RAIL_VISIBLE_KEY, railVisible ? "on" : "off");
     } catch { /* private mode: visibility just won't persist */ }
@@ -450,6 +672,12 @@
   if (rail && railToggleBtn) {
     railToggleBtn.addEventListener("click", () => setRailVisible(!railVisible));
     if (railHideBtn) railHideBtn.addEventListener("click", () => setRailVisible(false));
+    rail.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      setRailVisible(false);
+      if (railToggleBtn) railToggleBtn.focus();
+    });
     setRailVisible(railVisible);
   }
 
@@ -464,7 +692,6 @@
   const RAIL_WIDTH_KEY = "betterclaude.codeRailWidthPx";
   const RAIL_MIN_W = 200;
   const RAIL_MAX_W = 520;
-  const RAIL_DEFAULT_W = 216;
 
   function railClamp(width) {
     return Math.round(Math.min(RAIL_MAX_W, Math.max(RAIL_MIN_W, width)));
@@ -472,6 +699,14 @@
 
   function railApplyWidth(width) {
     rail.style.width = `${railClamp(width)}px`;
+  }
+
+  // The narrow-pane Team overlay sits left of an open rail instead of on top
+  // of it (code-window.css reads --bc-rail-w; 0 while the rail is hidden).
+  if (typeof ResizeObserver === "function" && rail.parentElement) {
+    new ResizeObserver(() => {
+      rail.parentElement.style.setProperty("--bc-rail-w", `${rail.offsetWidth}px`);
+    }).observe(rail);
   }
 
   function railRestoreWidth() {
@@ -529,14 +764,14 @@
   // --- Task board -------------------------------------------------------------
 
   function nextAssignee(current) {
-    const ids = ["__none", ...(snapshot.members || []).filter((m) => m.live).map((m) => m.id)];
+    const ids = ["__none", ...hubMembers().filter((m) => m.live && m.kind !== "roster").map((m) => m.id)];
     const index = ids.indexOf(current || "__none");
     return ids[(index + 1) % ids.length];
   }
 
   function renderTasks() {
     tasksList.textContent = "";
-    const tasks = snapshot.tasks || [];
+    const tasks = (snapshot.tasks || []).filter(inHub);
     if (!tasks.length) {
       tasksList.appendChild(el("div", "bc-team-empty", "Break the work up into tasks for the team."));
       return;
@@ -548,6 +783,7 @@
       const stateBtn = el("button", "bc-team-task-state");
       stateBtn.type = "button";
       stateBtn.title = `State: ${task.state || "todo"} (click to advance)`;
+      stateBtn.setAttribute("aria-label", `Task state: ${task.state || "todo"}. Click to advance.`);
       stateBtn.addEventListener("click", () => {
         const order = { todo: "doing", doing: "done", done: "todo" };
         api.teamUpdateTask({ taskId: task.id, state: order[task.state || "todo"] || "doing" }).catch(() => {});
@@ -561,13 +797,8 @@
       assigneeBtn.type = "button";
       assigneeBtn.title = "Click to reassign";
       assigneeBtn.addEventListener("click", () => {
-        api.teamUpdateTask({
-          taskId: task.id,
-          assignee: (() => {
-            const next = nextAssignee(task.assignee);
-            return next === "__none" ? null : next;
-          })(),
-        }).catch(() => {});
+        const next = nextAssignee(task.assignee);
+        api.teamUpdateTask({ taskId: task.id, assignee: next === "__none" ? null : next }).catch(() => {});
       });
       row.appendChild(assigneeBtn);
 
@@ -580,7 +811,7 @@
     const title = taskInput.value.trim();
     if (!title) return;
     taskInput.value = "";
-    api.teamAddTask({ title }).catch(() => {});
+    api.teamAddTask({ title, id: activeTabId() }).catch(() => {});
   });
 
   // --- Made so far ------------------------------------------------------------
@@ -591,7 +822,6 @@
       span.textContent = "new";
       return span;
     }
-    span.textContent = "";
     const add = el("span", "add", `+${file.added == null ? "?" : file.added}`);
     const del = el("span", "del", `−${file.deleted == null ? "?" : file.deleted}`);
     span.append(add, document.createTextNode(" "), del);
@@ -601,7 +831,8 @@
   function renderDiff() {
     diffHost.textContent = "";
     const diffs = snapshot.diffs || {};
-    const cwds = Object.keys(diffs);
+    const root = currentHubRoot();
+    const cwds = Object.keys(diffs).filter((cwd) => !root || cwd === root || cwd.startsWith(`${root}/`));
     if (!cwds.length) {
       diffHost.appendChild(el("div", "bc-team-empty", "Files the team has touched show up here."));
       return;
@@ -627,24 +858,24 @@
 
   // --- Unread badges ------------------------------------------------------------
   //
-  // Messages addressed to a teammate (or broadcast while the sidebar is shut)
-  // badge that teammate's tab until the sidebar is opened again.
+  // Messages addressed to a teammate's tab (or broadcast while the sidebar is
+  // shut) badge that tab until the sidebar is opened again.
 
   function renderBadges() {
     const tabsRoot = document.getElementById("bc-code-tabs");
     if (!tabsRoot) return;
     const pending = new Map(); // sessionId -> count
+    const members = snapshot.members || [];
     for (const msg of snapshot.messages || []) {
-      if (msg.ts <= lastSeenTs) continue;
-      if (msg.from === "you") continue;
-      const member = (snapshot.members || []).find((m) => m.id === msg.to);
-      const broadcastToMe = msg.to === "all";
-      const sessionId = member ? member.sessionId : broadcastToMe ? window.BetterClaudeTabs?.activeId : null;
-      if (broadcastToMe && !sessionId) continue;
-      if (!sessionId && !broadcastToMe) continue;
-      const target = broadcastToMe ? window.BetterClaudeTabs?.activeId : sessionId;
-      if (!target) continue;
-      pending.set(target, (pending.get(target) || 0) + 1);
+      if (msg.ts <= lastSeenTs || msg.from === "you") continue;
+      if (nameOf(msg.to) === "everyone") {
+        const target = activeTabId();
+        if (target) pending.set(target, (pending.get(target) || 0) + 1);
+        continue;
+      }
+      const bare = String(msg.to).replace(/^@/, "").toLowerCase();
+      const member = members.find((m) => m.id === msg.to) || members.find((m) => String(m.name).toLowerCase() === bare);
+      if (member && member.sessionId) pending.set(member.sessionId, (pending.get(member.sessionId) || 0) + 1);
     }
     for (const btn of tabsRoot.querySelectorAll(".bc-code-tab")) {
       const id = btn.dataset.sessionId;

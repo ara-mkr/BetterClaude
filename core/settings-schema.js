@@ -191,6 +191,21 @@ const DEFAULT_SETTINGS = {
       "sticky-notes": false,
       "world-clock": false,
       "goal-tracker": false,
+      // Session 6 widgets, all off by default for the same reason. The data
+      // ones (plan-usage, context-gauge, git-status, team-wire, system-monitor,
+      // daily-streak) read electron/main.js "widgets:data" only while their
+      // card is open; nothing is logged or sent anywhere.
+      "plan-usage": false,
+      "context-gauge": false,
+      "git-status": false,
+      "team-wire": false,
+      "session-timer": false,
+      "daily-streak": false,
+      "shortcut-sheet": false,
+      "clipboard-history": false,
+      "system-monitor": false,
+      "model-switcher": false,
+      "scratchpad": false,
     },
     data: {},
     // filename -> sha256 of the bundled content we last copied into
@@ -508,16 +523,76 @@ const DEFAULT_SETTINGS = {
       // re-run the same prompt on the next free provider instead of surfacing
       // an error bubble and stopping there.
       autoFailover: true,
-      // The model chosen in the Code tab's picker, or null = "Claude only".
-      // Free ids are OpenRouter ids ("stealth/ox-alpha") or keyless:*
-      // builtins; they rotate constantly so nothing validates this against a
-      // fixed list.
+      // The free model last picked in the Code tab's model menu — tried first
+      // when auto-failover kicks in (it is kept when you switch back to
+      // Claude). null = the chain's own order. Free ids are OpenRouter ids
+      // ("stealth/ox-alpha") or keyless:* builtins; they rotate constantly, so
+      // nothing validates this against a fixed list.
       preferredModelId: null,
-      // Optional OpenRouter API key. Empty string = keyless attempts only;
-      // OpenRouter's free tier needs a key to run inference today, so without
-      // this the chain usually lands on the keyless providers at the end.
-      openRouterKey: "",
+      // The optional OpenRouter key is NOT a setting: it lives encrypted in a
+      // separate secrets store (electron/main.js, "Secrets"), because
+      // settings are broadcast to every renderer and written out by Export.
     },
+    // The Code tab's Claude Code chat (electron/ide-chat.js): one persistent
+    // `claude` per open session tab, talking Claude Code's host protocol.
+    chat: {
+      // Load the user's own ~/.claude/settings.json (permission rules, hooks,
+      // plugins, and its `env` block) like their terminal `claude` does. Off
+      // by default because that file travels whole: an `env` block routing
+      // Claude Code elsewhere (ANTHROPIC_BASE_URL + a token, e.g. a local
+      // model router) re-applies inside the chat and quietly replaces the
+      // Claude-plan login BetterClaude promises — the billing guard then
+      // stops the chat — and global hooks/plugins add seconds to every new
+      // session and inject their own gates into its tool calls. Project and
+      // local settings (the repo's own .claude/) always load.
+      loadUserSettings: false,
+      // MCP servers start per session and can take seconds each; on a machine
+      // with many configured that dominates every new chat's first reply.
+      // Off by default (passes --strict-mcp-config); opt in here.
+      loadMcpServers: false,
+      // Billing guard. If the Claude Code settings a chat would load (an
+      // `env` block with an API key, auth token or base URL, a cloud
+      // provider switch, or an apiKeyHelper) would send it anywhere but the
+      // user's Claude plan, the chat stops before its first request unless
+      // this is on.
+      allowApiKeyBilling: false,
+      // Shows the "Bypass permissions" mode (runs every tool without asking).
+      // Off by default — "Auto" (Claude Code's own safety-classifier mode)
+      // covers the hands-off case without disabling every check.
+      allowBypassMode: false,
+    },
+    // The CLI tab's `claude` sessions. On by default: a CLI tab is the user's
+    // real Claude Code, exactly as in their terminal — ~/.claude/settings.json
+    // included, with its permission rules, hooks, plugins and its `env` block
+    // (which may point Claude Code at another endpoint or token). Off passes
+    // `--setting-sources project,local` and strips inherited ANTHROPIC_* /
+    // CLAUDE* overrides, so the session runs on the Claude plan login, the way
+    // Code-tab chats do.
+    cli: {
+      loadUserSettings: true,
+    },
+    // The Code tab's full-IDE layout: a VS Code workbench (VSCodium's server,
+    // electron/workbench.js; docs/ADR-0001) beside the chat. The engine itself
+    // is never downloaded until the user agrees, after seeing its size and
+    // source; these only shape what's offered and how it opens.
+    ide: {
+      // "full" offers the layout (the ⌘⌥I toggle; the engine installs on
+      // first use), "lightweight" keeps the Code tab to its built-in editor
+      // panel and never starts the engine.
+      engine: "full",
+      // Layout for a project the user hasn't chosen one for yet. Chat-first by
+      // default: most sessions are a conversation, and the workbench costs a
+      // server process. Each project remembers its own choice after that.
+      defaultLayout: "chat",
+      // editor.fontLigatures in the workbench (its font follows fonts.codeFont).
+      fontLigatures: true,
+    },
+    // Short AI-generated names for Code-chat sessions, keyed by the CLI session
+    // id — { "<uuid>": "Fix Composer Corner Radius" }. Written by
+    // ide:generate-session-title (one Haiku call over the first exchange) so a
+    // session keeps its human name across window reopens, the way the desktop
+    // app names conversations. Capped at ~200 entries, oldest dropped first.
+    sessionTitles: {},
   },
 };
 

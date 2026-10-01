@@ -23,7 +23,7 @@ function uid() {
 
 module.exports = {
   name: "Snippet Library",
-  version: "1.0.0",
+  version: "1.0.1",
 
   onLoad(api) {
     this.api = api;
@@ -36,24 +36,24 @@ module.exports = {
     api.injectCSS(`
       #bc-snippet-panel {
         position: fixed;
-        top: 88px;
+        top: calc(var(--bc-dock-bottom, 120px) + 8px);
         right: 16px;
         width: 320px;
         max-height: 70vh;
         z-index: 2147482950;
-        background: rgba(20,16,31,0.98);
-        border: 1px solid rgba(255,255,255,0.15);
+        background: var(--bc-bg-elevated, rgba(20,16,31,0.98));
+        border: 1px solid var(--bc-border, rgba(255,255,255,0.15));
         border-radius: 10px;
         display: none;
         flex-direction: column;
         font: 12px -apple-system, sans-serif;
-        color: #ece7fb;
+        color: var(--bc-text, #ece7fb);
         overflow: hidden;
       }
       #bc-snippet-panel.bc-open { display: flex; }
-      .bc-sl-toolbar { display: flex; gap: 6px; padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+      .bc-sl-toolbar { display: flex; gap: 6px; padding: 10px; border-bottom: 1px solid var(--bc-border, rgba(255,255,255,0.1)); }
       .bc-sl-toolbar input, .bc-sl-toolbar select {
-        background: #14101f; border: 1px solid #3a2e5c; color: #ece7fb;
+        background: var(--bc-bg, #14101f); border: 1px solid var(--bc-border, #3a2e5c); color: var(--bc-text, #ece7fb);
         border-radius: 6px; padding: 5px 8px; font: inherit;
       }
       .bc-sl-toolbar input { flex: 1; min-width: 0; }
@@ -62,24 +62,24 @@ module.exports = {
         padding: 8px 10px; border-radius: 8px; margin-bottom: 4px;
         background: rgba(255,255,255,0.03); cursor: pointer;
       }
-      .bc-sl-item:hover { background: rgba(139,92,246,0.2); }
+      .bc-sl-item:hover { background: color-mix(in srgb, var(--bc-accent, #8b5cf6) 20%, transparent); }
       .bc-sl-item-title { font-weight: 600; display: flex; justify-content: space-between; gap: 6px; }
       .bc-sl-item-cat { opacity: 0.55; font-size: 10px; }
       .bc-sl-item-text { opacity: 0.7; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .bc-sl-item-actions { display: flex; gap: 4px; flex-shrink: 0; }
       .bc-sl-item-actions button {
-        background: none; border: none; color: #a99bd1; cursor: pointer; font-size: 11px; padding: 0 2px;
+        background: none; border: none; color: var(--bc-text-muted, #a99bd1); cursor: pointer; font-size: 11px; padding: 0 2px;
       }
-      .bc-sl-item-actions button:hover { color: #ece7fb; }
-      .bc-sl-footer { padding: 8px; border-top: 1px solid rgba(255,255,255,0.1); }
+      .bc-sl-item-actions button:hover { color: var(--bc-text, #ece7fb); }
+      .bc-sl-footer { padding: 8px; border-top: 1px solid var(--bc-border, rgba(255,255,255,0.1)); }
       .bc-sl-footer button {
-        width: 100%; padding: 7px; border-radius: 6px; border: 1px dashed rgba(255,255,255,0.25);
-        background: transparent; color: #ece7fb; cursor: pointer; font: inherit;
+        width: 100%; padding: 7px; border-radius: 6px; border: 1px dashed var(--bc-border, rgba(255,255,255,0.25));
+        background: transparent; color: var(--bc-text, #ece7fb); cursor: pointer; font: inherit;
       }
       .bc-sl-footer button:hover { background: rgba(255,255,255,0.06); }
-      .bc-sl-form { padding: 10px; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid rgba(255,255,255,0.1); }
+      .bc-sl-form { padding: 10px; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--bc-border, rgba(255,255,255,0.1)); }
       .bc-sl-form input, .bc-sl-form textarea {
-        background: #14101f; border: 1px solid #3a2e5c; color: #ece7fb;
+        background: var(--bc-bg, #14101f); border: 1px solid var(--bc-border, #3a2e5c); color: var(--bc-text, #ece7fb);
         border-radius: 6px; padding: 6px 8px; font: inherit; resize: vertical;
       }
       .bc-sl-form-row { display: flex; gap: 6px; }
@@ -88,7 +88,7 @@ module.exports = {
         padding: 5px 10px; border-radius: 6px; border: none; cursor: pointer; font: inherit;
       }
       .bc-sl-form-save { background: var(--bc-accent, #8b5cf6); color: var(--btn-primary-fg, #fff); }
-      .bc-sl-form-cancel { background: transparent; color: #ece7fb; border: 1px solid #3a2e5c !important; }
+      .bc-sl-form-cancel { background: transparent; color: var(--bc-text, #ece7fb); border: 1px solid var(--bc-border, #3a2e5c) !important; }
       .bc-sl-empty { opacity: 0.5; text-align: center; padding: 20px 10px; }
     `);
 
@@ -100,6 +100,7 @@ module.exports = {
 
     const panel = document.createElement("div");
     panel.id = "bc-snippet-panel";
+    panel.dataset.bcOwn = ""; // themed with --bc-* tokens; keep page resets off it
     document.body.appendChild(panel);
     this._panel = panel;
 

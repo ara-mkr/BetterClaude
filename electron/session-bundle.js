@@ -83,6 +83,46 @@ function collapseTitle(text) {
   return flat.length > 64 ? `${flat.slice(0, 63)}…` : flat;
 }
 
+/** A prompt as the person wrote it: no <system-reminder> blocks or paste wrappers. */
+function cleanPromptText(text) {
+  return String(text || "")
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+    // Claude's desktop app wraps pasted text as <pasted_content id="…">…</pasted_content>.
+    .replace(/<\/?pasted_content\b[^>]*>/g, "")
+    .trim();
+}
+
+const tagValue = (text, tag) => {
+  const m = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(text);
+  return m ? m[1].trim() : "";
+};
+
+/**
+ * Text Claude Code itself put in a `type:"user"` line — never typed by the
+ * person, so never shown as their bubble:
+ *   - a background task finishing: <task-notification>… (→ a note);
+ *   - "[Request interrupted by user…]" (→ a note);
+ *   - a slash command's echo: <command-name>/x</command-name>… (→ "/x args");
+ *   - `!` bash-mode input (→ "! cmd"); command output / caveats (→ dropped).
+ * Returns null for ordinary text.
+ */
+function classifyInjectedUserText(text) {
+  const t = String(text || "").trim();
+  if (t.startsWith("<task-notification>")) {
+    const status = tagValue(t, "status");
+    return { kind: "note", text: tagValue(t, "summary") || `Background task ${status || "finished"}` };
+  }
+  if (/^\[Request interrupted by user[^\]]*\]$/.test(t)) return { kind: "note", text: "Interrupted." };
+  if (t.startsWith("<command-name>") || t.startsWith("<command-message>")) {
+    const name = tagValue(t, "command-name");
+    const args = tagValue(t, "command-args");
+    return name ? { kind: "user", text: `${name}${args ? ` ${args}` : ""}` } : { kind: "skip" };
+  }
+  if (t.startsWith("<bash-input>")) return { kind: "user", text: `! ${tagValue(t, "bash-input")}` };
+  if (/^<(local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>/.test(t)) return { kind: "skip" };
+  return null;
+}
+
 /**
  * A short, human-readable name for a session, for lists that would otherwise
  * show a raw id. Prefers Claude Code's own `{type:"summary"}` line when the
@@ -90,6 +130,21 @@ function collapseTitle(text) {
  * the first `type:"user"` line that carries real text (not a tool_result,
  * not an isMeta/compact-summary bookkeeping line).
  */
+/**
+ * A prompt the Team Hub typed in (main.js teamDeliveryText) as a title
+ * source: a "[BetterClaude]" system delivery (the join prompt) is no title
+ * at all; a "[BetterClaude team · …]" message is titled by its first body,
+ * without the header or the "can't see your terminal" trailer.
+ */
+function teamDeliveryBody(text) {
+  if (/^\[BetterClaude\]/.test(text)) return "";
+  if (!/^\[BetterClaude team · /.test(text)) return text;
+  const body = text.split(/\n\n(?=\[BetterClaude)/)[0]
+    .replace(/^\[BetterClaude team · [^\n]*\]\n?/, "")
+    .replace(/\n\([^\n]*can't see your terminal[^\n]*\)\s*$/, "");
+  return body.trim();
+}
+
 function deriveSessionTitle(lines) {
   for (const line of lines || []) {
     if (line && line.type === "summary" && typeof line.summary === "string" && line.summary.trim()) {
@@ -103,7 +158,10 @@ function deriveSessionTitle(lines) {
     // A user line whose content is entirely tool_result blocks is the CLI
     // feeding tool output back in, not a typed prompt.
     if (Array.isArray(content) && content.length && content.every((b) => b && b.type === "tool_result")) continue;
-    const text = extractMessageText(line).trim();
+    const raw = extractMessageText(line).trim();
+    const injected = classifyInjectedUserText(raw);
+    if (injected && injected.kind !== "user") continue;
+    const text = teamDeliveryBody(injected ? injected.text : cleanPromptText(raw));
     if (text) return collapseTitle(text);
   }
   return "";
@@ -137,45 +195,69 @@ function readJsonlLines(filePath) {
  * `cwd` field back out, rather than trusting the directory-name encoding —
  * see the comment on encodeCwdToProjectSlug.
  */
+// Per-transcript summaries keyed by file path, reused while the file's mtime
+// and size are unchanged. The Code tab re-lists a project after every turn,
+// and re-parsing every (often multi-MB) transcript each time blocked the main
+// process; normally only the session that just ran has changed.
+const sessionSummaryCache = new Map(); // dir -> Map(filename -> { mtimeMs, size, summary })
+
+function summarizeSessionFile(filePath) {
+  const lines = readJsonlLines(filePath);
+  if (lines.length === 0) return null;
+  const withCwd = lines.find((l) => typeof l.cwd === "string");
+  let firstTimestamp = null;
+  let lastTimestamp = null;
+  let messageCount = 0;
+  for (const l of lines) {
+    if (typeof l.timestamp === "string") {
+      if (!firstTimestamp) firstTimestamp = l.timestamp;
+      lastTimestamp = l.timestamp;
+    }
+    if (l.type === "user" || l.type === "assistant") messageCount++;
+  }
+  return {
+    fileCwd: withCwd ? path.resolve(withCwd.cwd) : null,
+    firstTimestamp,
+    lastTimestamp,
+    messageCount,
+    title: deriveSessionTitle(lines),
+  };
+}
+
 function listSessionsForCwd(cwd) {
   const dir = path.join(projectsDir(), encodeCwdToProjectSlug(cwd));
   let entries;
   try {
     entries = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
   } catch {
+    sessionSummaryCache.delete(dir);
     return [];
   }
 
+  const previous = sessionSummaryCache.get(dir) || new Map();
+  const cache = new Map(); // only files still present, so deleted sessions drop out
+  const wantCwd = path.resolve(cwd);
   const sessions = [];
   for (const filename of entries) {
     const filePath = path.join(dir, filename);
     const sessionId = filename.replace(/\.jsonl$/, "");
-    const lines = readJsonlLines(filePath);
-    if (lines.length === 0) continue;
-
-    const withCwd = lines.find((l) => typeof l.cwd === "string");
-    if (withCwd && path.resolve(withCwd.cwd) !== path.resolve(cwd)) continue;
-
-    let firstTimestamp = null;
-    let lastTimestamp = null;
-    let messageCount = 0;
-    for (const l of lines) {
-      if (typeof l.timestamp === "string") {
-        if (!firstTimestamp) firstTimestamp = l.timestamp;
-        lastTimestamp = l.timestamp;
-      }
-      if (l.type === "user" || l.type === "assistant") messageCount++;
-    }
-
-    let mtimeMs = 0;
+    let stat = null;
     try {
-      mtimeMs = fs.statSync(filePath).mtimeMs;
+      stat = fs.statSync(filePath);
     } catch {
-      // Leave at 0 — sort falls back to timestamp field order below.
+      continue;
     }
-
-    sessions.push({ sessionId, filePath, firstTimestamp, lastTimestamp, messageCount, mtimeMs, title: deriveSessionTitle(lines) });
+    const hit = previous.get(filename);
+    const summary = hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size
+      ? hit.summary
+      : summarizeSessionFile(filePath);
+    cache.set(filename, { mtimeMs: stat.mtimeMs, size: stat.size, summary });
+    if (!summary) continue;
+    if (summary.fileCwd && summary.fileCwd !== wantCwd) continue;
+    const { firstTimestamp, lastTimestamp, messageCount, title } = summary;
+    sessions.push({ sessionId, filePath, firstTimestamp, lastTimestamp, messageCount, mtimeMs: stat.mtimeMs, title });
   }
+  sessionSummaryCache.set(dir, cache);
 
   sessions.sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
   return sessions;
@@ -472,14 +554,80 @@ function readSessionMessagesFromDisk(cwd, sessionId) {
  * one entry per human/assistant turn that carries visible text. Tool calls,
  * tool results and bookkeeping lines are dropped.
  */
-function messagesToChatTurns(lines) {
+/**
+ * A transcript's lines as chat turns ({role:"user"|"assistant", text, ts}).
+ *
+ * With `includeTools`, Claude's tool calls come through too, in order, as
+ * {role:"tool", id, name, input, isError, preview} — so a reopened session in
+ * the Code tab shows the same collapsed "Edited foo.js / Ran npm test" rows
+ * the live chat does, instead of only the prose around them. Subagent
+ * (sidechain) lines are skipped either way.
+ */
+function messagesToChatTurns(lines, { includeTools = false } = {}) {
   const turns = [];
+  const toolsById = new Map();
   for (const line of lines || []) {
     if (line.type !== "user" && line.type !== "assistant") continue;
-    if (line.isMeta || line.isCompactSummary) continue;
+    if (line.isMeta || line.isCompactSummary || line.isSidechain) continue;
     const content = line.message && line.message.content;
+    // Claude Code writes its own failures ("API Error: …", "You've hit your
+    // limit") as assistant lines with model "<synthetic>" — not a reply. A
+    // note in the Code tab; dropped from chat history, where a free model
+    // would otherwise take the error as something Claude said.
+    if (line.type === "assistant" && (line.isApiErrorMessage || (line.message && line.message.model === "<synthetic>"))) {
+      const errorText = line.isApiErrorMessage ? extractMessageText(line).trim() : "";
+      if (includeTools && errorText) turns.push({ role: "note", text: errorText.length > 300 ? `${errorText.slice(0, 299)}…` : errorText, ts: line.timestamp || null });
+      continue;
+    }
+    if (includeTools && line.type === "assistant" && Array.isArray(content)) {
+      // Keep the message's own order: prose, then the tool it led into,
+      // then whatever prose followed.
+      let text = "";
+      const flush = () => {
+        if (text.trim()) turns.push({ role: "assistant", text: text.trim(), ts: line.timestamp || null });
+        text = "";
+      };
+      for (const block of content) {
+        if (!block) continue;
+        if (block.type === "text" && typeof block.text === "string") text += (text ? "\n" : "") + block.text;
+        else if (block.type === "tool_use") {
+          flush();
+          const turn = { role: "tool", id: block.id || null, name: block.name || "tool", input: block.input || {}, isError: false, preview: "", ts: line.timestamp || null };
+          if (block.id) toolsById.set(block.id, turn);
+          turns.push(turn);
+        }
+      }
+      flush();
+      continue;
+    }
+    if (includeTools && Array.isArray(content)) {
+      for (const block of content) {
+        if (!block) continue;
+        if (line.type === "user" && block.type === "tool_result") {
+          const turn = toolsById.get(block.tool_use_id);
+          if (!turn) continue;
+          turn.isError = !!block.is_error;
+          const raw = typeof block.content === "string"
+            ? block.content
+            : Array.isArray(block.content) ? block.content.filter((p) => p && p.type === "text").map((p) => p.text).join("\n") : "";
+          turn.preview = raw.length > 4000 ? `${raw.slice(0, 4000)}\n…` : raw;
+        }
+      }
+    }
     if (Array.isArray(content) && content.length && content.every((b) => b && b.type === "tool_result")) continue;
-    const text = extractMessageText(line).trim();
+    let text = extractMessageText(line).trim();
+    if (line.type === "user") {
+      const injected = classifyInjectedUserText(text);
+      if (injected) {
+        if (injected.kind === "skip" || !injected.text) continue;
+        // Notes (a background task finished, an interrupt) only when the
+        // caller renders tool activity; chat-history callers want dialogue.
+        if (injected.kind === "note") { if (includeTools) turns.push({ role: "note", text: injected.text, ts: line.timestamp || null }); continue; }
+        text = injected.text;
+      } else {
+        text = cleanPromptText(text);
+      }
+    }
     if (!text) continue;
     turns.push({ role: line.type === "user" ? "user" : "assistant", text, ts: line.timestamp || null });
   }

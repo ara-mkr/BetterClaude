@@ -49,6 +49,7 @@ const claudeDom = require("./claude-dom");
 const { mountCodeTab, measureContentArea } = require("./code-tab");
 const { mountClaudeReloadWatch, findReloadPrompt } = require("./claude-reload");
 const { mountOverlayOcclusionGuard } = require("./overlay-occlusion");
+const { mountAuthContrast } = require("./auth-contrast");
 
 module.exports = {
   ThemeEngine,
@@ -132,4 +133,6 @@ module.exports = {
   mountClaudeReloadWatch,
   findReloadPrompt,
   mountOverlayOcclusionGuard,
+  // Readable button labels on the sign-in page, whatever the theme.
+  mountAuthContrast,
 };

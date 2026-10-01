@@ -9,11 +9,11 @@ function uid() {
   return `n${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
-const NOTE_COLORS = ["#f5c518", "#8b5cf6", "#22c55e", "#38bdf8", "#f97316"];
+const NOTE_COLORS = ["#f5c518", "var(--bc-accent, #8b5cf6)", "#22c55e", "#38bdf8", "#f97316"];
 
 module.exports = {
   name: "Sticky Notes",
-  version: "1.0.0",
+  version: "1.0.1",
 
   onLoad(api) {
     this.api = api;
@@ -21,9 +21,9 @@ module.exports = {
 
     api.injectCSS(`
       #bc-sticky-panel {
-        position: fixed; top: 88px; right: 16px; width: 260px; max-height: 70vh;
-        overflow-y: auto; z-index: 2147482950; background: rgba(20,16,31,0.98);
-        border: 1px solid rgba(255,255,255,0.15); border-radius: 10px;
+        position: fixed; top: calc(var(--bc-dock-bottom, 120px) + 8px); right: 16px; width: 260px; max-height: 70vh;
+        overflow-y: auto; z-index: 2147482950; background: var(--bc-bg-elevated, rgba(20,16,31,0.98));
+        border: 1px solid var(--bc-border, rgba(255,255,255,0.15)); border-radius: 10px;
         display: none; flex-direction: column; gap: 8px; padding: 12px;
         font: 12px -apple-system, sans-serif;
       }
@@ -41,16 +41,17 @@ module.exports = {
       .bc-sticky-del:hover { opacity: 1; }
       .bc-sticky-add {
         border: 1px dashed rgba(255,255,255,0.3); border-radius: 8px; padding: 8px;
-        background: transparent; color: #ece7fb; cursor: pointer; font: inherit;
+        background: transparent; color: var(--bc-text, #ece7fb); cursor: pointer; font: inherit;
       }
       .bc-sticky-add:hover { background: rgba(255,255,255,0.06); }
-      .bc-sticky-empty { color: #ece7fb; opacity: 0.55; text-align: center; padding: 16px 4px; }
+      .bc-sticky-empty { color: var(--bc-text, #ece7fb); opacity: 0.55; text-align: center; padding: 16px 4px; }
     `);
 
     this._dockBtn = api.mountToolbarButton({ icon: NOTES_ICON, label: "Sticky Notes", onClick: () => this.toggle() });
 
     const panel = document.createElement("div");
     panel.id = "bc-sticky-panel";
+    panel.dataset.bcOwn = ""; // themed with --bc-* tokens; keep page resets off it
     document.body.appendChild(panel);
     this._panel = panel;
 

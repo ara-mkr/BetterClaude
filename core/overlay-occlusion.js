@@ -67,13 +67,13 @@ function isCandidateOverlay(el) {
   return isOwnBodyChild(el) || isForeignDialog(el);
 }
 
-/** True while a BetterClaude overlay (or claude.ai's own modal) is covering a meaningful part of the window. */
-function anyBlockingOverlay() {
-  if (!document.body) return false;
+/** The overlay (BetterClaude's, or claude.ai's own modal) covering a meaningful part of the window, else null. */
+function findBlockingOverlay() {
+  if (!document.body) return null;
   const viewportArea = (window.innerWidth || 0) * (window.innerHeight || 0);
-  if (viewportArea <= 0) return false;
+  if (viewportArea <= 0) return null;
 
-  return Array.prototype.some.call(document.body.children, (el) => {
+  return Array.prototype.find.call(document.body.children, (el) => {
     if (!isCandidateOverlay(el)) return false;
     let style;
     try {
@@ -86,7 +86,26 @@ function anyBlockingOverlay() {
     if (style.pointerEvents === "none") return false;
     const box = el.getBoundingClientRect();
     return box.width * box.height > viewportArea * BLOCKING_AREA_RATIO;
-  });
+  }) || null;
+}
+
+/** True while a BetterClaude overlay (or claude.ai's own modal) is covering a meaningful part of the window. */
+function anyBlockingOverlay() {
+  return !!findBlockingOverlay();
+}
+
+/**
+ * Whose overlay is blocking: "own" (BetterClaude's — settings, palette, …),
+ * "foreign" (claude.ai's own modal), or null. The distinction matters to the
+ * host: with the native pane stepped aside for one of OURS, claude.ai's page
+ * would show through behind it (its sign-in hero video, when signed out), which
+ * is never what the user opened Settings to see — but a foreign modal IS the
+ * page content the user asked for.
+ */
+function blockingOverlayKind() {
+  const el = findBlockingOverlay();
+  if (!el) return null;
+  return isOwnBodyChild(el) ? "own" : "foreign";
 }
 
 /**
@@ -103,20 +122,23 @@ function anyBlockingOverlay() {
  * Neither watches a subtree, so the cost does not scale with page content, and
  * an overlay re-rendering its own insides costs nothing.
  *
- * @param {Function} onChange Called with a boolean only when the state flips.
+ * @param {Function} onChange Called with (blocking:boolean, kind:"own"|"foreign"|null) only when either flips.
  */
 function mountOverlayOcclusionGuard({ onChange } = {}) {
   if (typeof onChange !== "function") return { check() {}, unmount() {} };
   let last = null;
+  let lastKind = null;
   let scheduled = null;
   let observer = null;
   const watched = new Set();
 
   function check() {
-    const blocking = anyBlockingOverlay();
-    if (blocking === last) return blocking;
+    const kind = blockingOverlayKind();
+    const blocking = kind !== null;
+    if (blocking === last && kind === lastKind) return blocking;
     last = blocking;
-    onChange(blocking);
+    lastKind = kind;
+    onChange(blocking, kind);
     return blocking;
   }
 
@@ -161,4 +183,4 @@ function mountOverlayOcclusionGuard({ onChange } = {}) {
   };
 }
 
-module.exports = { mountOverlayOcclusionGuard, anyBlockingOverlay, BLOCKING_AREA_RATIO };
+module.exports = { mountOverlayOcclusionGuard, anyBlockingOverlay, blockingOverlayKind, BLOCKING_AREA_RATIO };

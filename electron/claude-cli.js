@@ -77,11 +77,139 @@ function fallbackDirs() {
   }
   return [
     path.join(home, ".local", "bin"),
+    path.join(home, ".claude", "local"),
     path.join(home, "bin"),
     "/opt/homebrew/bin",
     "/usr/local/bin",
+    path.join(home, ".npm-global", "bin"),
+    path.join(home, ".bun", "bin"),
+    path.join(home, ".volta", "bin"),
+    path.join(home, ".local", "share", "mise", "shims"),
+    path.join(home, ".asdf", "shims"),
+    ...nvmBinDirs(home),
     "/usr/bin",
   ];
+}
+
+/** Every installed nvm Node's bin dir, newest-looking first. */
+function nvmBinDirs(home) {
+  const root = path.join(home, ".nvm", "versions", "node");
+  try {
+    return require("fs").readdirSync(root).sort().reverse().map((v) => path.join(root, v, "bin"));
+  } catch {
+    return [];
+  }
+}
+
+// --- Login-shell PATH ---------------------------------------------------------
+// A Dock-launched macOS app inherits launchd's bare PATH
+// (/usr/bin:/bin:/usr/sbin:/sbin). Claude Code itself runs from there, but
+// everything IT spawns — the Bash tool's `npm test`, project hooks, `gh`,
+// `node` for an npm-installed claude — would not be found. So the user's real
+// login-shell PATH is read once, the way a terminal would see it, and merged in.
+const PATH_SENTINEL = "__BC_LOGIN_PATH__";
+let loginPathPromise = null;
+
+/**
+ * Resolves the user's login-shell PATH (cached). Never rejects: any failure —
+ * no $SHELL, a hung rc file, Windows — resolves to null and callers keep the
+ * inherited PATH. Interactive rc files can print banners or prompt, so the
+ * value is fenced by sentinels and stdin is closed.
+ */
+function resolveLoginPath({ timeoutMs = 4000 } = {}) {
+  if (loginPathPromise) return loginPathPromise;
+  loginPathPromise = new Promise((resolve) => {
+    if (IS_WINDOWS) { resolve(null); return; }
+    const shell = process.env.SHELL || (process.platform === "darwin" ? "/bin/zsh" : "/bin/bash");
+    let child;
+    try {
+      // `${PATH}` braced: bare `$PATH__BC…` would parse as one longer (unset)
+      // variable name, since underscores are identifier characters.
+      const script = "printf '%s' \"" + PATH_SENTINEL + "${PATH}" + PATH_SENTINEL + "\"";
+      child = execFile(shell, ["-ilc", script], {
+        timeout: timeoutMs,
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024,
+        env: { ...process.env, TERM: "dumb" },
+      }, (_error, stdout) => {
+        const text = String(stdout || "");
+        const start = text.indexOf(PATH_SENTINEL);
+        const end = text.lastIndexOf(PATH_SENTINEL);
+        if (start === -1 || end <= start) { resolve(null); return; }
+        const value = text.slice(start + PATH_SENTINEL.length, end).trim();
+        resolve(value || null);
+      });
+      if (child.stdin) child.stdin.end();
+    } catch {
+      resolve(null);
+    }
+  });
+  return loginPathPromise;
+}
+
+function mergePathLists(...lists) {
+  const seen = new Set();
+  const out = [];
+  for (const list of lists) {
+    for (const dir of String(list || "").split(path.delimiter)) {
+      if (!dir || seen.has(dir)) continue;
+      seen.add(dir);
+      out.push(dir);
+    }
+  }
+  return out.join(path.delimiter);
+}
+
+/**
+ * Merges the login-shell PATH into this process's own PATH (login entries
+ * first), so every later spawn — Claude Code, git, gh, the IDE shell — sees
+ * what the user's terminal sees. Safe to call more than once.
+ */
+async function applyLoginShellPath() {
+  const loginPath = await resolveLoginPath();
+  if (loginPath) process.env.PATH = mergePathLists(loginPath, process.env.PATH);
+  return process.env.PATH;
+}
+
+// --- Subscription environment -------------------------------------------------
+// Variables that must never reach a Claude Code child the Code tab spawns:
+//   - ANTHROPIC_API_KEY / _AUTH_TOKEN / _BASE_URL and the CLAUDE_CODE_USE_*
+//     provider switches take precedence over the user's claude.ai login, which
+//     would silently bill an API key instead of their subscription;
+//   - ANTHROPIC_MODEL / ANTHROPIC_DEFAULT_*_MODEL / _SMALL_FAST_MODEL rewrite
+//     what the picker's opus/sonnet/haiku aliases resolve to;
+//   - CLAUDECODE, CLAUDE_CODE_SESSION_ID, _ENTRYPOINT, _MESSAGING_*, host auth
+//     refresh flags, CLAUDE_EFFORT … are set when BetterClaude itself is
+//     launched from inside a Claude Code / Claude desktop session, and make the
+//     child think it is a nested or SDK-hosted session.
+// Rather than chase an ever-growing list, every ANTHROPIC_* and CLAUDE* name
+// is dropped except the few that are the user's own configuration.
+const KEEP_CLAUDE_ENV = new Set([
+  "CLAUDE_CONFIG_DIR", // where the user's login + settings live
+  "CLAUDE_CODE_OAUTH_TOKEN", // a subscription token from `claude setup-token`
+  "CLAUDE_CODE_GIT_BASH_PATH", // Windows: which bash the Bash tool uses
+]);
+
+/**
+ * The environment for a Claude Code child that must run on the user's own
+ * subscription login. `binaryPath`'s directory is put on PATH so an
+ * npm-installed `claude` (a `#!/usr/bin/env node` script) finds its node.
+ */
+function subscriptionEnv({ binaryPath = null, extra = null } = {}) {
+  const env = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value !== "string") continue;
+    if (/^(ANTHROPIC_|CLAUDE)/.test(key) && !KEEP_CLAUDE_ENV.has(key)) continue;
+    env[key] = value;
+  }
+  const binDir = binaryPath ? path.dirname(binaryPath) : "";
+  env.PATH = mergePathLists(binDir, env.PATH || "");
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) {
+      if (typeof value === "string") env[key] = value;
+    }
+  }
+  return env;
 }
 
 function executableNames() {
@@ -141,18 +269,56 @@ function locateClaude(explicit) {
   );
 }
 
+/** Just TERM plus the caller's extras — what childEnv() lays over process.env. */
+function childEnvOverrides(extra) {
+  const env = { TERM: "xterm-256color" };
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) {
+      if (typeof key === "string" && typeof value === "string") env[key] = value;
+    }
+  }
+  return env;
+}
+
+// Markers a Claude Code / Claude desktop HOST sets on processes it launches.
+// They describe BetterClaude's parent, not the user's configuration: when the
+// app is started from a terminal inside Claude Code they arrive in
+// process.env, and passed on they make a CLI tab's `claude` believe it is a
+// nested or SDK-hosted session. The user's own settings (ANTHROPIC_*,
+// CLAUDE_CODE_USE_*, model overrides …) are deliberately NOT in this list —
+// a CLI tab in terminal-parity mode keeps those.
+const HOST_SESSION_ENV = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_SSE_PORT",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_HOST_SESSION_ID",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_MESSAGING_SOCKET",
+  "CLAUDE_CODE_MESSAGING_TOKEN",
+  "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH",
+  "CLAUDE_CODE_SESSION_ATTENDED",
+  "CLAUDE_CODE_EXECPATH",
+  "CLAUDE_CODE_DESKTOP_APP_VERSION",
+  "CLAUDE_AGENT_SDK_VERSION",
+  "CLAUDE_PID",
+];
+
 /**
  * Copies the current environment for the child.
  *
  * Passed through essentially untouched, deliberately (see the compliance note
- * at the top of this file). The single override is TERM, which must agree with
- * the emulator we render into.
+ * at the top of this file): the user's own variables all survive. Two
+ * exceptions — TERM, which must agree with the emulator we render into, and
+ * the HOST_SESSION_ENV markers above, which belong to whatever launched
+ * BetterClaude rather than to the user.
  */
 function childEnv(extra) {
   const env = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (typeof value === "string") env[key] = value;
   }
+  for (const key of HOST_SESSION_ENV) delete env[key];
   env.TERM = "xterm-256color";
   // Team sessions carry BC_TEAM_* variables pointing at their shared hub so
   // scripts/hooks inside the agent can find it without parsing the prompt.
@@ -162,6 +328,46 @@ function childEnv(extra) {
     }
   }
   return env;
+}
+
+/** POSIX single-quoting: safe for any path, quotes and `$` included. */
+function shQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * `--settings` JSON that makes a CLI tab's `claude` report where it is in its
+ * turn cycle by writing a tiny state file — the only reliable way to know
+ * whether it's sitting idle at its prompt without parsing its screen:
+ *
+ *   SessionStart (startup|resume|clear) -> at the prompt, ready
+ *   UserPromptSubmit / PreToolUse / PostToolUse -> mid-turn
+ *   Notification -> its JSON verbatim (permission_prompt = a dialog is up)
+ *   Stop / StopFailure -> the turn ended, back at the prompt
+ *
+ * Team message delivery (electron/main.js) types into a pty only in that last
+ * state: a paste + Enter anywhere else answers whatever dialog is up — it
+ * picked "No, exit" on the folder-trust prompt and would approve a permission
+ * prompt. The hooks are additive (they never replace the user's own), write
+ * nothing to stdout (which UserPromptSubmit/SessionStart would feed to the
+ * model), and carry no tool data: only Notification's small payload is kept.
+ */
+function stateHookSettings(stateFile) {
+  const tmp = `${shQuote(`${stateFile}.tmp`)}.$$`;
+  const commit = `&& mv -f ${tmp} ${shQuote(stateFile)}`;
+  const mark = (event) => ({ type: "command", command: `printf '%s' '{"e":"${event}"}' > ${tmp} ${commit}`, timeout: 5 });
+  const raw = { type: "command", command: `cat > ${tmp} ${commit}`, timeout: 5 };
+  return JSON.stringify({
+    hooks: {
+      SessionStart: [{ matcher: "startup|resume|clear", hooks: [mark("SessionStart")] }],
+      UserPromptSubmit: [{ hooks: [mark("UserPromptSubmit")] }],
+      PreToolUse: [{ hooks: [mark("PreToolUse")] }],
+      PostToolUse: [{ hooks: [mark("PostToolUse")] }],
+      Notification: [{ hooks: [raw] }],
+      Stop: [{ hooks: [mark("Stop")] }],
+      StopFailure: [{ hooks: [mark("StopFailure")] }],
+    },
+  });
 }
 
 /**
@@ -175,7 +381,7 @@ function childEnv(extra) {
  * Emits: "data" (string chunk), "exit" ({ exitCode, signal }).
  */
 class ClaudeSession extends EventEmitter {
-  constructor({ binaryPath, args = [], cwd, cols, rows, env }) {
+  constructor({ binaryPath, args = [], cwd, cols, rows, env, baseEnv = null }) {
     super();
     this.cwd = cwd || process.cwd();
     this.startedAt = new Date();
@@ -202,7 +408,9 @@ class ClaudeSession extends EventEmitter {
         cols: Math.max(1, cols),
         rows: Math.max(1, rows),
         cwd: this.cwd,
-        env: childEnv(env),
+        // `baseEnv`: a caller-prepared environment (e.g. subscriptionEnv())
+        // used as-is instead of this process's own, with TERM still forced.
+        env: baseEnv ? { ...baseEnv, ...childEnvOverrides(env) } : childEnv(env),
       });
     } catch (error) {
       throw new PtySpawnError(
@@ -307,7 +515,13 @@ module.exports = {
   ClaudeNotFoundError,
   ClaudeSession,
   DOCS_URL,
+  HOST_SESSION_ENV,
   PtySpawnError,
+  applyLoginShellPath,
+  childEnv,
   listAgentSessions,
   locateClaude,
+  resolveLoginPath,
+  stateHookSettings,
+  subscriptionEnv,
 };

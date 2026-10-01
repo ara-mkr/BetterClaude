@@ -54,12 +54,12 @@ body {
   flex: 0 0 auto;
 }
 
-#bc-code-shell[data-state="running"] .bc-code-dot {
+#bc-code-shell[data-state="running"] #bc-code-status .bc-code-dot {
   background: var(--bc-accent, #6059e6);
 }
 
-#bc-code-shell[data-state="exited"] .bc-code-dot,
-#bc-code-shell[data-state="failed"] .bc-code-dot {
+#bc-code-shell[data-state="exited"] #bc-code-status .bc-code-dot,
+#bc-code-shell[data-state="failed"] #bc-code-status .bc-code-dot {
   background: var(--bc-danger, #ef4444);
 }
 
@@ -525,7 +525,8 @@ html.bc-team-rail-resizing {
 }
 
 .bc-rail-name[data-from="you"] {
-  color: var(--bc-accent, #6059e6);
+  /* Accent-tinted, but mixed toward the text colour so it reads (≥4.5:1) on both themes. */
+  color: color-mix(in srgb, var(--bc-accent, #6059e6) 55%, var(--bc-text, #ece7fb));
 }
 
 .bc-rail-kind {
@@ -585,6 +586,12 @@ html.bc-team-rail-resizing {
 .bc-rail-event .bc-rail-who {
   font-weight: 600;
   color: var(--bc-text, #ece7fb);
+  /* "Agent 001" wrapped onto two lines in a narrow rail. */
+  flex: 0 1 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .bc-rail-event .bc-rail-what {
@@ -624,6 +631,14 @@ html.bc-team-rail-resizing {
 html.bc-embedded body {
   padding-top: 0 !important;
   height: 100vh !important;
+}
+
+/* There is no title bar in this page, so nothing may be inset for one. Every
+   sheet that reads --bc-tb-h (the settings overlay's `top`, toasts) must see 0
+   here; left at the bar's height, the settings overlay started 46px down —
+   a dead undimmed strip on top and a dialog pushed to the window's bottom edge. */
+html.bc-embedded {
+  --bc-tb-h: 0px;
 }
 
 /* The pane is a child view: it has no window of its own to drag, minimise, or
@@ -793,6 +808,37 @@ html.bc-embedded #betterclaude-titlebar {
 .bc-team-member-name {
   font-weight: 600;
   color: var(--bc-text, #ece7fb);
+  /* A long custom name ellipsizes instead of pushing the folder tag out. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bc-team-member-name[data-renamable] {
+  cursor: text;
+}
+
+/* The inline rename field replaces the name in place (double-click it, or
+   the card's Rename chip). Enter saves, Esc cancels. */
+.bc-team-rename-input {
+  font: inherit;
+  font-weight: 600;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 0 5px;
+  height: 20px;
+  border-radius: 5px;
+  color: var(--bc-text, #ece7fb);
+  background: var(--bc-bg, #14101f);
+  border: 1px solid var(--bc-accent, #6059e6);
+  outline: none;
+}
+
+.bc-team-member-error {
+  color: var(--bc-danger, #ef4444);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .bc-team-member-cwd {
@@ -892,19 +938,46 @@ html.bc-embedded #betterclaude-titlebar {
   color: var(--bc-text, #ece7fb);
 }
 
+/* A raw agent id as sender must not squeeze the recipient or time into a wrap. */
+.bc-team-msg-meta > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bc-team-msg-meta > .bc-team-msg-time {
+  flex: 0 0 auto;
+}
+
+/* In a narrow rail a long sender used to squeeze the recipient down to one
+   letter ("Reviewer… → A"). The sender shrinks first; the arrow never does. */
+.bc-team-msg-meta > .bc-team-msg-from {
+  flex-shrink: 4;
+}
+
+.bc-team-msg-meta > span:nth-child(2) {
+  flex: 0 0 auto;
+}
+
 /* Messages addressed to everyone get an accent left edge; DMs stay neutral. */
 .bc-team-msg[data-broadcast="true"] {
   border-left: 2px solid var(--bc-accent, #6059e6);
 }
 
 .bc-team-msg[data-from="you"] .bc-team-msg-from {
-  color: var(--bc-accent, #6059e6);
+  color: color-mix(in srgb, var(--bc-accent, #6059e6) 55%, var(--bc-text, #ece7fb));
 }
 
-.bc-team-msg[data-kind="review"] .bc-team-msg-from::after,
-.bc-team-msg[data-kind="done"] .bc-team-msg-from::after {
-  content: " · " attr(data-kind);
-  font-weight: 400;
+/* The message kind (review, done, question, handoff) as its own chip, so the
+   name ellipsis never cuts it. (Was a ::after reading attr(data-kind) off the
+   name span, which has no such attribute — it only ever showed " · ".) */
+.bc-team-msg-meta > .bc-team-msg-kind {
+  flex: 0 0 auto;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 9px;
   color: var(--bc-text-muted, #a99bd1);
 }
 
@@ -1057,11 +1130,11 @@ html.bc-embedded #betterclaude-titlebar {
 }
 
 .bc-team-diff-stats .add {
-  color: var(--ansi-green, #8ee08a);
+  color: color-mix(in srgb, var(--ansi-green, #8ee08a) 30%, var(--bc-text, #ece7fb));
 }
 
 .bc-team-diff-stats .del {
-  color: var(--bc-danger, #ef4444);
+  color: color-mix(in srgb, var(--bc-danger, #ef4444) 60%, var(--bc-text, #ece7fb));
 }
 
 .bc-team-diff-branch {
@@ -1070,3 +1143,144 @@ html.bc-embedded #betterclaude-titlebar {
   margin-bottom: 2px;
 }
 
+
+/* ------------------------------------------------------------------ *
+ * Narrow panes: the terminal keeps its width
+ *
+ * The team sidebar (320px) and the live wire (216px+) used to sit in the
+ * row beside the terminal at every width, so on a ~630px pane with both
+ * open the terminal was left 94px — five columns — and `claude` redrew
+ * every line wrapped. Below these widths they float over the terminal's
+ * right edge instead of taking space from it.
+ * ------------------------------------------------------------------ */
+
+#bc-code-main {
+  position: relative;
+  container: bc-code-main / inline-size;
+}
+
+@container bc-code-main (max-width: 980px) {
+  #bc-team-panel {
+    position: absolute;
+    top: 0;
+    right: var(--bc-rail-w, 0px);
+    bottom: 0;
+    z-index: 20;
+    width: min(320px, calc(88% - var(--bc-rail-w, 0px)));
+    box-shadow: -14px 0 32px color-mix(in srgb, var(--bc-bg, #14101f) 70%, transparent);
+  }
+}
+
+@container bc-code-main (max-width: 620px) {
+  #bc-team-rail {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 15;
+    max-width: 72%;
+    box-shadow: -14px 0 32px color-mix(in srgb, var(--bc-bg, #14101f) 70%, transparent);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Team relay state: who's waiting on what, and what didn't get through
+ * ------------------------------------------------------------------ */
+
+.bc-team-member[data-live="false"] {
+  opacity: 0.7;
+}
+
+.bc-team-member .st-idle {
+  background: var(--bc-text-muted, #a99bd1);
+}
+
+.bc-team-member-tag {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border: 1px solid var(--bc-border, #2c2347);
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--bc-text-muted, #a99bd1);
+}
+
+.bc-team-member-held {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 5px;
+  padding-left: 7px;
+  border-left: 2px solid var(--ansi-yellow, #e8cf7d);
+  font-size: 11px;
+  color: var(--bc-text-muted, #a99bd1);
+}
+
+.bc-team-msg-time {
+  margin-left: auto;
+}
+
+.bc-team-msg-status {
+  margin-top: 3px;
+  font-size: 10.5px;
+  font-style: italic;
+  color: var(--bc-text-muted, #a99bd1);
+}
+
+.bc-team-msg[data-kind="system"] {
+  background: transparent;
+  border-style: dashed;
+  color: var(--bc-text-muted, #a99bd1);
+}
+
+.bc-team-msg[data-delivery="unverified"],
+.bc-team-msg[data-delivery="undeliverable"],
+.bc-team-msg[data-delivery="dropped"],
+.bc-team-msg[data-delivery="duplicate"] {
+  opacity: 0.72;
+}
+
+/* Long or unknown sender names stay on one line in the wire. */
+.bc-rail-name {
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The sender gives way first so the recipient stays readable; the arrow and
+   the kind chip never shrink. */
+.bc-rail-route > .bc-rail-name:first-child {
+  flex-shrink: 4;
+}
+
+.bc-rail-route > span:nth-child(2) {
+  flex: 0 0 auto;
+}
+
+.bc-rail-route > .bc-rail-kind {
+  flex: 0 0 auto;
+}
+
+.bc-rail-event[data-event="system"] .bc-rail-glyph {
+  color: var(--ansi-yellow, #e8cf7d);
+}
+
+/* The head never wraps: a long folder name ellipsizes before the buttons do. */
+.bc-team-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bc-team-head-actions {
+  flex: 0 0 auto;
+}
+
+#bc-team-add-btn,
+#bc-team-hide-btn {
+  white-space: nowrap;
+}

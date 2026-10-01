@@ -114,11 +114,11 @@ Full technical detail on every module above — exact file paths, IPC handler na
 
 ## The Code workspace
 
-Version 0.4 turned the Code tab from "a terminal in a pane" into a real workspace with three surfaces sharing one window. Navigation is **one fixed rail of icon buttons — Home / Code / CLI — centred in the title bar**, in the same spot in every mode (0.5 replaced three older, inconsistent controls that used to hop between claude.ai's row, the sidebar, and a floating box — which is also what used to eat clicks near the window edges). claude.ai's own **Code** pill opens the IDE too, instead of leading to a gated route:
+Version 0.4 turned the Code tab from "a terminal in a pane" into a real workspace with three surfaces sharing one window. Navigation is **one fixed rail of icon buttons — Chat / Code / CLI — centred in the title bar**, in the same spot in every mode (0.5 replaced three older, inconsistent controls that used to hop between claude.ai's row, the sidebar, and a floating box — which is also what used to eat clicks near the window edges). claude.ai's own **Code** pill opens the IDE too, instead of leading to a gated route:
 
-![The Home, Code and CLI pills above claude.ai's sidebar](.github/readme-assets/code-tabs.png)
+![The Chat / Code / CLI rail centred in BetterClaude's title bar, with the Code workspace open below it](.github/readme-assets/code-tabs.png)
 
-- **Home** is claude.ai exactly as Anthropic ships it.
+- **Chat** is claude.ai exactly as Anthropic ships it.
 - **Code** opens the IDE workspace described below.
 - **CLI** is the plain embedded terminal from before, still your real `claude` binary in a real pty.
 
@@ -126,21 +126,32 @@ A nice side effect: open a conversation while a Code surface is showing and clau
 
 ### The IDE workspace
 
-![The IDE workspace: file tree, editor, terminal, and the Claude assistant chat](.github/readme-assets/ide-workspace.png)
+![The Code tab: projects and sessions on the left, a Claude Code conversation with tool rows and an approved command in the middle, the Changes panel on the right](.github/readme-assets/ide-workspace.png)
 
-As of 0.5 the workspace is **chat-first**, like the Claude Code desktop app. The Claude conversation is the main surface; the editor tooling is one click away when you want it.
+The Code tab is laid out like Claude Code's own desktop app, and its conversation is a **real Claude Code session on your Claude plan**: the same `claude` you run in a terminal, driven over Claude Code's host protocol (`electron/ide-chat.js`), not a lookalike.
 
-- **Sessions are the primary list.** The sidebar shows your saved `claude` sessions for the project with **real names** (taken from the first prompt, not a raw id). Click one and its **entire transcript loads into the chat** — every turn, exactly as it happened. Resuming an old session happens here, in the chat, and never disturbs the terminal.
-- **Multiple sessions open at once.** A tab strip across the top of the chat holds every open session, each streaming its own reply independently; **+** starts a fresh one. New sessions can still be started from the CLI/terminal too.
-- **The composer** takes slash commands (type `/` for a menu of `claude` commands plus your prompt-library entries), sends on **Enter** (Shift+Enter for a newline), and has a **Plan / Normal / Auto** switch that maps to Claude Code's permission modes (`plan` = read-only planning, `auto` = run edits and commands unattended). On macOS, a **hold-to-talk mic button** dictates into the composer via a local whisper.cpp — nothing leaves the machine, and it only appears if `whisper-cli` is on your PATH (`brew install whisper-cpp`; the ~142 MB model downloads itself on first use).
-- **Editor view** (the Explorer / Source / Extensions buttons, or the editor icon in the chat header) brings back the classic arrangement: a project **file tree** (capped at 700 entries / 7 levels, skipping `.git`, `node_modules`, and other noise), a **tabbed CodeMirror 6 editor** (`Cmd/Ctrl+S` saves and refuses to clobber a file changed on disk; CSS gets syntax highlighting), **source control** with a real diff view, **Extensions** (below), a **bottom terminal** running the actual Claude Code CLI in the project, and a **Cloud** tab listing your live `claude agents --all` sessions.
-- The model picker described [below](#free-models-through-openrouter) rides on the chat composer, and everything is themed by the same `--bc-*` tokens as the rest of the app.
+- **Projects and their sessions** share one sidebar: each project folder with its saved sessions nested under it (a short AI title after the first reply), a search box, and status glyphs for working, needs-your-input and unread. Click a saved session and its whole transcript, tool calls included, loads into the chat; your next message resumes it.
+- **One conversation** in the middle: replies as markdown, tool calls as compact rows you can expand ("Edited math.js +1 −1", "Ran npm test"), and **approval cards inline**: Allow / Always allow / Deny for a command, option pickers when Claude asks you something, and the plan itself with Approve / Keep planning in Plan mode. Several sessions, in several projects, can work at once, each in its own `claude` process; a reply Claude starts on its own (a background task finished) shows up too.
+- **The composer** has Claude Code's permission modes (Ask, Accept edits, Plan, Auto), a model menu (your plan's default, Fable, Opus, Sonnet, Haiku, or any model id), `/` commands plus your prompt library, file attachments, and Stop (Esc). On macOS a **hold-to-talk mic** dictates through a local whisper.cpp; it only appears if `whisper-cli` is on your PATH (`brew install whisper-cpp`).
+- **A right panel on demand** (⌘⌥B): **Changes** (the working tree's diff, with Commit & PR through `gh`), **Files** (a tree plus a CodeMirror 6 editor that refuses to clobber a file changed on disk), **Terminal** (a real login shell in the project) and **Extensions** (below).
+- **Billing stays yours.** Chats run on your claude.ai login with every API-key and provider override stripped from the environment. If a project's (or your own) Claude Code settings would send a chat to an API key, an auth token or another endpoint, a cloud provider, or an apiKeyHelper, it stops before sending anything. Loading your `~/.claude/settings.json` (hooks, plugins and its `env` block) is opt-in under Settings → Claude Code.
 
-### Extensions
+### The full IDE
 
-![The Extensions panel listing installed extensions across VS Code, Cursor and Antigravity](.github/readme-assets/ide-extensions.png)
+![The full-IDE layout: VS Code's Extensions view browsing Open VSX and Claude's edit open in the diff editor, with the Claude Code chat on the right](.github/readme-assets/ide-extensions.png)
 
-The Extensions panel reads what you actually have installed across **VS Code, Cursor, Antigravity, and VS Code Insiders**. The Browse tab searches the [Open VSX registry](https://open-vsx.org) live, and Install downloads the `.vsix` and unpacks it into the first of those editors it finds on your machine. With an empty search box you get a built-in, hand-curated catalog of about 100 extensions to start from, no network required.
+Press **⌘⌥I** (or the layout button in the chat's header) and the Code tab becomes a complete VS Code: a real workbench on the left, the same Claude Code chat on the right. It's VS Code's open-source build, [VSCodium](https://vscodium.com)'s web server, running on your machine, so it has what VS Code has: explorer, search, source control, editor splits and the diff editor, real terminals, the command palette, keybindings and extensions.
+
+- **Opt-in download.** The first time, a card shows exactly what it will fetch (about 131 MB from VSCodium's GitHub releases), and nothing downloads until you say so. It's checked against VSCodium's published sha256, kept in BetterClaude's data folder, and works offline afterwards. Chat-first stays the default, and each project remembers the layout you leave it in.
+- **Extensions from Open VSX**, through VS Code's own Extensions view: Codex, Claude Code for VS Code, Gemini Code Assist, CodeRabbit, language servers, themes. Extensions run in a real Node extension host, so ones built only for desktop VS Code work too. Settings → Claude Code → Full IDE can also **import** the extensions you use in VS Code, Cursor, Antigravity or VS Code Insiders (each is reinstalled by its id from Open VSX and checked against Open VSX's sha256; nothing is copied out of those editors or written into them), and **install a `.vsix`** you choose.
+- **Wired to the chat.** A built-in bridge extension keeps both sides in step: a tool row's **Open file** and **Review diff** open in the editor and in VS Code's diff editor; **Add Selection to Claude Chat** (⌘⌥L) puts the selected code in the composer, unsent; the status bar shows the chat's model, mode, plan usage, and whether Claude is working or waiting on you; **Commit & PR** sits in Source Control's title bar; and the workbench follows your BetterClaude theme and code font until you pick another colour theme in it.
+- **Walled off.** The server listens on 127.0.0.1 only, behind a secret token that never appears in a URL, a command line or a log. The view has its own storage, runs sandboxed with no preload (so nothing in it, extension webviews included, can reach BetterClaude or claude.ai), can't navigate or open windows anywhere else, and gets no permission but the clipboard. Extension webviews load from the engine's own files, offline, instead of Microsoft's CDN, and telemetry is off. The server goes when BetterClaude quits (or crashes), and after ten idle minutes outside the full-IDE layout.
+- **Extensions are still extensions.** They run with your user's permissions, exactly as in VS Code, and see your home folder, other tools' logins included: if you're signed in to the Codex or Claude Code CLI, those extensions start out signed in.
+- **Cost:** about 330 MB of memory with no extensions installed (the server, its extension host and the view) and a few seconds to open. AI extensions add their own CLIs and whatever those start. Settings → Claude Code → Full IDE switches the Code tab back to its lightweight editor, checks for engine updates (warning first if one would disable an installed extension), and uninstalls the engine.
+
+### The lightweight Extensions panel
+
+With the full IDE off or not installed, the Code tab's right panel keeps an **Extensions** tab. It reads what you have installed across **VS Code, Cursor, Antigravity, and VS Code Insiders**, searches the [Open VSX registry](https://open-vsx.org) live, and Install unpacks the `.vsix` into the first of those editors it finds on your machine. With an empty search box you get a built-in, hand-curated catalog of about 100 extensions, no network required.
 
 ### Free models through OpenRouter
 
@@ -151,7 +162,7 @@ The assistant chat's model picker has a **"Free right now · OpenRouter"** secti
 1. Pick a free model from the picker and chat with it directly, no subscription touched.
 2. Stay on Claude. If a prompt dies to a usage limit, the same prompt re-runs on the free chain automatically ("Auto-switch when Claude hits its limit", on by default).
 
-An OpenRouter key is optional; paste one into the picker footer if you want higher rate limits. Requests go from the app straight to the provider you picked — there is no BetterClaude server in the middle, because there is no BetterClaude server.
+OpenRouter's free models need a free key (openrouter.ai/keys): paste it into the picker footer. It is stored encrypted in your OS keychain, never in settings or exports. Without one, the chain goes straight to a local Ollama and then Pollinations (best effort). Auto-failover only takes over a turn that hadn't run any tools yet. Requests go from the app straight to the provider you picked — there is no BetterClaude server in the middle, because there is no BetterClaude server.
 
 ### Team Hub
 
@@ -159,10 +170,13 @@ An OpenRouter key is optional; paste one into the picker footer if you want high
 
 Every session working in the same folder shares a hub at `<project>/.bc-team/`: plain JSON files (roster, messages, task board, work log) that the agents read and write with their ordinary file tools. No server, no ports, nothing to host.
 
-- The **Team sidebar** shows who's doing what (status dots, work-log excerpts, an "Ask for update" nudge), a **team chat** feed with per-recipient or broadcast sending, a **work board** (todo / doing / done, assignable), and **Made so far**, a real git summary of everything the team has touched.
-- The **Live wire** is a thin rail on the right edge streaming messages and hand-offs as they happen: claims, assignments, completions.
-- **+ Teammate** spawns another real `claude` session into the same hub. Teammates get codenames (Atlas, Nova, Orion, Vega…) and messages you send are delivered straight into their terminal.
+- The **Team sidebar** shows who's doing what (status dots, work-log excerpts, an "Ask for update" nudge, and anything waiting to be delivered), a **team chat** feed with per-recipient or broadcast sending, a **work board** (todo / doing / done, assignable), and **Made so far**, a real git summary of everything the team has touched.
+- The **Live wire** is a resizable rail on the right edge streaming every message and hand-off in the order it actually happened, even when an agent stamps its message with a made-up time.
+- **+ Teammate** spawns another real `claude` session into the same hub. Teammates are named **Agent 001**, **Agent 002**, … and address each other by name; rename any of them from its Team card (double-click the name, or press Rename — its work and history stay the same, and its old name still resolves).
+- **Code-tab chats can join too:** More (⋯) → **Join the agent team**, or **New teammate** for a fresh chat on the team. A teammate's message shows up in the chat as a labelled "Message from …" turn.
 - **Session Mesh** (on by default) puts every ordinary CLI tab into the folder's hub too, so two terminals open on one project can already see each other without you configuring anything. Turn it off in Settings if you only want explicit teammates to cooperate.
+
+**Delivery is careful by design.** A message is typed into a teammate only when it is idle at its prompt — BetterClaude knows this from Claude Code's own hooks, not by guessing from terminal output. A teammate that is mid-turn, at the folder-trust question, or showing a permission prompt gets it queued ("1 message waiting — working on a turn") and delivered right after, so a message can never answer a prompt for it; a Code-tab chat's running turn is never interrupted. Esc (CLI) and Stop (Code tab) work as usual, and the next message still arrives. Messages already in the hub when the app starts are history, never re-sent. Automatic traffic has a per-agent rate cap, a pause after a long back-and-forth between the same two agents (acting on either resumes it), and duplicate suppression — none of which applies to what *you* send. Bodies are stripped of control characters before they reach a terminal, and every agent is told that teammate messages are information, not authority: a teammate can't grant permissions, approve actions, or override you. The hub writes its own `.bc-team/.gitignore`, so it never lands in a commit.
 
 ### Multi-session tabs
 
@@ -188,7 +202,7 @@ Import a theme from a URL or a local file if someone shares one with you, or hit
 
 ## Plugins
 
-Nine plugins ship in the box, each a plain `*.claudeplugin.js` file in `plugins/` you can open, read, edit, or replace outright — there's no compiled or minified plugin format to fight with, just a small manifest-plus-script convention that the built-in ones all follow.
+Twenty plugins ship in the box (all off until you turn them on in Settings → Widgets or Plugins), each a plain `*.claudeplugin.js` file in `plugins/` you can open, read, edit, or replace outright — there's no compiled or minified plugin format to fight with, just a small manifest-plus-script convention that the built-in ones all follow.
 
 | Plugin | What it does |
 | --- | --- |
@@ -201,10 +215,21 @@ Nine plugins ship in the box, each a plain `*.claudeplugin.js` file in `plugins/
 | Snippet Library | Reusable text snippets you can drop straight into the composer, separate from the full Prompt Library module for shorter, more disposable bits of text. |
 | Sticky Notes | Freeform notes that stay pinned to the app across sessions, for the stuff that doesn't belong in a conversation but you don't want to lose either. |
 | World Clock | A small multi-timezone clock widget, useful if you're coordinating with Claude (or people) across time zones. |
+| Plan Usage | How much of your plan's current usage window is spent, from the reading Claude Code reports with each Code-tab reply — never scraped, stored or sent anywhere. |
+| Context Gauge | How full the Code-tab chat's context window is, with a nudge to `/compact` past 80%. |
+| Git Status | Branch, changed files, lines added/removed and unpushed commits for the folder the Code tab is working in. |
+| Team Mini-Wire | The last few Team Hub messages in a dock card, so you can follow hand-offs without opening the CLI tab. |
+| Session Timer | Time spent in the current conversation, with an optional break nudge (25/50/90 min). |
+| Daily Streak | Days in a row you've used Claude. |
+| Shortcut Cheat Sheet | Your BetterClaude bindings plus the Code-tab and Claude Code keys, in one card. |
+| Clipboard History | Your last 20 copies on the page, one click to copy again — memory only, gone when you quit. |
+| System Monitor | Machine load and memory, plus BetterClaude's own memory and CPU. |
+| Model Switcher | Set the Code tab's model (Default / Fable / Opus / Sonnet / Haiku) from the dock. |
+| Scratchpad | One big plain-text pad that survives restarts. |
 
-![Plugin list in Settings, showing all nine built-in plugins with toggle switches](.github/readme-assets/plugins.png)
+![Plugin list in Settings with toggle switches](.github/readme-assets/plugins.png)
 
-`core/plugin-loader.js` is what actually loads these — built-in and custom alike, from the same `userData/plugins` directory, with no special-casing for the nine that ship by default. "Open Plugins Folder" in Settings takes you straight there in Finder/Explorer, and dropping in your own `*.claudeplugin.js` file is enough for it to show up in the plugin list on next launch (or a manual reload from Settings), ready to toggle on like any other. This is also exactly the mechanism Team/Shared Plugin Sync writes into, so a plugin distributed through a synced team repo and one you wrote yourself locally are indistinguishable to the loader.
+`core/plugin-loader.js` is what actually loads these — built-in and custom alike, from the same `userData/plugins` directory, with no special-casing for the ones that ship by default. "Open Plugins Folder" in Settings takes you straight there in Finder/Explorer, and dropping in your own `*.claudeplugin.js` file is enough for it to show up in the plugin list on next launch (or a manual reload from Settings), ready to toggle on like any other. This is also exactly the mechanism Team/Shared Plugin Sync writes into, so a plugin distributed through a synced team repo and one you wrote yourself locally are indistinguishable to the loader.
 
 ## Buddies
 

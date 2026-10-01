@@ -159,6 +159,8 @@ contextBridge.exposeInMainWorld("betterClaudeCode", {
   teamAddTask: (opts) => ipcRenderer.invoke("code:team:add-task", opts),
   teamUpdateTask: (opts) => ipcRenderer.invoke("code:team:update-task", opts),
   teamNudge: (opts) => ipcRenderer.invoke("code:team:nudge", opts),
+  teamResume: (opts) => ipcRenderer.invoke("code:team:resume", opts),
+  teamRename: (opts) => ipcRenderer.invoke("code:team:rename", opts),
 
   // main -> renderer.
   onData: forward("code:data"),

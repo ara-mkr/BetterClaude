@@ -20,7 +20,7 @@ function fmt(totalSeconds) {
 
 module.exports = {
   name: "Pomodoro Timer",
-  version: "1.0.0",
+  version: "1.0.1",
 
   onLoad(api) {
     this.api = api;
@@ -29,25 +29,25 @@ module.exports = {
 
     api.injectCSS(`
       #bc-pomodoro-panel {
-        position: fixed; top: 88px; right: 16px; width: 220px;
-        z-index: 2147482950; background: rgba(20,16,31,0.98);
-        border: 1px solid rgba(255,255,255,0.15); border-radius: 10px;
+        position: fixed; top: calc(var(--bc-dock-bottom, 120px) + 8px); right: 16px; width: 220px;
+        z-index: 2147482950; background: var(--bc-bg-elevated, rgba(20,16,31,0.98));
+        border: 1px solid var(--bc-border, rgba(255,255,255,0.15)); border-radius: 10px;
         display: none; flex-direction: column; gap: 10px; padding: 14px;
-        font: 12px -apple-system, sans-serif; color: #ece7fb;
+        font: 12px -apple-system, sans-serif; color: var(--bc-text, #ece7fb);
       }
       #bc-pomodoro-panel.bc-open { display: flex; }
       .bc-pom-time { font-size: 28px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
       .bc-pom-phase { text-align: center; opacity: 0.65; text-transform: uppercase; letter-spacing: 0.06em; font-size: 10px; }
       .bc-pom-row { display: flex; gap: 6px; }
       .bc-pom-row button {
-        flex: 1; padding: 7px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15);
-        background: transparent; color: #ece7fb; cursor: pointer; font: inherit;
+        flex: 1; padding: 7px; border-radius: 6px; border: 1px solid var(--bc-border, rgba(255,255,255,0.15));
+        background: transparent; color: var(--bc-text, #ece7fb); cursor: pointer; font: inherit;
       }
-      .bc-pom-row button:hover { background: rgba(139,92,246,0.25); }
-      .bc-pom-row button.bc-pom-primary { background: #8b5cf6; border-color: #8b5cf6; }
+      .bc-pom-row button:hover { background: color-mix(in srgb, var(--bc-accent, #8b5cf6) 25%, transparent); }
+      .bc-pom-row button.bc-pom-primary { background: var(--bc-accent, #8b5cf6); border-color: var(--bc-accent, #8b5cf6); color: #fff; }
       .bc-pom-lengths { display: flex; gap: 6px; align-items: center; justify-content: space-between; }
       .bc-pom-lengths input {
-        width: 44px; background: #14101f; border: 1px solid #3a2e5c; color: #ece7fb;
+        width: 44px; background: var(--bc-bg, #14101f); border: 1px solid var(--bc-border, #3a2e5c); color: var(--bc-text, #ece7fb);
         border-radius: 6px; padding: 4px 6px; font: inherit;
       }
     `);
@@ -56,6 +56,7 @@ module.exports = {
 
     const panel = document.createElement("div");
     panel.id = "bc-pomodoro-panel";
+    panel.dataset.bcOwn = ""; // themed with --bc-* tokens; keep page resets off it
     document.body.appendChild(panel);
     this._panel = panel;
 

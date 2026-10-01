@@ -446,6 +446,46 @@ body.bc-signed-out {
   padding-top: 0 !important;
 }
 
+/* The sign-in / sign-up surface is a long, scrolling page whose content is
+   centred inside Claude's wrappers. The signed-in height chain above (root and
+   its first three wrappers capped to the window) squeezed that centred content
+   into a window-high box, so it overflowed equally at BOTH ends: the form and
+   its Continue buttons ended up above the top edge, unreachable, with only the
+   hero video in view. On the auth routes the page keeps its natural height;
+   the root still starts below the title bar (the transform above) and the
+   bottom margin keeps the translated page's last 46px scrollable.
+   `bc-auth-route` is set by core/layout-probe.js, only for the public auth
+   paths while signed out — never for a signed-in route that is still loading. */
+body.bc-auth-route > #root,
+body.bc-auth-route > #__next,
+body.bc-auth-route > .bc-claude-root {
+  height: auto !important;
+  max-height: none !important;
+  min-height: calc(100vh - var(--bc-tb-h)) !important;
+  margin-bottom: var(--bc-tb-h) !important;
+}
+
+body.bc-auth-route > #root > div,
+body.bc-auth-route > #root > div > div,
+body.bc-auth-route > #root > div > div > div,
+body.bc-auth-route > #__next > div,
+body.bc-auth-route > #__next > div > div,
+body.bc-auth-route > #__next > div > div > div,
+body.bc-auth-route > .bc-claude-root > div,
+body.bc-auth-route > .bc-claude-root > div > div,
+body.bc-auth-route > .bc-claude-root > div > div > div {
+  height: auto !important;
+  max-height: none !important;
+}
+
+/* Widgets belong to the chat. On the sign-in page the dock sat on top of
+   Claude's header ("Try Claude"), and open widget cards (Quick Prompts'
+   floating chips) sat on top of the form. Plugin UI marks itself data-bc-own. */
+body.bc-auth-route #betterclaude-plugin-dock,
+body.bc-auth-route [data-bc-own] {
+  display: none !important;
+}
+
 /* Claude's marketing header normally hides itself while scrolling. The
    custom window inset can make its first scroll calculation look non-zero,
    leaving the header translated out of view until the user scrolls down and

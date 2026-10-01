@@ -1035,9 +1035,10 @@ ${lines.join("\n")}`);
         }
         return relativeLuminance(composerBg) > 0.5 ? "#6b6b6b" : "#9a9a9a";
       }
-      var OWN_CHROME_IDS = ["betterclaude-titlebar", "betterclaude-settings-panel", "betterclaude-hud", "betterclaude-plugin-dock", "bc-code-tab-pill", "bc-ide-shell"];
-      var OWN_CHROME_EXCLUDE = OWN_CHROME_IDS.map((id) => `:not(#${id}):not(#${id} *)`).join("");
+      var OWN_CHROME_IDS = ["betterclaude-titlebar", "betterclaude-settings-panel", "betterclaude-hud", "betterclaude-plugin-dock", "bc-code-tab-pill", "bc-ide-shell", "bc-code-shell"];
+      var OWN_CHROME_EXCLUDE = OWN_CHROME_IDS.map((id) => `:not(#${id}):not(#${id} *)`).join("") + ":not([data-bc-own]):not([data-bc-own] *)";
       var PAGE_ROOT_SCOPE = `body *${OWN_CHROME_EXCLUDE}`;
+      var COMPOSER_CARD = ':is([data-cds="ChatComposer"] > div, div[class*="rounded-composer"]:not(:has([data-cds="ChatComposer"])))';
       function buildScaffoldCSS(vars = {}, opts = {}) {
         const name = opts.name || "Imported Theme";
         const isDark = opts.isDark != null ? opts.isDark : true;
@@ -1263,122 +1264,65 @@ ${SIDEBAR_ITEM_SELECTED_SEL} {
   color: var(--nav-item-fg-selected) !important;
 }
 
-/* claude.ai's composer is a contentEditable ProseMirror div, not a
-   <textarea> \u2014 "form textarea"/"textarea" never matched anything real.
-   data-testid="chat-input" is the verified hook onto the actual element \u2014
-   but that element is only the inner text row (verified live: ~636px),
-   narrower than the real rounded composer card wrapping it (~672px, its
-   own native background, no stable testid to hook). A previous session
-   painted a background/border/radius/width directly on this narrower node
-   and shipped a "cut-off rectangle" behind the placeholder text \u2014 a second,
-   mismatched rounded box that fell short of the real card's right edge.
-   The real card IS reachable, just not by id: it's the nearest ancestor
-   that directly contains this node, matched with :has(). Painting ONLY
-   color there (no border-radius, no width) follows the real card's own
-   native geometry instead of fighting it, while finally fixing its actual
-   bug: claude.ai paints its own background on that card regardless of
-   BetterClaude's page-wide text color, so a light BetterClaude theme's
-   near-black text forced onto a still-dark native card (or vice versa) was
-   landing at ~1.2:1 contrast \u2014 invisible. --bc-composer-* tokens are
-   generated to guarantee contrast against EACH OTHER, not against the page
-   bg (see pickComposerFg/pickComposerPlaceholder above).
+/* The composer. Verified live on 2026-09-27 against claude.ai's cds build:
 
-   SINGLE-POINT-OF-FAILURE FIX: the ONLY verified hook is the testid on the
-   inner text row \u2014 "the paintable card is its direct parent <div>" was never
-   checked against the live site. If the real card is a grandparent, isn't a
-   <div>, or an extra wrapper sits in between, the old direct-child-only rule
-   matches nothing and the whole composer fix silently no-ops while every
-   automated check still reports green. Two independent layers of defense
-   replace that single guess:
+     [data-cds="ChatComposer"]                 component root, no fill
+       > div.bg-surface-3.rounded-composer     THE CARD: 14px radius, the only
+                                               box anyone sees
+         > four wrapper divs                   text row and toolbar padding
+           > [data-cds="ChatComposerEditor"]   text row, 8px inside the card
+             > [data-testid="chat-input"]      the ProseMirror editor
 
-   1. A small, BOUNDED set of ancestor selectors, not just the direct parent.
-      Each one is restricted three ways so it can't runaway to a full-pane
-      wrapper (the "cut-off rectangle"'s inverse failure mode \u2014 painting a
-      container far bigger than the real card):
-        - Tag-restricted to div/form only: claude.ai's own body/html elements
-          can never match a div:has(...)/form:has(...) selector by
-          construction, no :not() needed for those.
-        - Depth-bounded via chained '>' child combinators (1, 2, then 3 hops
-          up from the testid node) instead of a bare unrestricted :has()
-          descendant search \u2014 CSS has no "nth ancestor" combinator, so
-          stacking '> * > *' chains is the closest equivalent to "search only
-          the next few levels", which keeps the match close to the real
-          composer instead of walking arbitrarily far up the tree to the
-          nearest div that happens to contain it (which could be the entire
-          chat pane).
-        - :not(:has(nav)) on every rule: a legitimate composer card never
-          also contains the entire sidebar nav element \u2014 any ancestor that
-          does is structurally the app shell, not the card, so it's excluded
-          outright regardless of depth.
-      Rules are listed most-specific (direct parent) first; since a single
-      real ancestor node can only ever satisfy exactly one depth (it's either
-      1, 2, or 3 hops from the testid node, never more than one), "most
-      specific wins" here just means the closest true ancestor is the one
-      that actually matches \u2014 the deeper rules exist purely to reach a real
-      card that turns out to sit further up. Multiple rules CAN match
-      different ancestor nodes at once (e.g. both the true parent and a
-      wrapper two levels up) \u2014 that's harmless by construction because every
-      rule paints only background/border-color (never border-width, radius,
-      or an explicit box size, same restriction as the original single
-      rule), so stacked same-color fills on nested divs produce one seamless
-      region, not a second mismatched box.
-   2. A same-color safety net directly on the verified
-      [data-testid="chat-input"] node itself: --bc-composer-bg is now
-      painted there too, not just --bc-composer-fg. Reasoning, stated
-      explicitly: CSS can't express "only apply this if the card selector
-      above matched nothing" \u2014 so the choice is between always painting it
-      (safe: unreadable text, a P0, can never happen even if every ancestor
-      selector above misses) or never painting it (unsafe: one wrong DOM
-      assumption away from silently shipping invisible text again, the exact
-      bug this whole fix exists to prevent). The fail-safe choice is to
-      always paint it. This does NOT reintroduce the old "cut-off rectangle"
-      bug: that bug came from also setting a mismatched
-      border/border-radius/width on the narrow inner node, drawing a
-      visibly separate box short of the real card's edge. Here only a flat
-      background (no border, no radius, no width) is set, using the SAME
-      --bc-composer-bg token as the ancestor rules \u2014 when an ancestor rule
-      also matches, the two same-color fills merge seamlessly (no visible
-      seam, nothing narrower drawn on top); when every ancestor rule misses,
-      this is the only thing standing between the user and unreadable text,
-      so it degrades to "background is native-card-sized instead of
-      full-card-sized" (a P2 cosmetic mismatch) rather than "text is
-      invisible" (a P0). */
-div:has(> [data-testid="chat-input"]):not(:has(nav)),
-div:has(> * > [data-testid="chat-input"]):not(:has(nav)),
-div:has(> * > * > [data-testid="chat-input"]):not(:has(nav)),
-form:has(> [data-testid="chat-input"]):not(:has(nav)),
-form:has(> * > [data-testid="chat-input"]):not(:has(nav)),
-form:has(> * > * > [data-testid="chat-input"]):not(:has(nav)) {
+   Paint the card and nothing else. This block used to paint
+   --bc-composer-bg on chat-input AND on up to three ancestors of it, each
+   with the page radius, because the card itself (six levels up) was never
+   matched. Those layers cover only the text row, 8px inside the card and
+   short of its toolbar, so wherever --bc-composer-bg differed from the
+   card's own fill, every theme showed a second, hard-cornered box inside
+   the rounded composer; a translucent (glass) fill stacked four times; and
+   on light themes the card stayed native-dark under dark toolbar text.
+
+   One layer, one shape: the card keeps claude.ai's own radius, its fill is
+   --bc-composer-bg, and every layer inside it is transparent, so no nested
+   fill can disagree with it. data-cds is claude.ai's design-system
+   component name, a sturdier hook than utility classes; rounded-composer
+   is the fallback for a build that drops it (and only counts when there is
+   no ChatComposer, so a class on some outer element can never blank the
+   real card). If neither hook matches, the old bounded-ancestor rules
+   below still paint (div/form only, at most three hops up, never an
+   ancestor holding the nav) so the text row can never lose contrast; they
+   are gated off inside a recognised card so they cannot stack on it.
+   tests/composer-fill.test.js checks exactly this against every theme. */
+${COMPOSER_CARD}:has([data-testid="chat-input"]) {
   background: var(--bc-composer-bg) !important;
   border-color: var(--bc-composer-border) !important;
-  /* Whichever of these ancestors is the real card, claude.ai insets it
-     slightly from the outer rounded card it sits in \u2014 so a square-cornered
-     fill here draws a visibly sharp rectangle inside a rounded box (verified
-     on a live "new chat" screen). Round it for the same reason as the
-     chat-input rule below. Still no border-width and no explicit size, so
-     this cannot recreate the old "cut-off rectangle" (that came from a
-     mismatched border + width, neither of which is set here), and stacked
-     same-color fills on nested ancestors still merge into one region. */
+}
+${COMPOSER_CARD} :is(div, form):has([data-testid="chat-input"]),
+${COMPOSER_CARD} [data-testid="chat-input"] {
+  background: transparent !important;
+}
+div:has(> [data-testid="chat-input"]):not(:has(nav)):not(${COMPOSER_CARD} *),
+div:has(> * > [data-testid="chat-input"]):not(:has(nav)):not(${COMPOSER_CARD} *),
+div:has(> * > * > [data-testid="chat-input"]):not(:has(nav)):not(${COMPOSER_CARD} *),
+form:has(> [data-testid="chat-input"]):not(:has(nav)):not(${COMPOSER_CARD} *),
+form:has(> * > [data-testid="chat-input"]):not(:has(nav)):not(${COMPOSER_CARD} *),
+form:has(> * > * > [data-testid="chat-input"]):not(:has(nav)):not(${COMPOSER_CARD} *),
+[data-testid="chat-input"]:not(${COMPOSER_CARD} *) {
+  background: var(--bc-composer-bg) !important;
+  border-color: var(--bc-composer-border) !important;
   border-radius: ${RADIUS} !important;
 }
 [data-testid="chat-input"] {
-  /* Safety net (see comment above): same --bc-composer-bg as the card rules
-     above, flat fill only \u2014 no border, no width \u2014 so it merges seamlessly
-     when an ancestor rule also matched, and still guarantees readable text
-     when none of them did.
-     The one exception to "flat fill only" is the radius below. The old
-     hard-square fill read as a distinct sharp-cornered rectangle sitting
-     inside the rounded composer card whenever it was even slightly lighter
-     or darker than that card \u2014 the "rectangle inside the chatbox" bug.
-     Adding ONLY a radius (still no border, no width, no explicit size)
-     cannot reintroduce the original "cut-off rectangle" bug: that one came
-     from a mismatched border + width drawing a visibly separate box short of
-     the card's right edge, neither of which is set here. Worst case the
-     corners round slightly more or less than the native card's \u2014 cosmetic,
-     and strictly closer to it than square corners were. */
-  background: var(--bc-composer-bg) !important;
   color: var(--bc-composer-fg) !important;
-  border-radius: ${RADIUS} !important;
+}
+/* Buttons inside the card sit 8px in from its 14px corners. A sharp page
+   shape (--bc-radius 0) turned the send button into a hard square inside
+   the round card; concentric is 14 - 8 = 6px, and max() still lets a
+   rounder theme round them more. Beats the all-buttons radius rule below
+   on specificity (an extra attribute), not on source order. */
+${COMPOSER_CARD} button${OWN_CHROME_EXCLUDE},
+button[data-testid="chat-input-send"]${OWN_CHROME_EXCLUDE} {
+  border-radius: max(${RADIUS}, 6px) !important;
 }
 /* ProseMirror renders its placeholder either as a [data-placeholder]
    attribute-carrying node or an .is-empty node, with the visible text
@@ -1485,6 +1429,15 @@ button${OWN_CHROME_EXCLUDE} {
    do not hardcode a parallel selector list in theme-engine.js. */
 button${SCAFFOLD_PAINTED_BUTTON_ATTRS.primary.join(", button")} {
   background: var(--btn-primary-bg-default) !important;
+}
+/* claude.ai paints a button's own fill on inner layers, not the button: a
+   span.cds-btn-squish inset 0.5px, holding a span.inset-0 that carries the
+   colour, both rounded-[inherit] (measured on the send button). With the
+   theme painting the button as well, both showed: claude's orange square
+   with a half-pixel ring of the theme colour around it. One fill, the
+   button's. */
+${[...SCAFFOLD_PAINTED_BUTTON_ATTRS.primary, ...SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive].map((attr) => `button${attr} span[class*="rounded-[inherit]"]`).join(",\n")} {
+  background: transparent !important;
 }
 ${paintedButtonSelector(SCAFFOLD_PAINTED_BUTTON_ATTRS.primary)} {
   color: var(--btn-primary-fg) !important;
@@ -1604,6 +1557,8 @@ a { color: var(--bc-link) !important; }
         deriveAccessibleColor,
         pickButtonFg,
         SCAFFOLD_PAINTED_BUTTON_ATTRS,
+        OWN_CHROME_IDS,
+        OWN_CHROME_EXCLUDE,
         pickComposerFg,
         pickComposerPlaceholder,
         buildScaffoldCSS,
@@ -2025,14 +1980,14 @@ ${animate ? `
         }
         return tag;
       }
-      var PAGE_BTN = `button:not(#bc-code-tab-pill):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel *):not(#betterclaude-hud *):not(#betterclaude-plugin-dock *):not(#bc-ide-shell *)`;
+      var PAGE_BTN = `button:not(#bc-code-tab-pill):not(#betterclaude-titlebar *):not(#betterclaude-settings-panel *):not(#betterclaude-hud *):not(#betterclaude-plugin-dock *):not(#bc-ide-shell *):not(#bc-code-shell *):not([data-bc-own] *)`;
       var PAINTED_BUTTON_ATTRS = [
         ...SCAFFOLD_PAINTED_BUTTON_ATTRS.primary,
         ...SCAFFOLD_PAINTED_BUTTON_ATTRS.destructive
       ];
       var PAINTED_BUTTON_EXCLUDE = PAINTED_BUTTON_ATTRS.map((attr) => `:not(${attr})`).join("");
-      var OWN_CHROME_IDS = ["betterclaude-titlebar", "betterclaude-settings-panel", "betterclaude-hud", "betterclaude-plugin-dock"];
-      var OWN_CHROME_EXCLUDE = OWN_CHROME_IDS.map((id) => `:not(#${id}):not(#${id} *)`).join("");
+      var OWN_CHROME_IDS = tokens.OWN_CHROME_IDS;
+      var OWN_CHROME_EXCLUDE = tokens.OWN_CHROME_EXCLUDE;
       var PAGE_ROOT_SCOPE = `body *${OWN_CHROME_EXCLUDE}`;
       function buildBaseCSS(settings) {
         const { layout, fonts } = settings;
@@ -2238,6 +2193,10 @@ ${layout.compactMode ? `
 ${SELECTORS.chatHeader} { padding: 4px 8px !important; min-height: 0 !important; }
 [data-testid="message"] { padding-top: 4px !important; padding-bottom: 4px !important; }
 ` : ""}
+${layout.density === "spacious" && !layout.compactMode ? `
+${SELECTORS.chatHeader} { padding-top: 12px !important; padding-bottom: 12px !important; }
+[data-testid="message"] { padding-top: 14px !important; padding-bottom: 14px !important; }
+` : ""}
 ${hideRules}
 `.trim();
       }
@@ -2338,6 +2297,8 @@ ${hideRules}
         BASE_STYLE_ID,
         THEME_VAR_DEFS,
         buildThemeCSSFromVars,
+        // Pure (settings -> CSS); exported for scripts/audit-composer-fill.js.
+        buildBaseCSS,
         resolveScheduledTheme,
         // Small DOM helper other modules (core/extras-css.js consumers, etc.) can
         // reuse instead of duplicating the same "find or create a <style> tag"
@@ -2454,12 +2415,23 @@ ${text}` : text;
           if (child) dock.appendChild(child);
         });
       }
+      var dockObserver = null;
       function ensureDock() {
         let dock = document.getElementById(DOCK_ID);
         if (!dock) {
           dock = document.createElement("div");
           dock.id = DOCK_ID;
           document.body.appendChild(dock);
+          if (typeof ResizeObserver === "function") {
+            if (!dockObserver) {
+              dockObserver = new ResizeObserver((entries) => {
+                const r = entries[0] && entries[0].target.getBoundingClientRect();
+                if (r && r.height) document.documentElement.style.setProperty("--bc-dock-bottom", `${Math.round(r.bottom)}px`);
+              });
+            }
+            dockObserver.disconnect();
+            dockObserver.observe(dock);
+          }
         }
         if (!document.getElementById(DOCK_STYLE_ID)) {
           const style = document.createElement("style");
@@ -2475,15 +2447,20 @@ ${text}` : text;
         right: 16px;
         z-index: 2147482900;
         display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
         gap: 8px;
+        /* ~8 buttons a row: with every widget on, one long row ran into the
+           page (and off-screen on a narrow window). */
+        max-width: min(calc(100vw - 32px), 312px);
       }
       #${DOCK_ID} .bc-dock-btn {
         width: 32px;
         height: 32px;
         border-radius: 8px;
-        border: 1px solid rgba(255,255,255,0.15);
-        background: rgba(20,16,31,0.85);
-        color: #ece7fb;
+        border: 1px solid var(--bc-border, rgba(255,255,255,0.15));
+        background: var(--bc-bg-elevated, rgba(20,16,31,0.85));
+        color: var(--bc-text, #ece7fb);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -2493,14 +2470,14 @@ ${text}` : text;
       }
       @media (hover: hover) and (pointer: fine) {
         #${DOCK_ID} .bc-dock-btn:hover {
-          background: rgba(139,92,246,0.35);
-          border-color: rgba(139,92,246,0.5);
+          background: color-mix(in srgb, var(--bc-accent, #8b5cf6) 22%, var(--bc-bg-elevated, #14101f));
+          border-color: var(--bc-accent, #8b5cf6);
         }
       }
       #${DOCK_ID} .bc-dock-btn.bc-active {
         background: var(--bc-accent, #8b5cf6);
         border-color: var(--bc-accent, #8b5cf6);
-        color: var(--btn-primary-fg, #fff);
+        color: #fff;
       }
       #${DOCK_ID} .bc-dock-btn svg {
         width: 16px;
@@ -2629,6 +2606,18 @@ ${text}` : text;
           /** Minimal toast/notification affordance shared by plugins. */
           notify(message, { timeout = 3e3 } = {}) {
             host.notify ? host.notify(message, { timeout }) : console.log(`[BetterClaude:${id}]`, message);
+          },
+          /**
+           * Read-only data for the dock widgets: "plan" | "context" | "git" |
+           * "team" | "system" | "streak" | "shortcuts". Resolves null where the host
+           * has no such feed (the browser extension) or nothing is known yet.
+           */
+          widgetData(kind) {
+            return host.widgetData ? Promise.resolve(host.widgetData(kind)).catch(() => null) : Promise.resolve(null);
+          },
+          /** Sets the Code tab's model picker ("default" | "fable" | "opus" | "sonnet" | "haiku"). */
+          setCodeModel(model) {
+            return host.setCodeModel ? Promise.resolve(host.setCodeModel(model)).catch(() => false) : Promise.resolve(false);
           },
           /** Host calls this on unload as a safety net for buttons a plugin forgot to remove(). */
           _removeDockButtons() {
@@ -2893,7 +2882,22 @@ ${text}` : text;
             "quote-of-the-day": false,
             "sticky-notes": false,
             "world-clock": false,
-            "goal-tracker": false
+            "goal-tracker": false,
+            // Session 6 widgets, all off by default for the same reason. The data
+            // ones (plan-usage, context-gauge, git-status, team-wire, system-monitor,
+            // daily-streak) read electron/main.js "widgets:data" only while their
+            // card is open; nothing is logged or sent anywhere.
+            "plan-usage": false,
+            "context-gauge": false,
+            "git-status": false,
+            "team-wire": false,
+            "session-timer": false,
+            "daily-streak": false,
+            "shortcut-sheet": false,
+            "clipboard-history": false,
+            "system-monitor": false,
+            "model-switcher": false,
+            "scratchpad": false
           },
           data: {},
           // filename -> sha256 of the bundled content we last copied into
@@ -3228,16 +3232,76 @@ ${text}` : text;
             // re-run the same prompt on the next free provider instead of surfacing
             // an error bubble and stopping there.
             autoFailover: true,
-            // The model chosen in the Code tab's picker, or null = "Claude only".
-            // Free ids are OpenRouter ids ("stealth/ox-alpha") or keyless:*
-            // builtins; they rotate constantly so nothing validates this against a
-            // fixed list.
-            preferredModelId: null,
-            // Optional OpenRouter API key. Empty string = keyless attempts only;
-            // OpenRouter's free tier needs a key to run inference today, so without
-            // this the chain usually lands on the keyless providers at the end.
-            openRouterKey: ""
-          }
+            // The free model last picked in the Code tab's model menu — tried first
+            // when auto-failover kicks in (it is kept when you switch back to
+            // Claude). null = the chain's own order. Free ids are OpenRouter ids
+            // ("stealth/ox-alpha") or keyless:* builtins; they rotate constantly, so
+            // nothing validates this against a fixed list.
+            preferredModelId: null
+            // The optional OpenRouter key is NOT a setting: it lives encrypted in a
+            // separate secrets store (electron/main.js, "Secrets"), because
+            // settings are broadcast to every renderer and written out by Export.
+          },
+          // The Code tab's Claude Code chat (electron/ide-chat.js): one persistent
+          // `claude` per open session tab, talking Claude Code's host protocol.
+          chat: {
+            // Load the user's own ~/.claude/settings.json (permission rules, hooks,
+            // plugins, and its `env` block) like their terminal `claude` does. Off
+            // by default because that file travels whole: an `env` block routing
+            // Claude Code elsewhere (ANTHROPIC_BASE_URL + a token, e.g. a local
+            // model router) re-applies inside the chat and quietly replaces the
+            // Claude-plan login BetterClaude promises — the billing guard then
+            // stops the chat — and global hooks/plugins add seconds to every new
+            // session and inject their own gates into its tool calls. Project and
+            // local settings (the repo's own .claude/) always load.
+            loadUserSettings: false,
+            // MCP servers start per session and can take seconds each; on a machine
+            // with many configured that dominates every new chat's first reply.
+            // Off by default (passes --strict-mcp-config); opt in here.
+            loadMcpServers: false,
+            // Billing guard. If the Claude Code settings a chat would load (an
+            // `env` block with an API key, auth token or base URL, a cloud
+            // provider switch, or an apiKeyHelper) would send it anywhere but the
+            // user's Claude plan, the chat stops before its first request unless
+            // this is on.
+            allowApiKeyBilling: false,
+            // Shows the "Bypass permissions" mode (runs every tool without asking).
+            // Off by default — "Auto" (Claude Code's own safety-classifier mode)
+            // covers the hands-off case without disabling every check.
+            allowBypassMode: false
+          },
+          // The CLI tab's `claude` sessions. On by default: a CLI tab is the user's
+          // real Claude Code, exactly as in their terminal — ~/.claude/settings.json
+          // included, with its permission rules, hooks, plugins and its `env` block
+          // (which may point Claude Code at another endpoint or token). Off passes
+          // `--setting-sources project,local` and strips inherited ANTHROPIC_* /
+          // CLAUDE* overrides, so the session runs on the Claude plan login, the way
+          // Code-tab chats do.
+          cli: {
+            loadUserSettings: true
+          },
+          // The Code tab's full-IDE layout: a VS Code workbench (VSCodium's server,
+          // electron/workbench.js; docs/ADR-0001) beside the chat. The engine itself
+          // is never downloaded until the user agrees, after seeing its size and
+          // source; these only shape what's offered and how it opens.
+          ide: {
+            // "full" offers the layout (the ⌘⌥I toggle; the engine installs on
+            // first use), "lightweight" keeps the Code tab to its built-in editor
+            // panel and never starts the engine.
+            engine: "full",
+            // Layout for a project the user hasn't chosen one for yet. Chat-first by
+            // default: most sessions are a conversation, and the workbench costs a
+            // server process. Each project remembers its own choice after that.
+            defaultLayout: "chat",
+            // editor.fontLigatures in the workbench (its font follows fonts.codeFont).
+            fontLigatures: true
+          },
+          // Short AI-generated names for Code-chat sessions, keyed by the CLI session
+          // id — { "<uuid>": "Fix Composer Corner Radius" }. Written by
+          // ide:generate-session-title (one Haiku call over the first exchange) so a
+          // session keeps its human name across window reopens, the way the desktop
+          // app names conversations. Capped at ~200 entries, oldest dropped first.
+          sessionTitles: {}
         }
       };
       function isPlainObject(v) {
@@ -3542,6 +3606,19 @@ ${cssSelectorList("sidebar", { suffix: ' [class*="animate-spin"]' })} {
         EXTENSIONS: `<svg ${ATTRS}><path d="M10 3.5a1.5 1.5 0 0 1 3 0V5h2.5A1.5 1.5 0 0 1 17 6.5V9h1.5a1.5 1.5 0 0 1 0 3H17v2.5a1.5 1.5 0 0 1-1.5 1.5H13v1.5a1.5 1.5 0 0 1-3 0V16H6.5A1.5 1.5 0 0 1 5 14.5V12H3.5a1.5 1.5 0 0 1 0-3H5V6.5A1.5 1.5 0 0 1 6.5 5H10V3.5z"/></svg>`,
         REFRESH: `<svg ${ATTRS}><path d="M3 12a9 9 0 0 1 15.3-6.4L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.3 6.4L3 16"/><path d="M3 21v-5h5"/></svg>`,
         PLUS: `<svg ${ATTRS}><path d="M12 5v14"/><path d="M5 12h14"/></svg>`,
+        // Code tab chrome (ui/code-window): sidebar / panel toggles, search, the
+        // composer's send/stop, and transcript tool rows.
+        SEARCH: `<svg ${ATTRS}><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>`,
+        SIDEBAR: `<svg ${ATTRS}><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9.5 4v16"/></svg>`,
+        PANEL_RIGHT: `<svg ${ATTRS}><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M14.5 4v16"/></svg>`,
+        MORE: `<svg ${ATTRS}><circle cx="5.5" cy="12" r="1.1"/><circle cx="12" cy="12" r="1.1"/><circle cx="18.5" cy="12" r="1.1"/></svg>`,
+        STOP: `<svg ${ATTRS}><rect x="7" y="7" width="10" height="10" rx="2"/></svg>`,
+        ARROW_UP: `<svg ${ATTRS}><path d="M12 19V5"/><path d="m6 11 6-6 6 6"/></svg>`,
+        NEW_CHAT: `<svg ${ATTRS}><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`,
+        COPY: `<svg ${ATTRS}><rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>`,
+        EYE: `<svg ${ATTRS}><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="2.8"/></svg>`,
+        EDIT: `<svg ${ATTRS}><path d="M4 20h4L19 9l-4-4L4 16Z"/><path d="m13.5 6.5 4 4"/></svg>`,
+        LIST: `<svg ${ATTRS}><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>`,
         CHEVRON: `<svg ${ATTRS}><path d="M6 9l6 6 6-6"/></svg>`,
         CLOSE: `<svg ${ATTRS}><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg>`,
         ATTACH: `<svg ${ATTRS}><path d="M21 11.5 12.5 20a4.5 4.5 0 0 1-6.4-6.4L14.6 5a3 3 0 0 1 4.3 4.3l-8.5 8.5a1.5 1.5 0 0 1-2.1-2.1l7.8-7.8"/></svg>`,
@@ -3555,7 +3632,9 @@ ${cssSelectorList("sidebar", { suffix: ' [class*="animate-spin"]' })} {
         CHAT: `<svg ${ATTRS}><path d="M14 9a2 2 0 0 1-2 2H6l-4 3.5V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M17.5 9H18a2 2 0 0 1 2 2v10.5L16.5 18H11a2 2 0 0 1-2-2v-.5"/></svg>`,
         // Nav-rail code glyph: angle brackets around a slash — the conventional
         // "code" mark, matching the </> claude.ai uses.
-        CODE_SLASH: `<svg ${ATTRS}><path d="M8.5 7 3 12l5.5 5"/><path d="M15.5 7 21 12l-5.5 5"/><path d="M13.5 4.5 10.5 19.5"/></svg>`
+        CODE_SLASH: `<svg ${ATTRS}><path d="M8.5 7 3 12l5.5 5"/><path d="M15.5 7 21 12l-5.5 5"/><path d="M13.5 4.5 10.5 19.5"/></svg>`,
+        // Full-IDE layout toggle: activity bar | editor | chat.
+        LAYOUT_IDE: `<svg ${ATTRS}><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M8 4v16"/><path d="M15.5 4v16"/></svg>`
       };
     }
   });
@@ -3563,7 +3642,7 @@ ${cssSelectorList("sidebar", { suffix: ' [class*="animate-spin"]' })} {
   // core/interaction-fx.js
   var require_interaction_fx = __commonJS({
     "core/interaction-fx.js"(exports, module) {
-      var MAGNETIC_TARGETS_SELECTOR = "#betterclaude-titlebar button, #betterclaude-settings-panel .bc-btn, #betterclaude-settings-panel .bc-sp-close, #betterclaude-plugin-dock .bc-dock-btn";
+      var MAGNETIC_TARGETS_SELECTOR = "#betterclaude-titlebar button:not(.bc-tb-nav-btn), #betterclaude-settings-panel .bc-btn, #betterclaude-settings-panel .bc-sp-close, #betterclaude-plugin-dock .bc-dock-btn";
       var MAGNETIC_RADIUS_PX = 70;
       var MAX_PARTICLES = 220;
       var ICONS = require_icons();
@@ -3594,7 +3673,10 @@ ${cssSelectorList("sidebar", { suffix: ' [class*="animate-spin"]' })} {
           this._bound.onClick = (e) => this._onClick(e);
           this._bound.onContextMenu = (e) => this._onContextMenu(e);
           this._bound.onResize = () => this._resize();
+          this._bound.onLeave = () => this._resetMagnetic();
           document.addEventListener("mousemove", this._bound.onMouseMove, { passive: true });
+          document.documentElement.addEventListener("mouseleave", this._bound.onLeave);
+          window.addEventListener("blur", this._bound.onLeave);
           document.addEventListener("click", this._bound.onClick, { passive: true });
           document.addEventListener("contextmenu", this._bound.onContextMenu);
           window.addEventListener("resize", this._bound.onResize);
@@ -3608,6 +3690,10 @@ ${cssSelectorList("sidebar", { suffix: ' [class*="animate-spin"]' })} {
           if (this._bound.onClick) document.removeEventListener("click", this._bound.onClick);
           if (this._bound.onContextMenu) document.removeEventListener("contextmenu", this._bound.onContextMenu);
           if (this._bound.onResize) window.removeEventListener("resize", this._bound.onResize);
+          if (this._bound.onLeave) {
+            document.documentElement.removeEventListener("mouseleave", this._bound.onLeave);
+            window.removeEventListener("blur", this._bound.onLeave);
+          }
           if (this.rafId) cancelAnimationFrame(this.rafId);
           this.rafId = null;
           if (this.canvas) {
@@ -8493,6 +8579,7 @@ ${content}
         attemptedSelectors
       } = require_claude_dom();
       var MARKED_TARGETS = Object.keys(TARGETS).filter((key) => TARGETS[key].marker);
+      var AUTH_ROUTE_RE = /^\/(login|signup|sign-up|logout|magic-link|verify|sso-callback|oauth)(\/|$)/i;
       var STATUS_CLASSES = {
         recognized: "bc-layout-recognized",
         partial: "bc-layout-partial",
@@ -8545,6 +8632,7 @@ ${content}
         Object.values(STATUS_CLASSES).forEach((cls) => classList.remove(cls));
         classList.add(STATUS_CLASSES[probe.status] || STATUS_CLASSES.unrecognized);
         classList.toggle("bc-signed-out", !probe.signedIn);
+        classList.toggle("bc-auth-route", !probe.signedIn && AUTH_ROUTE_RE.test(typeof location !== "undefined" && location.pathname || ""));
         probe.regions.forEach((r) => {
           classList.toggle(`bc-miss-${r.key}`, !r.found && !r.absentOk);
         });
@@ -8620,7 +8708,8 @@ ${content}
         attemptedSelectors,
         STATUS_REGIONS,
         ROOT_MARKER_CLASS,
-        STATUS_CLASSES
+        STATUS_CLASSES,
+        AUTH_ROUTE_RE
       };
     }
   });
@@ -9047,11 +9136,11 @@ ${content}
       function isCandidateOverlay(el) {
         return isOwnBodyChild(el) || isForeignDialog(el);
       }
-      function anyBlockingOverlay() {
-        if (!document.body) return false;
+      function findBlockingOverlay() {
+        if (!document.body) return null;
         const viewportArea = (window.innerWidth || 0) * (window.innerHeight || 0);
-        if (viewportArea <= 0) return false;
-        return Array.prototype.some.call(document.body.children, (el) => {
+        if (viewportArea <= 0) return null;
+        return Array.prototype.find.call(document.body.children, (el) => {
           if (!isCandidateOverlay(el)) return false;
           let style;
           try {
@@ -9063,21 +9152,32 @@ ${content}
           if (style.pointerEvents === "none") return false;
           const box = el.getBoundingClientRect();
           return box.width * box.height > viewportArea * BLOCKING_AREA_RATIO;
-        });
+        }) || null;
+      }
+      function anyBlockingOverlay() {
+        return !!findBlockingOverlay();
+      }
+      function blockingOverlayKind() {
+        const el = findBlockingOverlay();
+        if (!el) return null;
+        return isOwnBodyChild(el) ? "own" : "foreign";
       }
       function mountOverlayOcclusionGuard({ onChange } = {}) {
         if (typeof onChange !== "function") return { check() {
         }, unmount() {
         } };
         let last = null;
+        let lastKind = null;
         let scheduled = null;
         let observer = null;
         const watched = /* @__PURE__ */ new Set();
         function check() {
-          const blocking = anyBlockingOverlay();
-          if (blocking === last) return blocking;
+          const kind = blockingOverlayKind();
+          const blocking = kind !== null;
+          if (blocking === last && kind === lastKind) return blocking;
           last = blocking;
-          onChange(blocking);
+          lastKind = kind;
+          onChange(blocking, kind);
           return blocking;
         }
         function checkSoon() {
@@ -9118,7 +9218,131 @@ ${content}
           }
         };
       }
-      module.exports = { mountOverlayOcclusionGuard, anyBlockingOverlay, BLOCKING_AREA_RATIO };
+      module.exports = { mountOverlayOcclusionGuard, anyBlockingOverlay, blockingOverlayKind, BLOCKING_AREA_RATIO };
+    }
+  });
+
+  // core/auth-contrast.js
+  var require_auth_contrast = __commonJS({
+    "core/auth-contrast.js"(exports, module) {
+      var DARK = "#171717";
+      var LIGHT = "#ffffff";
+      var MARK = "data-bc-contrast";
+      function parseColor(css) {
+        const m = /rgba?\(([^)]+)\)/.exec(css || "");
+        if (!m) return null;
+        const p = m[1].split(/[,\s/]+/).filter(Boolean).map(parseFloat);
+        if (p.length < 3 || p.some((n, i) => i < 3 && !Number.isFinite(n))) return null;
+        return { r: p[0], g: p[1], b: p[2], a: p.length > 3 && Number.isFinite(p[3]) ? p[3] : 1 };
+      }
+      function luminance({ r, g, b }) {
+        const f = (c) => {
+          const s = c / 255;
+          return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+      }
+      function contrastRatio(a, b) {
+        const [hi, lo] = a > b ? [a, b] : [b, a];
+        return (hi + 0.05) / (lo + 0.05);
+      }
+      function labelColorFor(fill) {
+        const l = luminance(fill);
+        const white = contrastRatio(luminance({ r: 255, g: 255, b: 255 }), l);
+        const dark = contrastRatio(luminance({ r: 23, g: 23, b: 23 }), l);
+        return white >= dark ? LIGHT : DARK;
+      }
+      function paintedFill(button) {
+        const box = button.getBoundingClientRect();
+        if (box.width < 2 || box.height < 2) return null;
+        const area = box.width * box.height;
+        let fill = null;
+        for (const el of [button, ...button.querySelectorAll("*")]) {
+          if (el.closest("svg") && el.tagName.toLowerCase() !== "svg") continue;
+          let c;
+          try {
+            c = parseColor(getComputedStyle(el).backgroundColor);
+          } catch {
+            continue;
+          }
+          if (!c || c.a < 0.6) continue;
+          const r = el.getBoundingClientRect();
+          if (r.width * r.height < area * 0.6) continue;
+          fill = c;
+        }
+        return fill;
+      }
+      function labelNodes(button) {
+        return [button, ...button.querySelectorAll("*")].filter((el) => !el.closest("svg"));
+      }
+      function fixButton(button) {
+        const fill = paintedFill(button);
+        const nodes = labelNodes(button);
+        if (!fill) {
+          if (button.getAttribute(MARK)) {
+            button.removeAttribute(MARK);
+            for (const el of nodes) {
+              el.style.removeProperty("color");
+              el.style.removeProperty("-webkit-text-fill-color");
+            }
+          }
+          return;
+        }
+        const want = labelColorFor(fill);
+        if (button.getAttribute(MARK) === want) return;
+        button.setAttribute(MARK, want);
+        for (const el of nodes) {
+          el.style.setProperty("color", want, "important");
+          el.style.setProperty("-webkit-text-fill-color", want, "important");
+        }
+      }
+      function fixAuthButtons(root) {
+        const scope = root || document;
+        for (const button of scope.querySelectorAll("button, a[role='button']")) fixButton(button);
+      }
+      function mountAuthContrast({ isActive } = {}) {
+        const active = typeof isActive === "function" ? isActive : () => !!(document.body && document.body.classList.contains("bc-auth-route"));
+        let frame = 0;
+        let observer = null;
+        let headObserver = null;
+        function run() {
+          frame = 0;
+          if (!document.body || !active()) return;
+          fixAuthButtons(document.body);
+        }
+        function schedule() {
+          if (frame || !active()) return;
+          frame = requestAnimationFrame(run);
+        }
+        function attach() {
+          if (observer || typeof MutationObserver !== "function" || !document.body) return;
+          observer = new MutationObserver(schedule);
+          observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+          if (document.head) {
+            headObserver = new MutationObserver(() => {
+              schedule();
+              setTimeout(schedule, 450);
+            });
+            headObserver.observe(document.head, { childList: true, subtree: true, characterData: true });
+          }
+        }
+        if (document.body) attach();
+        else document.addEventListener("DOMContentLoaded", attach, { once: true });
+        schedule();
+        return {
+          run,
+          schedule,
+          unmount() {
+            if (frame) cancelAnimationFrame(frame);
+            frame = 0;
+            if (observer) observer.disconnect();
+            if (headObserver) headObserver.disconnect();
+            observer = null;
+            headObserver = null;
+          }
+        };
+      }
+      module.exports = { mountAuthContrast, fixAuthButtons, labelColorFor, luminance, contrastRatio, parseColor };
     }
   });
 
@@ -9169,6 +9393,7 @@ ${content}
       var { mountCodeTab, measureContentArea } = require_code_tab();
       var { mountClaudeReloadWatch, findReloadPrompt } = require_claude_reload();
       var { mountOverlayOcclusionGuard } = require_overlay_occlusion();
+      var { mountAuthContrast } = require_auth_contrast();
       module.exports = {
         ThemeEngine,
         SELECTORS,
@@ -9250,7 +9475,9 @@ ${content}
         // above, which is BetterClaude's electron-updater surface.
         mountClaudeReloadWatch,
         findReloadPrompt,
-        mountOverlayOcclusionGuard
+        mountOverlayOcclusionGuard,
+        // Readable button labels on the sign-in page, whatever the theme.
+        mountAuthContrast
       };
     }
   });

@@ -47,6 +47,17 @@ async function build() {
     globalName: "BetterClaudeIDEEditor",
   });
 
+  // Markdown for the Code tab's chat transcript (marked, with raw HTML
+  // escaped and only http(s)/mailto links kept — see the entry's header).
+  // IIFE global for the same no-require() reason as the bundles above.
+  const ctxMarkdown = await esbuild.context({
+    ...commonOpts,
+    entryPoints: [path.join(__dirname, "ui/code-window/markdown-entry.js")],
+    outfile: path.join(__dirname, "build/ide-markdown.bundle.js"),
+    format: "iife",
+    globalName: "BetterClaudeMarkdown",
+  });
+
   // Snake + the while-Claude-is-working popup for both Code windows. IIFE
   // global like the xterm bundle, because the pages that load it have no
   // require() (nodeIntegration off).
@@ -64,6 +75,7 @@ async function build() {
     await ctxXterm.watch();
     await ctxIdeEditor.watch();
     await ctxSnake.watch();
+    await ctxMarkdown.watch();
     console.log("esbuild watching for changes...");
   } else {
     await ctxCore.rebuild();
@@ -71,11 +83,13 @@ async function build() {
     await ctxXterm.rebuild();
     await ctxIdeEditor.rebuild();
     await ctxSnake.rebuild();
+    await ctxMarkdown.rebuild();
     await ctxCore.dispose();
     await ctxEditor.dispose();
     await ctxXterm.dispose();
     await ctxIdeEditor.dispose();
     await ctxSnake.dispose();
+    await ctxMarkdown.dispose();
   }
 }
 

@@ -295,19 +295,35 @@
       this.overlay.dataset.visible = "false";
       this.overlayMsg.textContent = "";
       this.overlayActions.textContent = "";
+      this.overlay.onkeydown = null;
+      if (this.overlay.contains(document.activeElement) || document.activeElement === document.body) this.term.focus();
     }
 
     showOverlay(message, actions) {
       this.overlayMsg.textContent = message;
       this.overlayActions.textContent = "";
+      let first = null;
+      let back = null;
       (actions || []).forEach(({ label, primary, onClick }) => {
         const btn = document.createElement("button");
         btn.textContent = label;
         if (primary) btn.className = "bc-code-primary";
         btn.addEventListener("click", onClick);
         this.overlayActions.appendChild(btn);
+        if (primary && !(first && first.className)) first = btn;
+        else if (!first) first = btn;
+        if (label === "Back") back = btn;
       });
       this.overlay.dataset.visible = "true";
+      // Keyboard: focus lands on the overlay's main action, and Escape means
+      // Back (when there is one) instead of reaching the terminal behind it.
+      this.overlay.onkeydown = back
+        ? (event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); back.click(); } }
+        : null;
+      // Not while the user is typing elsewhere (the Team sidebar, the Live
+      // Wire): an exit overlay must not swallow their next keystroke.
+      const here = document.activeElement;
+      if (first && !(here && here.closest && here.closest("#bc-team-panel, #bc-team-rail"))) first.focus({ preventScroll: true });
     }
 
     restartInPlace() {
@@ -372,6 +388,8 @@
       tab.term.focus();
     });
     refreshChrome();
+    // team-panel.js shows the on-screen tab's team; tell it the tab changed.
+    document.dispatchEvent(new CustomEvent("betterclaude:active-session", { detail: { id } }));
   }
 
   function refreshEmptyState() {
@@ -434,7 +452,9 @@
   function refreshChrome() {
     const tab = activeSession();
     if (tab && tab.cwd) {
-      cwdLabel.textContent = tab.cwd;
+      // The label is `direction: rtl` so truncation keeps the leaf folder;
+      // left-to-right marks stop that from moving the leading "/" to the end.
+      cwdLabel.textContent = `‎${tab.cwd}‎`;
       cwdLabel.title = tab.cwd;
     }
     if (tab) {
