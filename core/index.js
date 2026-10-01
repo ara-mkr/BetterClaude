@@ -34,8 +34,6 @@ const { PromptPicker } = require("./prompt-picker");
 const { DiffViewer } = require("./diff-viewer");
 const { buildFileBlock, findAndReplaceInComposer, insertFileBlock } = require("./file-sync-indicator");
 const { deriveChannelId, deriveKey, encryptText, decryptText } = require("./clipboard-bridge");
-const { renderLineChart, renderBarChart } = require("./analytics-charts");
-const { AnalyticsDashboard, presetRange } = require("./analytics-dashboard");
 const { UpdateBanner, BANNER_ID } = require("./update-banner");
 const { mountTopStripGuard, probeReservedStrip } = require("./top-strip-guard");
 const {
@@ -94,10 +92,6 @@ module.exports = {
   deriveKey,
   encryptText,
   decryptText,
-  renderLineChart,
-  renderBarChart,
-  AnalyticsDashboard,
-  presetRange,
   // In-app updates (GitHub Releases feed; transport supplied by the host).
   UpdateBanner,
   BANNER_ID,

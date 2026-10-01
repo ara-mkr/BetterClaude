@@ -25,7 +25,6 @@ const { SkillMarketplaceOverlay } = require("../core/skill-marketplace");
 const { PromptPicker } = require("../core/prompt-picker");
 const { DiffViewer } = require("../core/diff-viewer");
 const { findAndReplaceInComposer, insertFileBlock } = require("../core/file-sync-indicator");
-const { AnalyticsDashboard } = require("../core/analytics-dashboard");
 const { VIBE_BUNDLES, pickRandomBundle, bundleForMood, bundleForSeason, applyBundle } = require("../core/vibe-bundles");
 const { mapWeatherCodeToBundle } = require("../core/weather");
 const { shouldSuppress, notificationStyleClass } = require("../core/notifications");
@@ -811,32 +810,10 @@ async function bootstrap() {
     },
   });
 
-  // --- Usage Analytics Dashboard: local event logging ---
-  // Off by default (settings.analytics.enabled) — nothing is logged, let
-  // alone sent anywhere, until the user opts in. One tick per currently-
-  // enabled plugin per interval, the honest proxy this app has for
-  // "most-used plugins" without instrumenting each plugin's internals.
-  function logPluginAnalyticsTick() {
-    if (!settings.analytics || !settings.analytics.enabled) return;
-    const pluginIds = pluginLoader.list().map((p) => p.id);
-    if (pluginIds.length === 0) return;
-    ipcRenderer.invoke("analytics:log-plugin-tick", { ts: Date.now(), day: new Date().toISOString().slice(0, 10), pluginIds }).catch(() => {});
-  }
-  setInterval(logPluginAnalyticsTick, 5 * 60 * 1000);
-
   // --- Conversation Branching: fork buttons ---
   // Shared by an in-conversation "Fork here" and by Auto-Session Snapshots'
   // "Restore" (which forks from a saved transcript instead of a live turn
   // range) — same framing either way so the new window's model has context.
-  // --- Usage Analytics Dashboard ---
-  const analyticsDashboard = new AnalyticsDashboard({
-    queryAnalytics: (range) => ipcRenderer.invoke("analytics:query", range),
-    exportCsv: (range) => ipcRenderer.invoke("analytics:export-csv", range),
-    savePng: (dataUrl, suggestedName) => ipcRenderer.invoke("analytics:save-png", { dataUrl, suggestedName }),
-    clearAnalytics: () => ipcRenderer.invoke("analytics:clear"),
-    notify: (message) => notify(message, { category: "plugin" }),
-  });
-
   // Route changes (sign-in screen <-> workspace) swap claude.ai's app root
   // out from under us, so the companion/cursor-FX chrome has to re-evaluate.
   // Scoped to claude.ai's own root rather than document.body: every
@@ -1062,7 +1039,6 @@ async function bootstrap() {
       { id: "open-skill-marketplace", label: "Open Skill Marketplace", group: "Skills", run: () => skillMarketplace.open() },
       { id: "insert-prompt", label: "Insert Prompt…", group: "Prompts", run: () => promptPicker.open() },
       { id: "compare-responses", label: "Compare Responses (Diff)", group: "Action", run: () => diffViewer.open() },
-      { id: "open-usage-analytics", label: "Open Usage Analytics", group: "Analytics", run: () => analyticsDashboard.open() },
       {
         id: "sync-team-now",
         label: "Sync Team Plugins Now",
@@ -1581,8 +1557,6 @@ async function bootstrap() {
     pushClipboardNow: () => ipcRenderer.invoke("clipboardBridge:push-now"),
     testClipboardBridgeConnection: () => ipcRenderer.invoke("clipboardBridge:test-connection"),
 
-    // --- Usage Analytics Dashboard bridge ---
-    openAnalyticsDashboard: () => analyticsDashboard.open(),
 
     // --- Team/Shared Plugin Sync bridge ---
     syncTeamNow: () => ipcRenderer.invoke("teamSync:sync"),

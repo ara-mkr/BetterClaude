@@ -47,8 +47,7 @@
     "electron-store": "^8.2.0",
     "electron-updater": "^6.8.9",
     "marked": "^15.0.12",
-    "node-pty": "^1.1.0",
-    "sql.js": "^1.14.1"
+    "node-pty": "^1.1.0"
   },
   "build": {
     "appId": "com.betterclaude.app",

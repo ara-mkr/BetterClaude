@@ -3,7 +3,7 @@
  *
  * Separate from the main preload.js on the same grounds buddy-preload.js is:
  * that one is injected into claude.ai and carries the whole plugin/companion/
- * skill/analytics surface, none of which applies to a terminal. This one
+ * skill surface, none of which applies to a terminal. This one
  * carries exactly two things — the pty bridge, and the shared BetterClaude
  * chrome (title bar + appearance settings).
  *
@@ -52,7 +52,7 @@ const IS_EMBEDDED = process.argv.includes("--bc-embedded");
 // sections that exist to manipulate one would render live-looking controls that
 // do nothing here: Layout (claude.ai's sidebar/composer), Focus & Reading,
 // Widgets, Buddies, Plugins, Skill Marketplace, Prompt Library, File Watcher,
-// Clipboard Bridge, Team Sync, Analytics, Command Palette, Automations.
+// Clipboard Bridge, Team Sync, Command Palette, Automations.
 // Offering them would be worse than omitting them. The six kept are the ones
 // that are actually about THIS window — five restyle it via --bc-* variables,
 // and the sixth configures the terminal/CLI settings themselves:

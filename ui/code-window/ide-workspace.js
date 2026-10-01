@@ -83,9 +83,22 @@
 
   const fmtCompact = (n) => {
     n = Number(n) || 0;
+    if (n >= 1000000000) return `${(n / 1000000000).toFixed(1)}B`;
     if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
     if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
     return String(Math.round(n));
+  };
+
+  /** "claude-haiku-4-5-20251001" -> "Haiku 4.5", "claude-opus-5[1m]" -> "Opus 5 (1M)". */
+  const prettyModel = (id) => {
+    if (!id || id === "claude") return "Claude";
+    const m = /claude-?(opus|sonnet|haiku|fable)-?(\d+)?[-.]?(\d+)?/i.exec(id);
+    if (!m) return id;
+    const fam = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
+    // A trailing 8-digit group is a snapshot date, not a minor version.
+    const minor = m[3] && m[3].length < 3 ? `.${m[3]}` : "";
+    const longContext = /\[1m\]/i.test(id) ? " (1M)" : "";
+    return `${fam}${m[2] ? ` ${m[2]}${minor}` : ""}${longContext}`;
   };
 
   let toastTimer = null;
@@ -512,6 +525,7 @@
     const show = !r || (r.transcript.isEmpty() && !r.host.querySelector(".bc-t-welcome"));
     empty.hidden = !show;
     if (!show) return;
+    refreshStats();
     if (!activeProject) {
       $("bc-ide-empty-title").textContent = projects.length ? "Pick a project" : "Start with a project";
       $("bc-ide-empty-sub").textContent = "Claude Code works inside a folder — reading, editing and running things with your approval.";
@@ -639,6 +653,9 @@
     syncChrome();
     renderSidebar();
 
+    // What the next `init` should be read against (learnAlias).
+    const sentVariant = sendModel === "claude" ? (claudeModelVariant || null) : null;
+    r.sentVariant = sendModel === "claude" ? (claudeModelVariant || "") : null;
     try {
       const started = await api.chat({
         cwd: r.cwd,
@@ -647,7 +664,7 @@
         history,
         sessionId: r.sessionId,
         model: sendModel,
-        claudeModel: sendModel === "claude" ? (claudeModelVariant || null) : null,
+        claudeModel: sentVariant,
         permissionMode: r.permMode,
         tabId: r.tabId,
       });
@@ -679,14 +696,6 @@
   // ---------------------------------------------------------------------------
   // Chat events from the engine (electron/ide-chat.js) and the free chain
   // ---------------------------------------------------------------------------
-  const prettyModel = (id) => {
-    if (!id || id === "claude") return "Claude";
-    const m = /claude-?(opus|sonnet|haiku|fable)-?(\d+)?[-.]?(\d+)?/i.exec(id);
-    if (!m) return id;
-    const fam = m[1][0].toUpperCase() + m[1].slice(1);
-    return `${fam}${m[2] ? ` ${m[2]}${m[3] && m[3].length < 3 ? `.${m[3]}` : ""}` : ""}`;
-  };
-
   // Errors where the prompt never got an answer (stopped before sending, no
   // login, no free model took it…): hand it back so fixing the cause and
   // sending again doesn't mean retyping it.
@@ -736,6 +745,7 @@
       case "init": {
         if (event.sessionId) r.sessionId = event.sessionId;
         r.modelId = event.model || r.modelId;
+        if (r.sentVariant != null && event.model) learnAlias(r.sentVariant, event.model);
         r.subscription = event.subscription;
         r.apiKeySource = event.apiKeySource;
         const actual = CLI_TO_MODE[event.permissionMode];
@@ -816,7 +826,7 @@
         return;
       case "error": {
         const actions = [];
-        if (event.code === "auth") actions.push({ label: "Open the CLI tab", run: () => api.openCli() });
+        if (event.code === "auth") actions.push({ label: "Sign in to Claude", run: () => signInToClaude(r) });
         if (event.code === "billing") {
           if (Array.isArray(event.scopes) && event.scopes.includes("user")) {
             actions.push({ label: "Stop loading my ~/.claude settings", run: async () => { latestSettings = await api.setSetting("codeWindow.chat.loadUserSettings", false); toast("Code chats no longer load ~/.claude/settings.json. Send again."); } });
@@ -903,8 +913,46 @@
     { id: "sonnet", label: "Sonnet", hint: "Balanced — the everyday pick" },
     { id: "haiku", label: "Haiku", hint: "Fastest, lightest" },
   ];
+  // What each alias resolves to, so the picker can say "Opus 5.5" instead of
+  // "Opus". Seeded with Claude Code 2.1.286's aliases; every `init` the CLI
+  // sends reports the concrete model, which replaces the seed (and teaches
+  // us the plan's default). Persisted so the next launch starts right.
+  const MODEL_ALIASES_KEY = "bc-ide-model-aliases";
+  const MODEL_ALIAS_SEED = { fable: "claude-fable-5-1", opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-4-5" };
+  const learnedAliases = (() => { try { const v = JSON.parse(store.get(MODEL_ALIASES_KEY, "{}")); return v && typeof v === "object" ? v : {}; } catch { return {}; } })();
+  const resolveAlias = (alias) => learnedAliases[alias || "default"] || MODEL_ALIAS_SEED[alias] || null;
+  function choiceLabel(choice) {
+    if (!choice.id) {
+      const d = resolveAlias("");
+      return d ? `Default · ${prettyModel(d)}` : "Default";
+    }
+    const resolved = resolveAlias(choice.id);
+    return resolved ? prettyModel(resolved) : choice.label;
+  }
+  function publishModelLabels() {
+    // Read by main for the dock's Model switcher (widgets "code-model").
+    const labels = {};
+    CLAUDE_MODEL_CHOICES.forEach((c) => { labels[c.id || "default"] = choiceLabel(c); });
+    store.set("bc-ide-model-labels", JSON.stringify(labels));
+  }
+  /** An `init` from a send that asked for `alias`: remember what it became. */
+  function learnAlias(alias, modelId) {
+    if (!modelId || modelId === "<synthetic>" || !/^claude-/i.test(modelId)) return;
+    const key = alias || "default";
+    if (key !== "default") {
+      if (!CLAUDE_MODEL_CHOICES.some((c) => c.id === key)) return; // a custom id
+      // Plan mode can answer on another family (seen: haiku -> sonnet).
+      if (!new RegExp(`claude-?${key}`, "i").test(modelId)) return;
+    }
+    if (learnedAliases[key] === modelId) return;
+    learnedAliases[key] = modelId;
+    store.set(MODEL_ALIASES_KEY, JSON.stringify(learnedAliases));
+    publishModelLabels();
+    updateModelButtonLabel();
+  }
   let selectedModel = store.get(MODEL_STORAGE_KEY, "claude") || "claude";
   let claudeModelVariant = store.get(CLAUDE_MODEL_KEY, "") || "";
+  publishModelLabels();
   let freeModelsCache = null;
   let freeModelsFetchedAt = 0;
   let freeModelsPromise = null;
@@ -918,9 +966,12 @@
   const freeConfig = () => (latestSettings && latestSettings.codeWindow && latestSettings.codeWindow.freeModels) || {};
 
   function claudeModelLabel() {
-    if (!claudeModelVariant) return "Claude";
+    if (!claudeModelVariant) {
+      const d = resolveAlias("");
+      return d ? prettyModel(d) : "Default model";
+    }
     const known = CLAUDE_MODEL_CHOICES.find((c) => c.id === claudeModelVariant);
-    return known ? known.label : claudeModelVariant;
+    return known ? choiceLabel(known) : prettyModel(claudeModelVariant);
   }
   function modelLabelFor(id) {
     if (!id || id === "claude") return claudeModelLabel();
@@ -993,8 +1044,8 @@
     const claudeList = document.createElement("div");
     claudeList.className = "bc-ide-model-list";
     CLAUDE_MODEL_CHOICES.forEach((choice) => claudeList.appendChild(modelRow({
-      title: choice.label,
-      sub: choice.hint,
+      title: choiceLabel(choice),
+      sub: choice.id && resolveAlias(choice.id) ? `${choice.hint} · ${resolveAlias(choice.id)}` : choice.hint,
       selected: selectedModel === "claude" && claudeModelVariant === choice.id,
       onPick: () => selectModel("claude", choice.id),
     })));
@@ -1451,43 +1502,160 @@
     if (!opening) return;
     pop.hidden = false;
     $("bc-ide-usage-btn").setAttribute("aria-expanded", "true");
-    pop.innerHTML = `<div class="bc-ide-usage-section"><div class="bc-ide-usage-title">Claude plan</div>${describePlanUsage()}</div><div class="bc-ide-usage-section" id="bc-ide-usage-local"><div class="bc-ide-usage-title">This machine</div><div class="bc-ide-muted">Loading…</div></div>`;
+    pop.innerHTML = `<div class="bc-ide-usage-section"><div class="bc-ide-usage-title">Claude plan</div>${describePlanUsage()}</div><div class="bc-ide-usage-section" id="bc-ide-usage-local"><div class="bc-ide-usage-title">Claude Code · last 7 days</div><div class="bc-ide-muted">Loading…</div></div>`;
     const localEl = $("bc-ide-usage-local");
-    const analyticsOn = !!(latestSettings && latestSettings.analytics && latestSettings.analytics.enabled);
-    if (!analyticsOn) {
-      localEl.innerHTML = `<div class="bc-ide-usage-title">This machine</div><div class="bc-ide-muted">Turn on Usage analytics in BetterClaude settings to keep a local history of your chats.</div>`;
+    const result = await loadStats();
+    const week = result && result.ok && result.stats.ranges.d7;
+    if (!week) {
+      localEl.innerHTML = `<div class="bc-ide-usage-title">Claude Code · last 7 days</div><div class="bc-ide-muted">${escapeHtml((result && result.error) || "Couldn't read Claude Code's history.")}</div>`;
       return;
     }
+    localEl.innerHTML = `
+      <div class="bc-ide-usage-title">Claude Code · last 7 days</div>
+      <div class="bc-ide-usage-totals"><span><strong>${fmtCompact(week.sessions)}</strong> sessions</span><span><strong>${fmtCompact(week.messages)}</strong> messages</span><span><strong>${fmtCompact(week.tokens)}</strong> tokens</span></div>
+      ${week.models.length ? `<div class="bc-ide-usage-models">${week.models.slice(0, 4).map((m) => `<div><span>${escapeHtml(prettyModel(m.model))}</span><span class="bc-ide-muted">${Math.round(m.share * 100)}%</span></div>`).join("")}</div>` : ""}
+      <div class="bc-ide-muted bc-ide-usage-more">The full picture is on a new session's home screen.</div>`;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Usage stats card (new-session home): Claude Code's own numbers, the same
+  // as its /stats (electron/claude-stats.js). Drawn from the last result at
+  // once (localStorage), then refreshed; a cold read can take a while.
+  // ---------------------------------------------------------------------------
+  const STATS_CACHE_KEY = "bc-ide-stats-cache";
+  const STATS_VIEW_KEY = "bc-ide-stats-view";
+  const STATS_REFRESH_MS = 60 * 1000;
+  const STATS_RANGES = [["all", "All"], ["d30", "30d"], ["d7", "7d"]];
+  const statsView = (() => {
     try {
-      const to = new Date();
-      const from = new Date(to.getTime() - 83 * 86400000);
-      const iso = (d) => d.toISOString().slice(0, 10);
-      const data = await api.queryAnalytics({ from: iso(from), to: iso(to) });
-      const totals = (data && data.totals) || { messages: 0, tokens: 0 };
-      if (!totals.messages) {
-        localEl.innerHTML = `<div class="bc-ide-usage-title">This machine</div><div class="bc-ide-muted">No chats recorded yet.</div>`;
-        return;
-      }
-      const byDay = new Map((data.messagesByDay || []).map((r) => [r.day, r.messages || 0]));
-      const maxDay = Math.max(1, ...byDay.values());
-      const level = (n) => (n <= 0 ? 0 : n >= maxDay * 0.75 ? 4 : n >= maxDay * 0.5 ? 3 : n >= maxDay * 0.25 ? 2 : 1);
-      const cells = [];
-      const start = new Date(from);
-      start.setDate(start.getDate() - start.getDay());
-      for (let d = new Date(start); d <= to; d.setDate(d.getDate() + 1)) {
-        const key = iso(d);
-        const count = byDay.get(key) || 0;
-        cells.push(`<div class="bc-ide-usage-cell" data-level="${d < from ? 0 : level(count)}" title="${key}: ${count} message${count === 1 ? "" : "s"}"></div>`);
-      }
-      const models = (data.modelsByUsage || []).slice(0, 4);
-      localEl.innerHTML = `
-        <div class="bc-ide-usage-title">This machine · 12 weeks</div>
-        <div class="bc-ide-usage-totals"><span><strong>${fmtCompact(totals.messages)}</strong> messages</span><span><strong>${fmtCompact(totals.tokens)}</strong> tokens</span></div>
-        <div class="bc-ide-usage-grid">${cells.join("")}</div>
-        ${models.length ? `<div class="bc-ide-usage-models">${models.map((m) => `<div><span>${escapeHtml(prettyModel(m.model || "claude"))}</span><span class="bc-ide-muted">${fmtCompact(m.messages)} msg</span></div>`).join("")}</div>` : ""}`;
-    } catch {
-      localEl.innerHTML = `<div class="bc-ide-usage-title">This machine</div><div class="bc-ide-muted">Couldn't read local usage.</div>`;
+      const v = JSON.parse(store.get(STATS_VIEW_KEY, "{}")) || {};
+      return { tab: v.tab === "models" ? "models" : "overview", range: STATS_RANGES.some(([id]) => id === v.range) ? v.range : "all" };
+    } catch { return { tab: "overview", range: "all" }; }
+  })();
+  let statsData = (() => { try { const v = JSON.parse(store.get(STATS_CACHE_KEY, "null")); return v && v.ranges ? v : null; } catch { return null; } })();
+  let statsError = "";
+  let statsFetchedAt = 0;
+  let statsPromise = null;
+
+  function loadStats({ force = false } = {}) {
+    if (statsPromise) return statsPromise;
+    statsPromise = Promise.resolve(api.claudeStats({ force }))
+      .catch((error) => ({ ok: false, error: (error && error.message) || "Couldn't read Claude Code's history." }))
+      .then((result) => {
+        statsPromise = null;
+        statsFetchedAt = Date.now();
+        if (result && result.ok && result.stats) {
+          statsData = result.stats;
+          statsError = "";
+          store.set(STATS_CACHE_KEY, JSON.stringify(statsData));
+        } else {
+          statsError = (result && result.error) || "Couldn't read Claude Code's history.";
+        }
+        renderStatsCard();
+        return result;
+      });
+    renderStatsCard();
+    return statsPromise;
+  }
+
+  // The All heatmap's week count follows the card's width.
+  let statsWidth = 0;
+  new ResizeObserver(() => {
+    const w = $("bc-ide-stats").clientWidth;
+    if (!w || Math.abs(w - statsWidth) < 24) return;
+    statsWidth = w;
+    if (statsData && statsView.tab === "overview" && statsView.range === "all") renderStatsCard();
+  }).observe($("bc-ide-stats"));
+
+  function refreshStats() {
+    if (!$("bc-ide-stats").childElementCount) renderStatsCard();
+    if (!statsPromise && Date.now() - statsFetchedAt > STATS_REFRESH_MS) loadStats();
+  }
+
+  const fmtHour = (h) => (h == null ? "—" : `${h % 12 || 12} ${h < 12 ? "AM" : "PM"}`);
+  const fmtDay = (key) => new Date(`${key}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+
+  /** Heatmap levels the way the CLI picks them: quartiles of the active days. */
+  function levelFor(values) {
+    const sorted = values.filter((n) => n > 0).sort((a, b) => a - b);
+    const q = (p) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))] || 0;
+    const p25 = q(0.25), p50 = q(0.5), p75 = q(0.75);
+    return (n) => (n <= 0 ? 0 : n >= p75 ? 4 : n >= p50 ? 3 : n >= p25 ? 2 : 1);
+  }
+
+  function statsHeatmap(range, rangeId) {
+    // Weeks shown: half a year for All, enough to cover the window otherwise.
+    // Days are UTC, like Claude Code's own stats.
+    // All: as many 20px weeks as the card fits (the desktop app's look).
+    const inner = ($("bc-ide-stats").clientWidth || 712) - 34;
+    const weeks = rangeId === "all" ? Math.max(13, Math.min(53, Math.floor((inner + 4) / 24))) : rangeId === "d30" ? 6 : 2;
+    const today = new Date(`${statsData.today}T00:00:00Z`);
+    const start = new Date(today);
+    start.setUTCDate(start.getUTCDate() - start.getUTCDay() - (weeks - 1) * 7);
+    const byDay = new Map(range.daily.map((d) => [d.date, d.messages]));
+    const level = levelFor(range.daily.map((d) => d.messages));
+    const cells = [];
+    for (let d = new Date(start); d <= today; d.setUTCDate(d.getUTCDate() + 1)) {
+      const key = d.toISOString().slice(0, 10);
+      const count = byDay.get(key) || 0;
+      const outside = range.since && key < range.since;
+      cells.push(`<i data-level="${outside ? 0 : level(count)}"${outside ? ' data-outside="true"' : ""} title="${escapeHtml(fmtDay(key))}: ${count.toLocaleString()} message${count === 1 ? "" : "s"}"></i>`);
     }
+    return `<div class="bc-ide-stats-heat" style="--weeks:${weeks}" role="img" aria-label="Messages per day">${cells.join("")}</div>`;
+  }
+
+  function statsOverview(range, rangeId) {
+    const tile = (label, value) => `<div class="bc-ide-stats-tile"><span>${label}</span><strong>${value}</strong></div>`;
+    const fact = range.funFact
+      ? `You've used ~${range.funFact.times.toLocaleString()}× more tokens than ${escapeHtml(range.funFact.book)}.`
+      : range.tokens ? `${range.tokens.toLocaleString()} tokens so far.` : "";
+    return `
+      <div class="bc-ide-stats-tiles">
+        ${tile("Sessions", range.sessions.toLocaleString())}
+        ${tile("Messages", range.messages.toLocaleString())}
+        ${tile("Total tokens", fmtCompact(range.tokens))}
+        ${tile("Active days", range.activeDays.toLocaleString())}
+        ${tile("Peak hour", fmtHour(range.peakHour))}
+        ${tile("Favorite model", range.favoriteModel ? escapeHtml(prettyModel(range.favoriteModel)) : "—")}
+      </div>
+      ${statsHeatmap(range, rangeId)}
+      ${fact ? `<p class="bc-ide-stats-fact">${fact}</p>` : ""}`;
+  }
+
+  function statsModels(range) {
+    if (!range.models.length) return `<p class="bc-ide-stats-fact">No model usage in this window yet.</p>`;
+    return `<div class="bc-ide-stats-models">${range.models.map((m) => `
+      <div class="bc-ide-stats-model">
+        <div class="bc-ide-stats-model-head"><strong>${escapeHtml(prettyModel(m.model))}</strong><span>${fmtCompact(m.tokens)} · ${(m.share * 100).toFixed(m.share < 0.01 ? 1 : 0)}%</span></div>
+        <div class="bc-ide-stats-bar"><i style="width:${Math.max(1, Math.round(m.share * 100))}%"></i></div>
+        <div class="bc-ide-stats-model-sub">${escapeHtml(m.model)}${m.input != null ? ` · ${fmtCompact(m.input)} in · ${fmtCompact(m.output)} out` : ""}</div>
+      </div>`).join("")}</div>
+      <p class="bc-ide-stats-fact">Totals include cached context, like Claude Code's own /stats.</p>`;
+  }
+
+  function renderStatsCard() {
+    const host = $("bc-ide-stats");
+    if (!host) return;
+    if (!statsData) {
+      host.dataset.state = statsError ? "error" : "loading";
+      host.innerHTML = statsError
+        ? `<p class="bc-ide-stats-fact">${escapeHtml(statsError)} <button type="button" class="bc-ide-link-btn" data-stats-retry>Try again</button></p>`
+        : `<p class="bc-ide-stats-fact">Reading your Claude Code history… the first time can take a little while.</p>`;
+      const retry = host.querySelector("[data-stats-retry]");
+      if (retry) retry.addEventListener("click", () => loadStats({ force: true }));
+      return;
+    }
+    host.dataset.state = "ready";
+    const range = statsData.ranges[statsView.range] || statsData.ranges.all;
+    const seg = (group, items, current) => `<div class="bc-ide-stats-seg" role="tablist">${items.map(([id, label]) => `<button type="button" role="tab" data-${group}="${id}" aria-selected="${id === current}">${label}</button>`).join("")}</div>`;
+    host.innerHTML = `
+      <div class="bc-ide-stats-head">
+        ${seg("stats-tab", [["overview", "Overview"], ["models", "Models"]], statsView.tab)}
+        ${seg("stats-range", STATS_RANGES, statsView.range)}
+      </div>
+      ${statsView.tab === "models" ? statsModels(range) : statsOverview(range, statsView.range)}`;
+    host.querySelectorAll("[data-stats-tab]").forEach((b) => b.addEventListener("click", () => { statsView.tab = b.dataset.statsTab; store.set(STATS_VIEW_KEY, JSON.stringify(statsView)); renderStatsCard(); }));
+    host.querySelectorAll("[data-stats-range]").forEach((b) => b.addEventListener("click", () => { statsView.range = b.dataset.statsRange; store.set(STATS_VIEW_KEY, JSON.stringify(statsView)); renderStatsCard(); }));
   }
 
   // ---------------------------------------------------------------------------
@@ -2065,12 +2233,17 @@
       term.open($("bc-ide-terminal-host"));
       term.onData((data) => api.write(data));
       api.onData((chunk) => term.write(chunk));
-      api.onStarted(({ cwd, kind }) => {
+      api.onStarted(({ cwd, kind, pid }) => {
+        if (loginPending && kind === "claude") { loginPending = false; loginPid = pid; }
         $("bc-ide-terminal-dot").classList.add("live");
         $("bc-ide-terminal-cwd").textContent = `${kind === "claude" ? "claude · " : ""}${shortPath(cwd)}`;
       });
-      api.onExit(({ exitCode, signal }) => {
+      api.onExit(({ exitCode, signal, pid }) => {
         $("bc-ide-terminal-dot").classList.remove("live");
+        if (loginPid != null && pid === loginPid) {
+          loginPid = null;
+          if (exitCode === 0 && !signal) toast("Signed in to Claude. Send your message again.");
+        }
         term.write(`\r\n\x1b[2m[process ended: ${signal ? `signal ${signal}` : `exit ${exitCode}`} — “New shell” starts another]\x1b[0m\r\n`);
       });
       api.onFatal(({ message }) => term.write(`\r\n\x1b[31m${String(message || "").replace(/\n/g, "\r\n")}\x1b[0m\r\n`));
@@ -2088,6 +2261,27 @@
     if (!start || !activeProject) return;
     if (terminalCwd && terminalCwd === activeProject.cwd && !terminalStale) { term.focus(); return; }
     await startShell();
+  }
+
+  // `claude auth login --claudeai` in the Terminal panel: Claude Code opens
+  // the browser for the user's own Claude account (their subscription). The
+  // failed chat's process is released so the next send starts on the new
+  // login.
+  let loginPending = false;
+  let loginPid = null;
+  async function signInToClaude(r) {
+    if (r) api.disposeChat(r.tabId).catch(() => {});
+    openPanel("terminal");
+    await ensureTerminal({ start: false });
+    if (term) term.reset();
+    loginPending = true;
+    const ok = await api.claudeLogin(activeProject ? activeProject.cwd : "", terminalSize.cols, terminalSize.rows);
+    if (!ok) { loginPending = false; toast("Couldn't start Claude Code's sign-in.", { kind: "error" }); return; }
+    // The terminal now runs the login, not a shell in this folder.
+    terminalCwd = null;
+    terminalStale = true;
+    if (term) term.focus();
+    toast("Finish signing in in your browser. Your message is back in the box, so just send it again.");
   }
 
   async function startShell() {
@@ -2490,7 +2684,7 @@
       const id = model === "default" ? "" : String(model || "");
       if (!CLAUDE_MODEL_CHOICES.some((c) => c.id === id)) return;
       selectModel("claude", id);
-      toast(`Code tab model: ${CLAUDE_MODEL_CHOICES.find((c) => c.id === id).label}`);
+      toast(`Code tab model: ${choiceLabel(CLAUDE_MODEL_CHOICES.find((c) => c.id === id))}`);
     });
   }
 

@@ -45,8 +45,11 @@ contextBridge.exposeInMainWorld("betterClaudeIDE", {
   // One cheap Haiku call to name a session after its first exchange, like the
   // desktop app. Returns "" on any failure; the result is persisted in settings.
   generateSessionTitle: (payload) => ipcRenderer.invoke("ide:generate-session-title", payload),
-  // Local usage database (electron/analytics-db.js) for the Code stats panel.
-  queryAnalytics: (range) => ipcRenderer.invoke("analytics:query", range),
+  // Claude Code's own usage stats (electron/claude-stats.js), the numbers its
+  // /stats shows: { ok, stats: { today, ranges: { all, d30, d7 } } }.
+  claudeStats: (opts) => ipcRenderer.invoke("ide:claude-stats", { force: !!(opts && opts.force) }),
+  // `claude auth login --claudeai` in the Terminal panel.
+  claudeLogin: (cwd, cols, rows) => ipcRenderer.invoke("ide:claude-login", cwd, cols, rows),
   // The Code tab's own writes go through the same settings:set path as the
   // main window's panel, so a change made here broadcasts everywhere.
   setSetting: (keyPath, value) => ipcRenderer.invoke("settings:set", keyPath, value),

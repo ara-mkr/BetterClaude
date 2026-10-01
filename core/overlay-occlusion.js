@@ -15,10 +15,10 @@
  * electron/main.js), and the pill stays active throughout, because from the
  * user's point of view the Code tab is still the tab they are on.
  *
- * WHY THIS IS NOT A LIST OF OVERLAY IDs. There are eight of them today
+ * WHY THIS IS NOT A LIST OF OVERLAY IDs. There are seven of them today
  * (settings, skill marketplace, prompt picker, command palette, diff viewer,
- * analytics dashboard, and two mini-games) and the ninth would be added by
- * someone who has never heard of this file. The test is behavioural instead:
+ * and two mini-games) and the eighth would be added by someone who has
+ * never heard of this file. The test is behavioural instead:
  * a BetterClaude-owned body child that is interactive and covers a meaningful
  * share of the window is, by definition, something the user is meant to be
  * looking at. `pointer-events: none` is what separates a real overlay from the
