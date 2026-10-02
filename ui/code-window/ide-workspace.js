@@ -406,7 +406,7 @@
     if (records.length <= MAX_OPEN_RECORDS) return;
     // A teammate stays open: closing it would take it off the team.
     const idle = records
-      .filter((r) => !r.busy && !r.waiting && !r.team && r.tabId !== activeTabId && !(r.draft && (r.draft.text.trim() || r.draft.attachments.length)))
+      .filter((r) => !r.busy && !r.waiting && !r.team && r.tabId !== activeTabId && !(r.draft && (r.draft.text.trim() || r.draft.attachments.length)) && !(r.queue && r.queue.length))
       .sort((a, b) => a.viewedAt - b.viewedAt);
     while (records.length > MAX_OPEN_RECORDS && idle.length) {
       const r = idle.shift();
@@ -563,8 +563,12 @@
     const r = activeRecord();
     const busy = !!(r && r.busy);
     $("bc-ide-chat-stop").hidden = !busy;
-    $("bc-ide-send").hidden = busy;
+    // While Claude works, Send queues the message instead.
+    const send = $("bc-ide-send");
+    send.title = busy ? "Queue (Enter) — sends when Claude finishes" : "Send (Enter)";
+    send.setAttribute("aria-label", busy ? "Queue message" : "Send");
     $("bc-ide-chat-form").dataset.busy = busy ? "true" : "false";
+    renderQueue();
     pushWorkbenchStatus();
   }
 
@@ -592,7 +596,8 @@
     // A chat on the agent team takes teammate messages between your own: its
     // stored mode has to follow the chip, not just apply at your next send.
     if (r && r.team && api.teamSetMode) api.teamSetMode({ tabId: r.tabId, permissionMode: r.permMode }).catch(() => {});
-    if (r && r.busy) toast("The new mode applies from your next message.");
+    // A running conversation switches now, mid-turn, not at the next message.
+    else if (r && api.setChatMode && selectedModel === "claude") api.setChatMode({ tabId: r.tabId, permissionMode: r.permMode }).catch(() => {});
   }
 
   // ---------------------------------------------------------------------------
@@ -627,12 +632,31 @@
     let r = activeRecord();
     if (!r || r.cwd !== activeProject.cwd) r = newSession();
     if (!r) return;
-    if (r.busy) { toast("Claude is still working on this one — press Esc to stop it, or start a new session."); return; }
-    if (r.loading) { toast("Still loading this conversation — send again in a moment."); return; }
+    const item = { id: `q${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, prompt, attachments: selectedAttachments.slice() };
+    // Busy (or still loading): the message waits in this conversation's
+    // queue and goes out by itself when Claude finishes — or now, via Send now.
+    if (r.busy || r.loading || (r.queue && r.queue.length)) {
+      input.value = "";
+      autosizeComposer();
+      selectedAttachments = [];
+      renderAttachments();
+      enqueue(r, item);
+      return;
+    }
+    if (!effectiveSelectedModel()) return;
+    input.value = "";
+    autosizeComposer();
+    selectedAttachments = [];
+    renderAttachments();
+    dispatchSend(r, item);
+  }
 
+  /** Sends one message (typed now, or the head of the queue) in conversation `r`. */
+  async function dispatchSend(r, item) {
+    const prompt = item.prompt;
     const sendModel = effectiveSelectedModel();
-    if (!sendModel) return;
-    const attachments = selectedAttachments.slice();
+    if (!sendModel) { r.queue = [item, ...(r.queue || [])]; renderQueue(); return; }
+    const attachments = item.attachments || [];
     if (sendModel !== "claude" && attachments.some((f) => f.image)) toast("Free models can't see images — sending the text only.");
     const history = sendModel === "claude" ? [] : r.transcript.history();
     r.transcript.userMessage(prompt, { attachments: attachments.map((f) => f.path) });
@@ -646,10 +670,6 @@
     r.busy = true;
     // The engine's `start` says "Starting Claude Code…" when it had to spawn.
     r.transcript.setWorking("Thinking…");
-    input.value = "";
-    autosizeComposer();
-    selectedAttachments = [];
-    renderAttachments();
     stickToBottomWanted = true;
     stickToBottom(true);
     syncChrome();
@@ -673,8 +693,10 @@
       if (started && started.error === "busy") {
         // Claude Code began a turn of its own (a background task finished)
         // a moment before this arrived — that turn owns the busy state.
-        r.transcript.note("Not sent — Claude was already working in this session. Send it again when it finishes.", "muted");
-        if (!input.value.trim()) { input.value = prompt; autosizeComposer(); }
+        // It waits at the front of the queue and goes when that turn ends.
+        r.transcript.note("Claude was already working in this session — your message is queued.", "muted");
+        r.queue = [item, ...(r.queue || [])];
+        renderQueue();
         return;
       }
       // A refused send normally arrives with its own error event first; this
@@ -686,13 +708,91 @@
     }
   }
 
-  function endTurn(r) {
+  /** `flush`: the turn finished cleanly, so the next queued message goes out. */
+  function endTurn(r, { flush = false } = {}) {
     r.busy = false;
     r.waiting = 0;
     r.transcript.endTurn();
     if (r.tabId !== activeTabId) r.unread = true;
     if (r.tabId === activeTabId) syncComposerBusy();
     renderSidebar();
+    if (flush || r.sendNowId) {
+      r.sendNowId = null;
+      setTimeout(() => flushQueue(r), 0);
+    } else if (r.queue && r.queue.length && r.tabId === activeTabId) {
+      renderQueue(); // paused after an error: Send now sends it
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Queued messages: typed while Claude works, shown above the composer, sent
+  // in order as each turn ends. "Send now" stops the current turn and sends.
+  // ---------------------------------------------------------------------------
+  function enqueue(r, item) {
+    r.queue = [...(r.queue || []), item];
+    renderQueue();
+    renderSidebar();
+  }
+  function flushQueue(r) {
+    if (r.busy || r.loading || !r.queue || !r.queue.length) { renderQueue(); return; }
+    const item = r.queue.shift();
+    renderQueue();
+    dispatchSend(r, item);
+  }
+  function sendQueuedNow(r, id) {
+    const i = (r.queue || []).findIndex((q) => q.id === id);
+    if (i < 0) return;
+    const [item] = r.queue.splice(i, 1);
+    r.queue.unshift(item);
+    if (r.busy) {
+      r.sendNowId = id;
+      renderQueue();
+      api.stopChat(r.tabId);
+    } else {
+      flushQueue(r);
+    }
+  }
+  function renderQueue() {
+    const host = $("bc-ide-chat-queue");
+    if (!host) return;
+    const r = activeRecord();
+    const queue = (r && r.queue) || [];
+    host.textContent = "";
+    host.hidden = !queue.length;
+    queue.forEach((item, index) => {
+      const row = document.createElement("div");
+      row.className = "bc-ide-queued";
+      row.innerHTML = `<div class="bc-ide-queued-copy"><span class="bc-ide-queued-label"></span><span class="bc-ide-queued-text"></span></div>
+        <div class="bc-ide-queued-actions">
+          <button type="button" class="bc-ide-queued-send">Send now</button>
+          <button type="button" class="bc-ide-queued-icon" data-act="edit" title="Edit" aria-label="Edit queued message">${icon("EDIT") || "✎"}</button>
+          <button type="button" class="bc-ide-queued-icon" data-act="remove" title="Remove" aria-label="Remove queued message">${icon("CLOSE")}</button>
+        </div>`;
+      const files = (item.attachments || []).length;
+      const sending = r.sendNowId === item.id;
+      row.querySelector(".bc-ide-queued-label").textContent = sending ? "Sending…" : index === 0 && r.busy ? "Queued · sends when Claude finishes" : "Queued";
+      row.querySelector(".bc-ide-queued-text").textContent = item.prompt + (files ? `  · ${files} attachment${files === 1 ? "" : "s"}` : "");
+      const sendBtn = row.querySelector(".bc-ide-queued-send");
+      sendBtn.disabled = sending;
+      sendBtn.addEventListener("click", () => sendQueuedNow(r, item.id));
+      row.querySelector('[data-act="edit"]').addEventListener("click", () => {
+        const input = $("bc-ide-chat-input");
+        if (input.value.trim() || selectedAttachments.length) { toast("Send or clear what's in the message box first."); return; }
+        r.queue = r.queue.filter((q) => q.id !== item.id);
+        input.value = item.prompt;
+        selectedAttachments = (item.attachments || []).slice();
+        renderAttachments();
+        autosizeComposer();
+        input.focus();
+        renderQueue();
+      });
+      row.querySelector('[data-act="remove"]').addEventListener("click", () => {
+        r.queue = r.queue.filter((q) => q.id !== item.id);
+        if (r.sendNowId === item.id) r.sendNowId = null;
+        renderQueue();
+      });
+      host.appendChild(row);
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -872,7 +972,7 @@
           }
         }
         t.footer(parts.join("  ·  "), { free: !!event.free });
-        endTurn(r);
+        endTurn(r, { flush: true });
         maybeNameSession(r);
         refreshProjectState(r.cwd);
         loadSessions(r.cwd, { force: true }).then(() => { renderSidebar(); if (r.tabId === activeTabId) syncChrome(); });
@@ -991,7 +1091,7 @@
       const pick = exact || newest;
       if (pick) learnAlias(choice.id, pick.resolvedModel);
     });
-    cliModels = models.map((m) => ({ value: m.value, resolvedModel: m.resolvedModel, displayName: m.displayName || "", description: m.description || "" }));
+    cliModels = models.map((m) => ({ value: m.value, resolvedModel: m.resolvedModel, displayName: m.displayName || "", description: m.description || "", supportsAutoMode: m.supportsAutoMode === true }));
     store.set(CLAUDE_MODELS_KEY, JSON.stringify(cliModels));
   }
   /** Claude Code's models that aren't one of the picker's main rows, newest first. */
@@ -1466,7 +1566,26 @@
   function toggleModeMenu() {
     const r = activeRecord();
     const current = r ? r.permMode : defaultMode;
-    popMenu("bc-ide-mode-menu", "bc-ide-mode-btn", modeChoices().map((c) => ({ label: c.label, hint: c.hint, selected: c.id === current, danger: c.id === "bypass", run: () => setPermMode(c.id) })));
+    const noAuto = autoUnsupportedLabel();
+    popMenu("bc-ide-mode-menu", "bc-ide-mode-btn", modeChoices().map((c) => ({
+      label: c.label,
+      hint: c.id === "auto" && noAuto ? `Not available for ${noAuto} — pick another model` : c.hint,
+      selected: c.id === current,
+      disabled: c.id === "auto" && !!noAuto && current !== "auto",
+      danger: c.id === "bypass",
+      run: () => setPermMode(c.id),
+    })));
+  }
+
+  /** The picked Claude model's name when Claude Code says it has no Auto mode (Haiku), else null. */
+  function autoUnsupportedLabel() {
+    if (selectedModel !== "claude") return null;
+    const value = claudeModelVariant || "default";
+    const resolved = resolveAlias(claudeModelVariant) || "";
+    const entry = cliModels.find((m) => m.value === value) || cliModels.find((m) => resolved && m.resolvedModel === resolved);
+    // Only trust a list that carries the flag at all (older entries didn't).
+    if (!entry || !cliModels.some((m) => m.supportsAutoMode)) return null;
+    return entry.supportsAutoMode ? null : (entry.displayName || prettyModel(entry.resolvedModel));
   }
 
   const MAX_ATTACHMENTS = 20;

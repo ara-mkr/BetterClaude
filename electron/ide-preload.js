@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld("betterClaudeIDE", {
   openSettings: () => ipcRenderer.invoke("ide:open-claude-settings"),
   chat: (payload) => ipcRenderer.invoke("ide:chat", payload),
   stopChat: (tabId) => ipcRenderer.invoke("ide:chat-stop", tabId),
+  setChatMode: (payload) => ipcRenderer.invoke("ide:chat-set-mode", payload),
   // Answer an approval / question / plan card: { tabId, requestId,
   // decision: "allow" | "always" | "deny", answers?, message? }.
   respondPermission: (payload) => ipcRenderer.invoke("ide:chat-permission", payload),

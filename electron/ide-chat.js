@@ -1026,6 +1026,43 @@ function createIdeChatEngine(host) {
     return true;
   }
 
+  /**
+   * The mode chip changed. A running process switches now (Claude Code takes
+   * `set_permission_mode` mid-turn), so the turn in progress stops asking
+   * straight away instead of from the next message. Approval cards already
+   * open that the new mode would never have asked about are answered: every
+   * tool under Bypass, file edits under Accept edits. Questions and plan
+   * approvals always stay with the user.
+   */
+  const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+  const USER_ONLY_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode"]);
+  async function setMode(tabId, permissionMode) {
+    const meta = tabMeta.get(tabId);
+    if (meta) meta.permissionMode = permissionMode;
+    const proc = procs.get(tabId);
+    if (!proc || proc.exited || proc.killing) return { ok: true, live: false };
+    const config = host.getConfig() || {};
+    const wanted = cliModeFor(permissionMode, !!config.allowBypassMode);
+    if (wanted !== proc.cliMode) {
+      const response = await controlRequest(proc, { subtype: "set_permission_mode", mode: wanted });
+      if (response.subtype !== "success") {
+        const why = stripAnsi(response.error || "");
+        send(tabId, { type: "note", text: /auto mode unavailable/i.test(why) ? "Auto mode isn't available for this model. Pick another model to use Auto." : `Couldn't switch to ${wanted}: ${why || "not available"}. Staying in ${proc.cliMode}.` });
+        send(tabId, { type: "mode", permissionMode: proc.cliMode });
+        return { ok: false, live: true };
+      }
+      proc.cliMode = wanted;
+      send(tabId, { type: "mode", permissionMode: wanted });
+    }
+    for (const [requestId, pending] of Array.from(proc.pending.entries())) {
+      if (USER_ONLY_TOOLS.has(pending.toolName)) continue;
+      if (wanted === "bypassPermissions" || (wanted === "acceptEdits" && EDIT_TOOLS.has(pending.toolName))) {
+        respondPermission({ tabId, requestId, decision: "allow" });
+      }
+    }
+    return { ok: true, live: true };
+  }
+
   /** "waiting" (an approval card is open), "working", "idle", or "closed" (nothing known about the tab). */
   function tabState(tabId) {
     const proc = procs.get(tabId);
@@ -1187,6 +1224,7 @@ function createIdeChatEngine(host) {
             resolvedModel: typeof m.resolvedModel === "string" ? m.resolvedModel : "",
             displayName: typeof m.displayName === "string" ? m.displayName : "",
             description: typeof m.description === "string" ? m.description : "",
+            supportsAutoMode: m.supportsAutoMode === true,
           })));
         }
       });
@@ -1196,7 +1234,7 @@ function createIdeChatEngine(host) {
     });
   }
 
-  return { sendMessage, respondPermission, stop, dispose, disposeAll, disposeIdle, aggregateState, isBusy, deliver, setTeam, setTeamMode, tabState, listModels };
+  return { sendMessage, setMode, respondPermission, stop, dispose, disposeAll, disposeIdle, aggregateState, isBusy, deliver, setTeam, setTeamMode, tabState, listModels };
 }
 
 module.exports = { createIdeChatEngine, pickAlwaysOption, friendlyError, cliModeFor, settingsProviderOverrides, isBillingOverrideNotice, SUBSCRIPTION_KEY_SOURCES, CLI_MODES };

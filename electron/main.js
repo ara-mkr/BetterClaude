@@ -3484,6 +3484,13 @@ ipcMain.handle("ide:chat", async (e, payload = {}) => {
   // mid-turn on its own" (busy — nothing to clean up) from a real failure.
   return result && result.ok ? true : { ok: false, error: (result && result.error) || "failed" };
 });
+ipcMain.handle("ide:chat-set-mode", async (e, payload = {}) => {
+  if (!isIdeSender(e.sender) || !payload || !ideChat) return false;
+  const tabId = ideTabId(payload.tabId);
+  if (!tabId || typeof payload.permissionMode !== "string") return false;
+  const result = await ideChat.setMode(tabId, payload.permissionMode.slice(0, 40));
+  return !!(result && result.ok);
+});
 ipcMain.handle("ide:chat-stop", (e, tabId) => {
   if (!isIdeSender(e.sender)) return false;
   const key = ideTabId(tabId);
