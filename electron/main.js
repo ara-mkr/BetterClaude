@@ -2267,6 +2267,7 @@ function reconcileIdeView() {
     }, 2500);
   }
   const want = ideViewShown && !ideViewSuspended && ideViewReady;
+  if (process.env.BC_DEBUG_CONSOLE && want !== ideViewAttached) console.log(`[BetterClaude] Code IDE view ${want ? "attached" : "detached"}`);
   if (want && !ideViewAttached) {
     layoutIdeView();
     mainWindow.contentView.addChildView(ideView);
@@ -2719,6 +2720,7 @@ function setIdeViewShown(shown) {
 
 function setIdeViewSuspended(suspended) {
   if (suspended === ideViewSuspended) return;
+  if (process.env.BC_DEBUG_CONSOLE) console.log(`[BetterClaude] Code IDE view -> ${suspended ? "suspended" : "resumed"}`);
   ideViewSuspended = suspended;
   reconcileIdeView();
 }
@@ -2799,6 +2801,7 @@ function setCodeViewShown(shown) {
  */
 function setCodeViewSuspended(suspended) {
   if (suspended === codeViewSuspended) return;
+  if (process.env.BC_DEBUG_CONSOLE) console.log(`[BetterClaude] CLI view -> ${suspended ? "suspended" : "resumed"}`);
   codeViewSuspended = suspended;
   if (!codeView || !codeViewShown) return;
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -3965,15 +3968,31 @@ ipcMain.handle("ide:open-cli", (e) => {
   openCodeWindow();
   return true;
 });
-// The IDE's gear opens CLAUDE's own settings page, not BetterClaude's panel
-// (that lives on the main window's title bar). Hiding the IDE first and
-// loading /settings directly means the user lands straight on the settings
-// surface — no chat composer in between.
-ipcMain.handle("ide:open-claude-settings", (e) => {
+// The IDE's gear opens CLAUDE's own settings dialog, not BetterClaude's panel
+// (that lives on the main window's title bar) — and it opens it IN PLACE: the
+// Code tab stays the active tab. claude.ai routes /settings/* to a modal, so a
+// same-document navigation pops it over the page without a reload; the
+// overlay-occlusion guard (core/overlay-occlusion.js) then steps the Code view
+// aside while the dialog is up and brings it back when it closes. This used to
+// hide the Code tab and loadURL("/settings"), which dumped the user on chat.
+const OPEN_CLAUDE_SETTINGS_IN_PAGE = `(async () => {
+  history.pushState(history.state, "", "/settings/general");
+  dispatchEvent(new PopStateEvent("popstate", { state: history.state }));
+  for (let i = 0; i < 30; i++) {
+    if (document.querySelector('#portal-root [role="dialog"]')) return true;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return false;
+})()`;
+ipcMain.handle("ide:open-claude-settings", async (e) => {
   if (!isIdeSender(e.sender)) return false;
-  setIdeViewShown(false);
-  setCodeViewShown(false);
-  if (mainWindow && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.loadURL("https://claude.ai/settings");
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return false;
+  const wc = mainWindow.webContents;
+  const opened = await wc.executeJavaScript(OPEN_CLAUDE_SETTINGS_IN_PAGE, true).catch(() => false);
+  // A claude.ai build whose router ignores the in-page navigation: fall back
+  // to loading the route. The Code tab still stays put — the guard steps it
+  // aside once the reloaded page shows the dialog.
+  if (!opened && !wc.isDestroyed()) wc.loadURL("https://claude.ai/settings");
   return true;
 });
 ipcMain.on("ide:input", (e, data) => { if (isIdeSender(e.sender) && ideSession && typeof data === "string") ideSession.write(data); });

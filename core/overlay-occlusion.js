@@ -63,8 +63,48 @@ function isForeignDialog(el) {
   return typeof el.querySelector === "function" && !!el.querySelector(DIALOG_SELECTOR);
 }
 
+/**
+ * The boxes to measure for a candidate body child. For a foreign portal that
+ * is the dialog nodes themselves, NOT the container: claude.ai's
+ * `#portal-root` is a static div whose only children are position:fixed, so
+ * its own box is 0px tall and measuring it never reports Settings as open
+ * (which is exactly how the CLI pane ended up painted over claude.ai's
+ * Settings dialog).
+ */
+function measuredNodes(el) {
+  if (isOwnBodyChild(el) || (typeof el.matches === "function" && el.matches(DIALOG_SELECTOR))) return [el];
+  return Array.prototype.slice.call(el.querySelectorAll(DIALOG_SELECTOR));
+}
+
+function isVisiblyBlocking(node, viewportArea) {
+  let style;
+  try {
+    style = getComputedStyle(node);
+  } catch (_err) {
+    return false;
+  }
+  if (style.display === "none" || style.visibility === "hidden") return false;
+  // Decorative, non-interactive chrome never blocks anything.
+  if (style.pointerEvents === "none") return false;
+  const box = node.getBoundingClientRect();
+  return box.width * box.height > viewportArea * BLOCKING_AREA_RATIO;
+}
+
 function isCandidateOverlay(el) {
   return isOwnBodyChild(el) || isForeignDialog(el);
+}
+
+const NON_CONTAINER_TAGS = new Set(["SCRIPT", "STYLE", "LINK", "CANVAS", "TEMPLATE", "NOSCRIPT"]);
+
+/**
+ * A claude.ai body child a dialog can be mounted into later: not ours, not
+ * the app root (which is huge and always mutating), not a script/style node.
+ */
+function isPortalContainer(el) {
+  if (isOwnBodyChild(el) || NON_CONTAINER_TAGS.has(el.tagName)) return false;
+  const id = el.id || "";
+  if (id === "root" || id === "__next") return false;
+  return !(el.classList && el.classList.contains("bc-claude-root"));
 }
 
 /** The overlay (BetterClaude's, or claude.ai's own modal) covering a meaningful part of the window, else null. */
@@ -75,17 +115,7 @@ function findBlockingOverlay() {
 
   return Array.prototype.find.call(document.body.children, (el) => {
     if (!isCandidateOverlay(el)) return false;
-    let style;
-    try {
-      style = getComputedStyle(el);
-    } catch (_err) {
-      return false;
-    }
-    if (style.display === "none" || style.visibility === "hidden") return false;
-    // Decorative, non-interactive chrome never blocks anything.
-    if (style.pointerEvents === "none") return false;
-    const box = el.getBoundingClientRect();
-    return box.width * box.height > viewportArea * BLOCKING_AREA_RATIO;
+    return measuredNodes(el).some((node) => isVisiblyBlocking(node, viewportArea));
   }) || null;
 }
 
@@ -118,9 +148,14 @@ function blockingOverlayKind() {
  *     child (BetterClaude's own, or a foreign dialog), since that is how most
  *     of these overlays actually open — they toggle `bc-open` (ours) or a
  *     visibility class (theirs) rather than being added and removed.
+ *   - the child list (subtree) of claude.ai's portal containers — every
+ *     body child that is neither ours nor the app root. claude.ai mounts its
+ *     dialogs INSIDE a long-lived `#portal-root`, so no body-level mutation
+ *     happens when Settings opens; without this the guard never re-checks.
  *
- * Neither watches a subtree, so the cost does not scale with page content, and
- * an overlay re-rendering its own insides costs nothing.
+ * The app root and our own overlays are never watched as a subtree, so the
+ * cost does not scale with page content; portal containers only hold
+ * transient popovers and dialogs.
  *
  * @param {Function} onChange Called with (blocking:boolean, kind:"own"|"foreign"|null) only when either flips.
  */
@@ -161,7 +196,13 @@ function mountOverlayOcclusionGuard({ onChange } = {}) {
       observer.observe(document.body, { childList: true, subtree: false });
     }
     Array.prototype.forEach.call(document.body.children, (el) => {
-      if (!isCandidateOverlay(el) || watched.has(el)) return;
+      if (watched.has(el)) return;
+      if (isPortalContainer(el)) {
+        watched.add(el);
+        observer.observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ["role", "aria-modal"] });
+        return;
+      }
+      if (!isCandidateOverlay(el)) return;
       watched.add(el);
       observer.observe(el, { attributes: true, attributeFilter: ["class", "style", "role", "aria-modal"] });
     });

@@ -8859,8 +8859,31 @@ ${content}
         if (typeof el.matches === "function" && el.matches(DIALOG_SELECTOR)) return true;
         return typeof el.querySelector === "function" && !!el.querySelector(DIALOG_SELECTOR);
       }
+      function measuredNodes(el) {
+        if (isOwnBodyChild(el) || typeof el.matches === "function" && el.matches(DIALOG_SELECTOR)) return [el];
+        return Array.prototype.slice.call(el.querySelectorAll(DIALOG_SELECTOR));
+      }
+      function isVisiblyBlocking(node, viewportArea) {
+        let style;
+        try {
+          style = getComputedStyle(node);
+        } catch (_err) {
+          return false;
+        }
+        if (style.display === "none" || style.visibility === "hidden") return false;
+        if (style.pointerEvents === "none") return false;
+        const box = node.getBoundingClientRect();
+        return box.width * box.height > viewportArea * BLOCKING_AREA_RATIO;
+      }
       function isCandidateOverlay(el) {
         return isOwnBodyChild(el) || isForeignDialog(el);
+      }
+      var NON_CONTAINER_TAGS = /* @__PURE__ */ new Set(["SCRIPT", "STYLE", "LINK", "CANVAS", "TEMPLATE", "NOSCRIPT"]);
+      function isPortalContainer(el) {
+        if (isOwnBodyChild(el) || NON_CONTAINER_TAGS.has(el.tagName)) return false;
+        const id = el.id || "";
+        if (id === "root" || id === "__next") return false;
+        return !(el.classList && el.classList.contains("bc-claude-root"));
       }
       function findBlockingOverlay() {
         if (!document.body) return null;
@@ -8868,16 +8891,7 @@ ${content}
         if (viewportArea <= 0) return null;
         return Array.prototype.find.call(document.body.children, (el) => {
           if (!isCandidateOverlay(el)) return false;
-          let style;
-          try {
-            style = getComputedStyle(el);
-          } catch (_err) {
-            return false;
-          }
-          if (style.display === "none" || style.visibility === "hidden") return false;
-          if (style.pointerEvents === "none") return false;
-          const box = el.getBoundingClientRect();
-          return box.width * box.height > viewportArea * BLOCKING_AREA_RATIO;
+          return measuredNodes(el).some((node) => isVisiblyBlocking(node, viewportArea));
         }) || null;
       }
       function anyBlockingOverlay() {
@@ -8925,7 +8939,13 @@ ${content}
             observer.observe(document.body, { childList: true, subtree: false });
           }
           Array.prototype.forEach.call(document.body.children, (el) => {
-            if (!isCandidateOverlay(el) || watched.has(el)) return;
+            if (watched.has(el)) return;
+            if (isPortalContainer(el)) {
+              watched.add(el);
+              observer.observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ["role", "aria-modal"] });
+              return;
+            }
+            if (!isCandidateOverlay(el)) return;
             watched.add(el);
             observer.observe(el, { attributes: true, attributeFilter: ["class", "style", "role", "aria-modal"] });
           });

@@ -408,6 +408,19 @@ body > .bc-claude-root > div > div > div {
   max-height: 100% !important;
 }
 
+/* claude.ai's modal dialogs (Settings first among them) are NOT inside the
+   app root — they mount in `body > #portal-root`, outside the containing-
+   block transform above, so they centre against the whole viewport. The
+   CDS dialog is `fixed inset-0 m-auto` with a height of up to 50rem: at a
+   normal window height its top ~24px landed under the title bar and its
+   search field was cut off. Start its inset box below the bar and cap its
+   height to what is left, so `m-auto` centres it in the visible area. Only
+   the dialog box moves; its full-window backdrop is untouched. */
+body > :not(#root):not(#__next):not(.bc-claude-root) :is([role="dialog"], [role="alertdialog"]).fixed.inset-0.m-auto {
+  top: var(--bc-tb-h) !important;
+  max-height: min(50rem, calc(100dvh - var(--bc-tb-h) - 2rem)) !important;
+}
+
 /* Claude's public sign-in surface places its brand mark at the very top of
    the app root. On macOS hiddenInset windows, the native titlebar occupies
    the first few pixels above our web content, so that mark can render under

@@ -528,6 +528,7 @@
     refreshStats();
     if (!activeProject) {
       $("bc-ide-empty-title").textContent = projects.length ? "Pick a project" : "Start with a project";
+      $("bc-ide-empty-sub").hidden = false;
       $("bc-ide-empty-sub").textContent = "Claude Code works inside a folder — reading, editing and running things with your approval.";
       const host = $("bc-ide-empty-recent");
       host.innerHTML = `<button type="button" class="bc-ide-btn bc-ide-btn-primary" data-empty-add>Add project folder</button>`;
@@ -535,9 +536,8 @@
       return;
     }
     $("bc-ide-empty-title").textContent = `What should we build in ${activeProject.name}?`;
-    const bits = [shortPath(activeProject.cwd)];
-    if (scmInfo && scmInfo.branch) bits.push(`on ${scmInfo.branch}`);
-    $("bc-ide-empty-sub").textContent = bits.join(" ");
+    // No path line under the title: the project name already says where.
+    $("bc-ide-empty-sub").hidden = true;
     const recent = (sessionsByCwd.get(activeProject.cwd) || []).slice(0, 3);
     const host = $("bc-ide-empty-recent");
     host.textContent = "";
