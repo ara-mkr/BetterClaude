@@ -1169,16 +1169,22 @@ function createIdeChatEngine(host) {
    * @returns {Promise<{value:string, resolvedModel:string, displayName:string, description:string}[]|null>}
    */
   const modelsCache = new Map(); // cwd -> { at, models }
-  function listModels({ cwd, force = false } = {}) {
+
+  /**
+   * A throwaway Claude Code process that only answers control requests:
+   * `initialize`, then each of `requests` in turn, then it's killed. No user
+   * message is written, so no model call is made and nothing is billed.
+   * Same binary, flags and scrubbed env as a chat. `resume` loads a saved
+   * session (for its context usage). Resolves to { [subtype]: response|null }.
+   */
+  function probe({ cwd, requests = [], resume = null, timeoutMs = 15000 }) {
     const config = host.getConfig() || {};
-    const key = `${config.loadUserSettings === true ? "u" : "p"}|${cwd || ""}`;
-    const hit = modelsCache.get(key);
-    if (!force && hit && Date.now() - hit.at < 10 * 60 * 1000) return Promise.resolve(hit.models);
     let binaryPath;
     try { binaryPath = host.locateBinary(); } catch { return Promise.resolve(null); }
     const args = ["--print", "--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
       "--setting-sources", config.loadUserSettings === true ? "user,project,local" : "project,local",
       "--strict-mcp-config", "--no-chrome"];
+    if (resume && UUID_RE.test(resume)) args.push("--resume", resume);
     return new Promise((resolve) => {
       let child;
       try {
@@ -1193,20 +1199,27 @@ function createIdeChatEngine(host) {
           windowsHide: true,
         });
       } catch { resolve(null); return; }
+      const wanted = ["initialize", ...requests];
+      const results = {};
       let buf = "";
       let done = false;
-      const finish = (models) => {
+      const finish = () => {
         if (done) return;
         done = true;
         clearTimeout(timer);
         try { child.stdin.end(); } catch { /* gone */ }
         try { child.kill(); } catch { /* gone */ }
-        if (models) modelsCache.set(key, { at: Date.now(), models });
-        resolve(models);
+        resolve(Object.keys(results).length ? results : null);
       };
-      const timer = setTimeout(() => finish(null), 15000);
-      child.on("error", () => finish(null));
-      child.on("exit", () => finish(null));
+      const ask = (i) => {
+        if (i >= wanted.length) { finish(); return; }
+        try {
+          child.stdin.write(JSON.stringify({ type: "control_request", request_id: `bc-probe-${i}`, request: { subtype: wanted[i] } }) + "\n");
+        } catch { finish(); }
+      };
+      const timer = setTimeout(finish, timeoutMs);
+      child.on("error", finish);
+      child.on("exit", finish);
       child.stdout.on("data", (chunk) => {
         buf += chunk.toString("utf8");
         let nl;
@@ -1215,26 +1228,113 @@ function createIdeChatEngine(host) {
           buf = buf.slice(nl + 1);
           let ev;
           try { ev = JSON.parse(line); } catch { continue; }
-          if (ev.type !== "control_response" || !ev.response || ev.response.request_id !== "bc-models") continue;
-          const list = ev.response.response && Array.isArray(ev.response.response.models) ? ev.response.response.models : [];
-          // Only the model fields leave this function (the handshake also
-          // carries account details).
-          finish(list.filter((m) => m && typeof m.value === "string").map((m) => ({
-            value: m.value,
-            resolvedModel: typeof m.resolvedModel === "string" ? m.resolvedModel : "",
-            displayName: typeof m.displayName === "string" ? m.displayName : "",
-            description: typeof m.description === "string" ? m.description : "",
-            supportsAutoMode: m.supportsAutoMode === true,
-          })));
+          const m = ev.type === "control_response" && ev.response && /^bc-probe-(\d+)$/.exec(ev.response.request_id || "");
+          if (!m) continue;
+          const i = Number(m[1]);
+          results[wanted[i]] = ev.response.subtype === "success" ? (ev.response.response || {}) : null;
+          ask(i + 1);
         }
       });
-      try {
-        child.stdin.write(JSON.stringify({ type: "control_request", request_id: "bc-models", request: { subtype: "initialize" } }) + "\n");
-      } catch { finish(null); }
+      ask(0);
     });
   }
 
-  return { sendMessage, setMode, respondPermission, stop, dispose, disposeAll, disposeIdle, aggregateState, isBusy, deliver, setTeam, setTeamMode, tabState, listModels };
+  /**
+   * What each model choice resolves to in `cwd`, from the `initialize`
+   * handshake (see probe).
+   * @returns {Promise<{value:string, resolvedModel:string, displayName:string, description:string, supportsAutoMode:boolean}[]|null>}
+   */
+  async function listModels({ cwd, force = false } = {}) {
+    const config = host.getConfig() || {};
+    const key = `${config.loadUserSettings === true ? "u" : "p"}|${cwd || ""}`;
+    const hit = modelsCache.get(key);
+    if (!force && hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.models;
+    const results = await probe({ cwd });
+    const init = results && results.initialize;
+    if (!init) return null;
+    // Only the model fields leave this function (the handshake also
+    // carries account details).
+    const models = (Array.isArray(init.models) ? init.models : []).filter((m) => m && typeof m.value === "string").map((m) => ({
+      value: m.value,
+      resolvedModel: typeof m.resolvedModel === "string" ? m.resolvedModel : "",
+      displayName: typeof m.displayName === "string" ? m.displayName : "",
+      description: typeof m.description === "string" ? m.description : "",
+      supportsAutoMode: m.supportsAutoMode === true,
+    }));
+    modelsCache.set(key, { at: Date.now(), models });
+    return models;
+  }
+
+  /** Just the plan windows from `get_usage` (it also carries account and spend details). */
+  function shapeUsage(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const limits = raw.rate_limits || {};
+    const window = (w) => (w && typeof w.utilization === "number"
+      ? { percent: Math.max(0, Math.min(100, w.utilization)), resetsAt: typeof w.resets_at === "string" ? w.resets_at : null }
+      : null);
+    return {
+      available: raw.rate_limits_available !== false,
+      plan: typeof raw.subscription_type === "string" ? raw.subscription_type : null,
+      session: window(limits.five_hour),
+      weekly: window(limits.seven_day),
+      weeklyOpus: window(limits.seven_day_opus),
+      weeklySonnet: window(limits.seven_day_sonnet),
+      at: Date.now(),
+    };
+  }
+  let usageCache = null;
+  let usagePromise = null;
+  /** The plan's session (5-hour) and weekly limits, from Claude Code's own `get_usage`. */
+  async function getUsage({ force = false } = {}) {
+    if (!force && usageCache && Date.now() - usageCache.at < 60 * 1000) return usageCache;
+    // A warm chat process answers without spawning anything.
+    for (const proc of procs.values()) {
+      if (proc.exited || proc.killing) continue;
+      const response = await controlRequest(proc, { subtype: "get_usage" });
+      if (response.subtype === "success") { usageCache = shapeUsage(response.response) || usageCache; return usageCache; }
+      break;
+    }
+    if (!usagePromise) {
+      usagePromise = probe({ requests: ["get_usage"] }).then((results) => {
+        usagePromise = null;
+        const shaped = shapeUsage(results && results.get_usage);
+        if (shaped) usageCache = shaped;
+        return usageCache;
+      });
+    }
+    return usagePromise;
+  }
+
+  function shapeContext(raw) {
+    if (!raw || typeof raw !== "object" || !Array.isArray(raw.categories)) return null;
+    return {
+      totalTokens: Number(raw.totalTokens) || 0,
+      maxTokens: Number(raw.maxTokens) || 0,
+      percent: Number(raw.percentage) || 0,
+      model: typeof raw.model === "string" ? raw.model : null,
+      categories: raw.categories
+        .filter((c) => c && typeof c.name === "string" && Number(c.tokens) > 0)
+        .map((c) => ({ name: c.name, tokens: Number(c.tokens), kind: typeof c.kind === "string" ? c.kind : "used", deferred: !!c.isDeferred })),
+    };
+  }
+  /**
+   * The context window for a conversation, broken down like Claude Code's
+   * /context: from its live process, else a probe that resumes the saved
+   * session (or a fresh one for a new conversation).
+   */
+  async function getContextUsage({ tabId, cwd = null, sessionId = null }) {
+    const proc = procs.get(tabId);
+    if (proc && !proc.exited && !proc.killing) {
+      const response = await controlRequest(proc, { subtype: "get_context_usage" });
+      if (response.subtype === "success") return shapeContext(response.response);
+    }
+    const meta = tabMeta.get(tabId) || {};
+    const resume = sessionId || meta.sessionId || null;
+    const results = await probe({ cwd: cwd || meta.cwd || null, requests: ["get_context_usage"], resume });
+    return shapeContext(results && results.get_context_usage);
+  }
+
+  return { sendMessage, setMode, respondPermission, stop, dispose, disposeAll, disposeIdle, aggregateState, isBusy, deliver, setTeam, setTeamMode, tabState, listModels, getUsage, getContextUsage };
 }
 
 module.exports = { createIdeChatEngine, pickAlwaysOption, friendlyError, cliModeFor, settingsProviderOverrides, isBillingOverrideNotice, SUBSCRIPTION_KEY_SOURCES, CLI_MODES };

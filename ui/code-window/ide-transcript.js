@@ -235,8 +235,17 @@
       body.className = "bc-t-body";
       el.appendChild(body);
       root.appendChild(el);
-      turn = { el, body, segments: new Map(), group: null, groupRows: [], rows: [], working: null };
+      turn = { el, body, segments: new Map(), group: null, groupRows: [], rows: [], working: null, startedAt: Date.now(), timer: 0 };
       return turn;
+    }
+
+    /** "8s", "1m 12s", "1h 3m" */
+    function fmtElapsed(ms) {
+      const sec = Math.max(0, Math.round(ms / 1000));
+      if (sec < 60) return `${sec}s`;
+      const min = Math.floor(sec / 60);
+      if (min < 60) return `${min}m ${sec % 60}s`;
+      return `${Math.floor(min / 60)}h ${min % 60}m`;
     }
 
     function setWorking(label) {
@@ -244,15 +253,39 @@
       if (!t.working) {
         t.working = document.createElement("div");
         t.working.className = "bc-t-working";
-        t.working.innerHTML = '<span class="bc-t-dots"><i></i><i></i><i></i></span><span class="bc-t-working-label"></span>';
+        t.working.innerHTML = '<span class="bc-t-dots"><i></i><i></i><i></i></span><span class="bc-t-working-label"></span><span class="bc-t-working-time"></span>';
         t.el.appendChild(t.working);
+        // How long Claude has been on this turn, ticking while it works.
+        const tick = () => { if (t.working) t.working.querySelector(".bc-t-working-time").textContent = fmtElapsed(Date.now() - t.startedAt); };
+        tick();
+        clearInterval(t.timer);
+        t.timer = setInterval(tick, 1000);
       }
+      t.working.classList.remove("is-quiet");
+      t.el.appendChild(t.working); // keep it last, under whatever streamed in
       t.working.querySelector(".bc-t-working-label").textContent = label || "Working…";
       scrollHint();
     }
 
-    function clearWorking() {
-      if (turn && turn.working) { turn.working.remove(); turn.working = null; }
+    /**
+     * Text or a tool card took over from the status line: the dots and label
+     * go, but the elapsed time stays at the bottom of the turn ("12s") so how
+     * long Claude has been at it is always visible. `final` removes it.
+     */
+    function clearWorking(final = false) {
+      if (!turn || !turn.working) return;
+      if (final) {
+        clearInterval(turn.timer);
+        turn.working.remove();
+        turn.working = null;
+        return;
+      }
+      turn.working.classList.add("is-quiet");
+    }
+
+    /** Milliseconds since the current turn began (0 with no turn). */
+    function elapsed() {
+      return turn ? Date.now() - turn.startedAt : 0;
     }
 
     function closeGroup() {
@@ -630,7 +663,7 @@
     }
 
     function error(message, actions = []) {
-      clearWorking();
+      clearWorking(true);
       const el = document.createElement("div");
       el.className = "bc-t-error";
       el.innerHTML = `<span class="bc-t-error-icon">${icon("WARNING")}</span><div class="bc-t-error-copy"><div class="bc-t-error-text"></div></div>`;
@@ -665,7 +698,7 @@
 
     function endTurn() {
       if (!turn) return;
-      clearWorking();
+      clearWorking(true);
       turn.segments.forEach((seg) => { if (seg.raf) { cancelAnimationFrame(seg.raf); paint(seg); } });
       // Calls that never got a result (Stop, a crash) must not spin forever.
       turn.rows.forEach((record) => { if (record.row.dataset.state === "running") settleRow(record, "stopped"); });
@@ -698,6 +731,8 @@
 
     return {
       el: root,
+      elapsed,
+      fmtElapsed,
       userMessage,
       delta,
       setText,

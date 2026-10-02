@@ -45,7 +45,8 @@
           </button>
           <span class="bc-ide-flex"></span>
           <button id="bc-ide-usage-btn" class="bc-ide-icon-btn" type="button" title="Usage" aria-label="Usage" aria-haspopup="dialog" aria-expanded="false">
-            <svg class="bc-ide-ring" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" class="bc-ide-ring-track"></circle><circle cx="10" cy="10" r="7.5" class="bc-ide-ring-fill" id="bc-ide-ring-fill"></circle></svg><span id="bc-ide-usage-label" class="bc-ide-usage-label"></span>
+            <span class="bc-ide-meter" data-kind="session"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" class="bc-ide-ring-track"></circle><circle cx="10" cy="10" r="7.5" class="bc-ide-ring-fill"></circle></svg><b></b></span>
+            <span class="bc-ide-meter" data-kind="weekly"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" class="bc-ide-ring-track"></circle><circle cx="10" cy="10" r="7.5" class="bc-ide-ring-fill"></circle></svg><b></b></span>
           </button>
           <button id="bc-ide-settings-btn" class="bc-ide-icon-btn" type="button" title="Claude settings" aria-label="Claude settings"><span data-bc-icon="SETTINGS_GEAR"></span></button>
         </div>
@@ -114,6 +115,14 @@
               <button id="bc-ide-mode-btn" class="bc-ide-composer-chip" type="button" aria-haspopup="menu" aria-expanded="false" title="Permission mode (⌘⇧M)">Accept edits</button>
               <button id="bc-ide-mic" class="bc-ide-icon-btn bc-ide-mic" type="button" hidden title="Hold to dictate" aria-label="Hold to dictate"><span data-bc-icon="MIC"></span></button>
               <span class="bc-ide-flex"></span>
+              <div class="bc-ide-meter-anchor">
+                <button id="bc-ide-meter-btn" class="bc-ide-meter-btn" type="button" aria-haspopup="dialog" aria-expanded="false" title="Session, weekly and context usage">
+                  <span class="bc-ide-meter" data-kind="session"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" class="bc-ide-ring-track"></circle><circle cx="10" cy="10" r="7.5" class="bc-ide-ring-fill"></circle></svg><b></b></span>
+                  <span class="bc-ide-meter" data-kind="weekly"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" class="bc-ide-ring-track"></circle><circle cx="10" cy="10" r="7.5" class="bc-ide-ring-fill"></circle></svg><b></b></span>
+                  <span class="bc-ide-meter" data-kind="context"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" class="bc-ide-ring-track"></circle><circle cx="10" cy="10" r="7.5" class="bc-ide-ring-fill"></circle></svg><b></b></span>
+                </button>
+                <section id="bc-ide-meter-pop" class="bc-ide-meter-pop" hidden role="dialog" aria-label="Usage and context"></section>
+              </div>
               <div class="bc-ide-model-picker"><button id="bc-ide-model-btn" class="bc-ide-model-btn" type="button" aria-haspopup="listbox" aria-expanded="false" title="Model">Claude</button><div id="bc-ide-model-menu" class="bc-ide-model-menu" hidden></div></div>
               <button id="bc-ide-chat-stop" class="bc-ide-send-btn bc-ide-stop-btn" type="button" hidden title="Stop (Esc)" aria-label="Stop"><span data-bc-icon="STOP"></span></button>
               <button id="bc-ide-send" class="bc-ide-send-btn" type="submit" title="Send (Enter)" aria-label="Send"><span data-bc-icon="ARROW_UP"></span></button>

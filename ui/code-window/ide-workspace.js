@@ -445,6 +445,9 @@
     }
     activeTabId = tabId;
     record.viewedAt = Date.now();
+    renderUsageRing();
+    renderMeterPop();
+    if (record.sessionId && !record.context) refreshContext(record);
     record.unread = false;
     records.forEach((r) => { r.host.hidden = r !== record; });
     if (!activeProject || activeProject.cwd !== record.cwd) selectProject(record.cwd, { quiet: true });
@@ -905,6 +908,7 @@
       case "plan-usage":
         planUsage = event.info || null;
         renderUsageRing();
+        schedulePlanRefresh();
         return;
       case "model-switch": {
         const label = event.modelLabel || event.modelId;
@@ -965,7 +969,8 @@
           const inTok = (Number(u.input_tokens) || 0) + (Number(u.cache_creation_input_tokens) || 0) + (Number(u.cache_read_input_tokens) || 0);
           const outTok = Number(u.output_tokens) || 0;
           if (inTok || outTok) parts.push(`${fmtCompact(inTok)} in · ${fmtCompact(outTok)} out`);
-          if (event.durationMs) parts.push(`${(event.durationMs / 1000).toFixed(1)}s`);
+          const workedMs = event.durationMs || t.elapsed();
+          if (workedMs) parts.push(`worked ${t.fmtElapsed(workedMs)}`);
           if (typeof event.costUsd === "number" && event.costUsd > 0) {
             const cost = event.costUsd < 0.01 ? event.costUsd.toFixed(4) : event.costUsd.toFixed(3);
             parts.push(event.subscription ? `≈$${cost} API-equivalent · on your plan` : `$${cost}`);
@@ -973,6 +978,8 @@
         }
         t.footer(parts.join("  ·  "), { free: !!event.free });
         endTurn(r, { flush: true });
+        refreshContext(r, { force: true });
+        schedulePlanRefresh(800);
         maybeNameSession(r);
         refreshProjectState(r.cwd);
         loadSessions(r.cwd, { force: true }).then(() => { renderSidebar(); if (r.tabId === activeTabId) syncChrome(); });
@@ -1491,6 +1498,7 @@
   // Composer menus: +, mode, slash, attachments, mic
   // ---------------------------------------------------------------------------
   function closePopMenus(except) {
+    if (except !== "bc-ide-meter-pop") closeMeterPop();
     ["bc-ide-plus-menu", "bc-ide-mode-menu", "bc-ide-pr-menu", "bc-ide-more-menu"].forEach((id) => { if (id !== except) { const el = $(id); if (el) el.hidden = true; } });
     ["bc-ide-plus", "bc-ide-mode-btn", "bc-ide-pr-more", "bc-ide-more"].forEach((id) => { const b = $(id); if (b) b.setAttribute("aria-expanded", "false"); });
     if (except !== "bc-ide-usage-pop") { $("bc-ide-usage-pop").hidden = true; $("bc-ide-usage-btn").setAttribute("aria-expanded", "false"); }
@@ -1781,40 +1789,187 @@
   // ---------------------------------------------------------------------------
   // Usage: ring + popover
   // ---------------------------------------------------------------------------
-  function renderUsageRing() {
-    const fill = $("bc-ide-ring-fill");
-    if (!fill) return;
+  // The plan's limits, straight from Claude Code's `get_usage` (no message
+  // sent): { session, weekly: { percent 0-100, resetsAt ISO } }. Refreshed on
+  // launch, every few minutes, after each turn and when a usage view opens.
+  let planLimits = null;
+  let planLimitsAt = 0;
+  async function refreshPlanUsage({ force = false } = {}) {
+    if (!force && planLimitsAt && Date.now() - planLimitsAt < 60 * 1000) return planLimits;
+    planLimitsAt = Date.now();
+    let next = null;
+    try { next = await api.planUsage({ force }); } catch { next = null; }
+    if (next && (next.session || next.weekly)) planLimits = next;
+    renderUsageRing();
+    renderMeterPop();
+    return planLimits;
+  }
+  let planRefreshTimer = null;
+  function schedulePlanRefresh(ms = 1500) {
+    clearTimeout(planRefreshTimer);
+    planRefreshTimer = setTimeout(() => refreshPlanUsage({ force: true }), ms);
+  }
+
+  /** A conversation's context window (Claude Code's /context), kept on the record. */
+  async function refreshContext(r, { force = false } = {}) {
+    if (!r || r.contextLoading) return;
+    if (!force && r.context && Date.now() - r.contextAt < 30 * 1000) return;
+    r.contextLoading = true;
+    try {
+      const ctx = await api.contextUsage({ tabId: r.tabId, cwd: r.cwd, sessionId: r.sessionId });
+      if (ctx) { r.context = ctx; r.contextAt = Date.now(); }
+    } catch { /* keep the last one */ }
+    r.contextLoading = false;
+    if (r.tabId === activeTabId) { renderUsageRing(); renderMeterPop(); }
+  }
+
+  const levelOf = (pct) => (pct >= 90 ? "high" : pct >= 70 ? "mid" : "low");
+  const METER_NAMES = { session: "Session limit", weekly: "Weekly limit", context: "Context window" };
+  function setMeter(el, percent, text) {
+    if (!el) return;
+    el.title = `${METER_NAMES[el.dataset.kind] || ""}${typeof percent === "number" ? ` ${Math.round(percent)}%` : ""}`;
+    const fill = el.querySelector(".bc-ide-ring-fill");
     const circumference = 2 * Math.PI * 7.5;
-    const pct = planUsage && typeof planUsage.utilization === "number" ? Math.max(0, Math.min(1, planUsage.utilization)) : 0;
+    const known = typeof percent === "number" && Number.isFinite(percent);
+    const pct = known ? Math.max(0, Math.min(100, percent)) : 0;
     fill.style.strokeDasharray = `${circumference}`;
-    fill.style.strokeDashoffset = `${circumference * (1 - pct)}`;
-    const btn = $("bc-ide-usage-btn");
-    const known = !!(planUsage && typeof planUsage.utilization === "number");
-    btn.dataset.level = pct >= 0.9 ? "high" : pct >= 0.7 ? "mid" : "low";
-    btn.dataset.known = known ? "true" : "false";
-    btn.title = known ? `Claude plan usage: ${Math.round(pct * 100)}% of the current window` : "Usage";
-    const label = $("bc-ide-usage-label");
-    if (label) label.textContent = known ? `${Math.round(pct * 100)}%` : "";
+    // A sliver stays visible at 0% so a known-but-empty ring reads as "0%", not "missing".
+    fill.style.strokeDashoffset = `${circumference * (1 - Math.max(pct, known ? 1.5 : 0) / 100)}`;
+    el.dataset.known = known ? "true" : "false";
+    el.dataset.level = levelOf(pct);
+    el.querySelector("b").textContent = known ? text : "–";
+  }
+  function sessionPercent() {
+    if (planLimits && planLimits.session) return planLimits.session.percent;
+    const w = planUsage && planUsage.windows && planUsage.windows.five_hour;
+    return w ? Math.round(w.utilization * 100) : null;
+  }
+  function weeklyPercent() {
+    if (planLimits && planLimits.weekly) return planLimits.weekly.percent;
+    const w = planUsage && planUsage.windows && planUsage.windows.seven_day;
+    return w ? Math.round(w.utilization * 100) : null;
+  }
+  function fmtReset(iso) {
+    if (!iso) return "";
+    const when = new Date(typeof iso === "number" ? iso * 1000 : iso);
+    if (Number.isNaN(when.getTime())) return "";
+    const ms = when - Date.now();
+    if (ms <= 0) return "resetting now";
+    const h = Math.floor(ms / 3600000);
+    const m = Math.round((ms % 3600000) / 60000);
+    const rel = h >= 24 ? `${Math.floor(h / 24)}d ${h % 24}h` : h ? `${h}h ${m}m` : `${m}m`;
+    const abs = when.toLocaleString(undefined, h >= 20 ? { weekday: "short", hour: "numeric", minute: "2-digit" } : { hour: "numeric", minute: "2-digit" });
+    return `resets in ${rel} · ${abs}`;
+  }
+  const fmtTokens = (n) => (n >= 1000000 ? `${(n / 1000000).toFixed(n >= 10000000 ? 0 : 1)}M` : n >= 1000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : String(n));
+
+  function renderUsageRing() {
+    const session = sessionPercent();
+    const weekly = weeklyPercent();
+    const r = activeRecord();
+    const ctx = r && r.context;
+    ["#bc-ide-usage-btn", "#bc-ide-meter-btn"].forEach((sel) => {
+      const host = document.querySelector(sel);
+      if (!host) return;
+      setMeter(host.querySelector('[data-kind="session"]'), session, `${session}%`);
+      setMeter(host.querySelector('[data-kind="weekly"]'), weekly, `${weekly}%`);
+      const c = host.querySelector('[data-kind="context"]');
+      if (c) setMeter(c, ctx ? ctx.percent : null, ctx ? `${ctx.percent}%` : "");
+    });
+    const parts = [];
+    if (session != null) parts.push(`Session ${session}%`);
+    if (weekly != null) parts.push(`Weekly ${weekly}%`);
+    if (ctx) parts.push(`Context ${ctx.percent}% (${fmtTokens(ctx.totalTokens)} of ${fmtTokens(ctx.maxTokens)})`);
+    const summary = parts.length ? parts.join(" · ") : "Usage";
+    $("bc-ide-usage-btn").title = `Claude plan — ${summary}`;
+    $("bc-ide-meter-btn").title = summary;
     pushWorkbenchStatus();
   }
 
+  /** Session + weekly bars, shared by the sidebar popover and the composer dropdown. */
   function describePlanUsage() {
-    if (!planUsage || typeof planUsage.utilization !== "number") {
-      return '<div class="bc-ide-muted">Claude Code reports your plan usage while you chat — send a message and it shows up here.</div>';
+    const session = sessionPercent();
+    const weekly = weeklyPercent();
+    if (session == null && weekly == null) {
+      return `<div class="bc-ide-muted">${planLimits && planLimits.available === false ? "Claude Code doesn't report plan limits for this login." : "Checking your plan limits…"}</div>`;
     }
-    const NAMES = { five_hour: "5-hour window", seven_day: "weekly limit", seven_day_opus: "weekly Opus limit", overage: "extra usage" };
-    const meter = (utilization, resetsAt, windowName) => {
-      const pct = Math.round(utilization * 100);
-      const resets = resetsAt ? new Date(resetsAt * 1000).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
-      return `<div class="bc-ide-usage-meter"><div class="bc-ide-usage-meter-bar" data-level="${pct >= 90 ? "high" : pct >= 70 ? "mid" : "low"}"><i style="width:${Math.min(100, Math.max(0, pct))}%"></i></div><div class="bc-ide-usage-meter-copy"><strong>${pct}%</strong> of your ${escapeHtml(windowName)} used${resets ? ` · resets ${escapeHtml(resets)}` : ""}</div></div>`;
-    };
-    // Both windows when Claude Code reports them; otherwise the one it named.
-    const windows = planUsage.windows || {};
-    const both = ["five_hour", "seven_day"].filter((k) => windows[k]);
-    const meters = both.length
-      ? both.map((k) => meter(windows[k].utilization, windows[k].resetsAt, NAMES[k])).join("")
-      : meter(planUsage.utilization, planUsage.resetsAt, NAMES[planUsage.rateLimitType] || "usage window");
-    return `${meters}${planUsage.status === "rejected" ? '<div class="bc-ide-usage-warn">Limit reached — Claude Code pauses until it resets.</div>' : ""}`;
+    const bar = (label, pct, resetsAt) => `<div class="bc-ide-usage-meter">
+        <div class="bc-ide-usage-meter-head"><span>${label}</span><strong>${pct}%</strong></div>
+        <div class="bc-ide-usage-meter-bar" data-level="${levelOf(pct)}"><i style="width:${Math.min(100, Math.max(0, pct))}%"></i></div>
+        <div class="bc-ide-usage-meter-copy">${escapeHtml(fmtReset(resetsAt))}</div></div>`;
+    const sessionReset = planLimits && planLimits.session ? planLimits.session.resetsAt : planUsage && planUsage.windows && planUsage.windows.five_hour && planUsage.windows.five_hour.resetsAt;
+    const weeklyReset = planLimits && planLimits.weekly ? planLimits.weekly.resetsAt : planUsage && planUsage.windows && planUsage.windows.seven_day && planUsage.windows.seven_day.resetsAt;
+    let html = "";
+    if (session != null) html += bar("Session limit", session, sessionReset);
+    if (weekly != null) html += bar("Weekly limit", weekly, weeklyReset);
+    ["weeklyOpus", "weeklySonnet"].forEach((k) => {
+      const w = planLimits && planLimits[k];
+      if (w) html += bar(k === "weeklyOpus" ? "Weekly · Opus" : "Weekly · Sonnet", w.percent, w.resetsAt);
+    });
+    if ((planUsage && planUsage.status === "rejected") || session >= 100) html += '<div class="bc-ide-usage-warn">Limit reached — Claude Code pauses until it resets.</div>';
+    return html;
+  }
+
+  // Colours for /context's categories (the rest fall back to the muted tone).
+  const CONTEXT_COLORS = {
+    "System prompt": "#8b93a7", "System tools": "#6b7280", "MCP tools": "#3b82f6", "Custom agents": "#a855f7",
+    "Memory files": "#f59e0b", "Skills": "#eab308", "Messages": "var(--bc-ide-accent)", "Autocompact buffer": "color-mix(in srgb, var(--bc-ide-muted) 45%, transparent)",
+  };
+  let contextBreakdownOpen = false;
+  try { contextBreakdownOpen = store.get("bc-ide-context-open", "0") === "1"; } catch { /* default */ }
+  function describeContext(r) {
+    const ctx = r && r.context;
+    if (!r) return '<div class="bc-ide-muted">Open a conversation to see its context.</div>';
+    if (!ctx) return `<div class="bc-ide-muted">${r.contextLoading ? "Reading the context window…" : "No context yet — it fills as you chat."}</div>`;
+    const used = ctx.categories.filter((c) => c.kind !== "free" && !c.deferred);
+    const seg = (c) => `<i style="width:${Math.max(0.4, (c.tokens / ctx.maxTokens) * 100)}%;background:${CONTEXT_COLORS[c.name] || "var(--bc-ide-muted)"}" title="${escapeHtml(c.name)} · ${fmtTokens(c.tokens)}"></i>`;
+    const rows = ctx.categories.map((c) => `<div class="bc-ide-ctx-row${c.kind === "free" ? " is-free" : ""}">
+        <span class="bc-ide-ctx-swatch" style="background:${c.kind === "free" ? "var(--bc-ide-line)" : CONTEXT_COLORS[c.name] || "var(--bc-ide-muted)"}"></span>
+        <span class="bc-ide-ctx-name">${escapeHtml(c.deferred ? c.name.replace(/\s*\(deferred\)\s*$/i, "") : c.name)}${c.deferred ? ' <small>on demand</small>' : ""}</span>
+        <span class="bc-ide-ctx-tokens">${fmtTokens(c.tokens)}</span>
+        <span class="bc-ide-ctx-pct">${ctx.maxTokens ? ((c.tokens / ctx.maxTokens) * 100).toFixed(c.tokens / ctx.maxTokens < 0.1 ? 1 : 0) : 0}%</span>
+      </div>`).join("");
+    return `<div class="bc-ide-usage-meter">
+        <div class="bc-ide-usage-meter-head"><span>Context window</span><strong>${ctx.percent}%</strong></div>
+        <div class="bc-ide-ctx-bar">${used.map(seg).join("")}</div>
+        <div class="bc-ide-usage-meter-copy">${fmtTokens(ctx.totalTokens)} of ${fmtTokens(ctx.maxTokens)} tokens</div>
+      </div>
+      <button type="button" class="bc-ide-ctx-toggle" aria-expanded="${contextBreakdownOpen}">${icon("CHEVRON")}<span>Full context breakdown</span></button>
+      <div class="bc-ide-ctx-rows"${contextBreakdownOpen ? "" : " hidden"}>${rows}</div>`;
+  }
+
+  function renderMeterPop() {
+    const pop = $("bc-ide-meter-pop");
+    if (!pop || pop.hidden) return;
+    const r = activeRecord();
+    pop.innerHTML = `<div class="bc-ide-usage-section"><div class="bc-ide-usage-title">Claude plan${planLimits && planLimits.plan ? ` · ${escapeHtml(planLimits.plan[0].toUpperCase() + planLimits.plan.slice(1))}` : ""}</div>${describePlanUsage()}</div>
+      <div class="bc-ide-usage-section">${describeContext(r)}</div>`;
+    const toggle = pop.querySelector(".bc-ide-ctx-toggle");
+    if (toggle) toggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      contextBreakdownOpen = !contextBreakdownOpen;
+      try { store.set("bc-ide-context-open", contextBreakdownOpen ? "1" : "0"); } catch { /* fine */ }
+      renderMeterPop();
+    });
+  }
+  function closeMeterPop() {
+    const pop = $("bc-ide-meter-pop");
+    if (pop) pop.hidden = true;
+    const btn = $("bc-ide-meter-btn");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+  function toggleMeterPop() {
+    const pop = $("bc-ide-meter-pop");
+    if (!pop.hidden) { closeMeterPop(); return; }
+    closePopMenus();
+    closeModelMenu();
+    pop.hidden = false;
+    $("bc-ide-meter-btn").setAttribute("aria-expanded", "true");
+    renderMeterPop();
+    refreshPlanUsage();
+    const r = activeRecord();
+    if (r && (r.sessionId || r.context)) refreshContext(r, { force: true });
+    else if (r) { renderMeterPop(); refreshContext(r); }
   }
 
   async function openUsagePop() {
@@ -1825,7 +1980,11 @@
     if (!opening) return;
     pop.hidden = false;
     $("bc-ide-usage-btn").setAttribute("aria-expanded", "true");
-    pop.innerHTML = `<div class="bc-ide-usage-section"><div class="bc-ide-usage-title">Claude plan</div>${describePlanUsage()}</div><div class="bc-ide-usage-section" id="bc-ide-usage-local"><div class="bc-ide-usage-title">Claude Code · last 7 days</div><div class="bc-ide-muted">Loading…</div></div>`;
+    refreshPlanUsage().then(() => {
+      const plan = $("bc-ide-usage-plan");
+      if (plan && !pop.hidden) plan.innerHTML = describePlanUsage();
+    });
+    pop.innerHTML = `<div class="bc-ide-usage-section"><div class="bc-ide-usage-title">Claude plan</div><div id="bc-ide-usage-plan">${describePlanUsage()}</div></div><div class="bc-ide-usage-section" id="bc-ide-usage-local"><div class="bc-ide-usage-title">Claude Code · last 7 days</div><div class="bc-ide-muted">Loading…</div></div>`;
     const localEl = $("bc-ide-usage-local");
     const result = await loadStats();
     const week = result && result.ok && result.stats.ranges.d7;
@@ -2165,7 +2324,7 @@
       model: ($("bc-ide-model-btn").textContent || "").trim(),
       mode: ($("bc-ide-mode-btn").textContent || "").trim(),
       state: r && r.waiting ? "waiting" : r && r.busy ? "working" : "idle",
-      usage: planUsage && typeof planUsage.utilization === "number" ? planUsage.utilization * 100 : undefined,
+      usage: sessionPercent() != null ? sessionPercent() : undefined,
     };
     const key = JSON.stringify(info);
     if (key === lastWorkbenchStatus) return;
@@ -2994,11 +3153,12 @@
   document.addEventListener("click", (event) => {
     const t = event.target;
     if (!(t.closest && t.closest(".bc-ide-model-picker"))) closeModelMenu();
+    if (!(t.closest && t.closest(".bc-ide-meter-anchor"))) closeMeterPop();
     if (!(t.closest && t.closest(".bc-ide-pop-menu, #bc-ide-plus, #bc-ide-mode-btn, #bc-ide-pr-more, #bc-ide-more, #bc-ide-usage-pop, #bc-ide-usage-btn"))) closePopMenus();
   });
 
   // Keyboard
-  const anyPopoverOpen = () => ["bc-ide-plus-menu", "bc-ide-mode-menu", "bc-ide-pr-menu", "bc-ide-more-menu", "bc-ide-usage-pop", "bc-ide-model-menu", "bc-ide-slash-menu"].some((id) => $(id) && !$(id).hidden);
+  const anyPopoverOpen = () => ["bc-ide-plus-menu", "bc-ide-mode-menu", "bc-ide-pr-menu", "bc-ide-more-menu", "bc-ide-usage-pop", "bc-ide-model-menu", "bc-ide-slash-menu", "bc-ide-meter-pop"].some((id) => $(id) && !$(id).hidden);
   window.addEventListener("keydown", (event) => {
     const mod = event.metaKey || event.ctrlKey;
     const key = event.key.toLowerCase();
@@ -3082,6 +3242,9 @@
   syncChrome();
   updateModelButtonLabel();
   renderUsageRing();
+  setTimeout(() => refreshPlanUsage({ force: true }), 1200);
+  setInterval(() => { if (document.visibilityState === "visible") refreshPlanUsage({ force: true }); }, 5 * 60 * 1000);
+  on("bc-ide-meter-btn", "click", (e) => { e.stopPropagation(); toggleMeterPop(); });
   try {
     latestSettings = await api.getSettings();
   } catch { /* keep defaults */ }

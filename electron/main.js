@@ -4047,6 +4047,22 @@ ipcMain.handle("ide:claude-models", async (e, cwd) => {
   try { if (typeof cwd === "string" && cwd) dir = ideWorkspace.realDirectory(cwd); } catch { /* home */ }
   try { return await ideChat.listModels({ cwd: dir }); } catch { return null; }
 });
+// Plan limits (session + weekly) from Claude Code's own `get_usage`, and a
+// conversation's context window from `get_context_usage`. Neither sends a
+// message; both are what Claude Code's /usage and /context show.
+ipcMain.handle("ide:plan-usage", async (e, opts = {}) => {
+  if (!isIdeSender(e.sender) || !ideChat) return null;
+  try { return await ideChat.getUsage({ force: !!(opts && opts.force) }); } catch { return null; }
+});
+ipcMain.handle("ide:context-usage", async (e, payload = {}) => {
+  if (!isIdeSender(e.sender) || !ideChat || !payload) return null;
+  const tabId = ideTabId(payload.tabId);
+  if (!tabId) return null;
+  let cwd = null;
+  try { if (typeof payload.cwd === "string" && payload.cwd) cwd = ideWorkspace.realDirectory(payload.cwd); } catch { cwd = null; }
+  const sessionId = typeof payload.sessionId === "string" ? payload.sessionId : null;
+  try { return await ideChat.getContextUsage({ tabId, cwd, sessionId }); } catch { return null; }
+});
 ipcMain.handle("ide:list-free-models", async (e, opts) => {
   if (!isIdeSender(e.sender)) return [];
   try {
