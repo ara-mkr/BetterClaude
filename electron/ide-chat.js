@@ -540,6 +540,14 @@ function createIdeChatEngine(host) {
             resetsAt: typeof info.resetsAt === "number" ? info.resetsAt : null,
             rateLimitType: info.rateLimitType || null,
             isUsingOverage: !!info.isUsingOverage,
+            // Both plan windows at once when the CLI reports them
+            // (rate_limit_info.unifiedWindows), so the meter can show the
+            // 5-hour and weekly limits side by side.
+            windows: ["five_hour", "seven_day"].reduce((out, key) => {
+              const w = info.unifiedWindows && info.unifiedWindows[key];
+              if (w && typeof w.utilization === "number") out[key] = { utilization: w.utilization, resetsAt: typeof w.resetsAt === "number" ? w.resetsAt : null };
+              return out;
+            }, {}),
           },
         });
         if (info.status === "rejected" && turn) turn.limitHit = true;
@@ -1107,7 +1115,77 @@ function createIdeChatEngine(host) {
     return !!(proc && proc.turn);
   };
 
-  return { sendMessage, respondPermission, stop, dispose, disposeAll, disposeIdle, aggregateState, isBusy, deliver, setTeam, setTeamMode, tabState };
+  /**
+   * What each model choice resolves to, straight from Claude Code: the same
+   * `initialize` handshake the Agent SDK opens with returns `models` with a
+   * `resolvedModel` per entry, "default" included (the plan tier's pick, or a
+   * project's `model` setting). No user message is sent, so no API request is
+   * made and nothing counts against the plan. Same binary, flags and scrubbed
+   * env as a chat, so the answer matches what a send would use.
+   * @returns {Promise<{value:string, resolvedModel:string, displayName:string}[]|null>}
+   */
+  const modelsCache = new Map(); // cwd -> { at, models }
+  function listModels({ cwd, force = false } = {}) {
+    const config = host.getConfig() || {};
+    const key = `${config.loadUserSettings === true ? "u" : "p"}|${cwd || ""}`;
+    const hit = modelsCache.get(key);
+    if (!force && hit && Date.now() - hit.at < 10 * 60 * 1000) return Promise.resolve(hit.models);
+    let binaryPath;
+    try { binaryPath = host.locateBinary(); } catch { return Promise.resolve(null); }
+    const args = ["--print", "--output-format", "stream-json", "--verbose", "--input-format", "stream-json",
+      "--setting-sources", config.loadUserSettings === true ? "user,project,local" : "project,local",
+      "--strict-mcp-config", "--no-chrome"];
+    return new Promise((resolve) => {
+      let child;
+      try {
+        child = spawn(binaryPath, args, {
+          cwd: cwd || os.homedir(),
+          env: subscriptionEnv({ binaryPath, extra: { TERM: "dumb" } }),
+          stdio: ["pipe", "pipe", "ignore"],
+          shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(binaryPath),
+          windowsHide: true,
+        });
+      } catch { resolve(null); return; }
+      let buf = "";
+      let done = false;
+      const finish = (models) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        try { child.stdin.end(); } catch { /* gone */ }
+        try { child.kill(); } catch { /* gone */ }
+        if (models) modelsCache.set(key, { at: Date.now(), models });
+        resolve(models);
+      };
+      const timer = setTimeout(() => finish(null), 15000);
+      child.on("error", () => finish(null));
+      child.on("exit", () => finish(null));
+      child.stdout.on("data", (chunk) => {
+        buf += chunk.toString("utf8");
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          let ev;
+          try { ev = JSON.parse(line); } catch { continue; }
+          if (ev.type !== "control_response" || !ev.response || ev.response.request_id !== "bc-models") continue;
+          const list = ev.response.response && Array.isArray(ev.response.response.models) ? ev.response.response.models : [];
+          // Only the model fields leave this function (the handshake also
+          // carries account details).
+          finish(list.filter((m) => m && typeof m.value === "string").map((m) => ({
+            value: m.value,
+            resolvedModel: typeof m.resolvedModel === "string" ? m.resolvedModel : "",
+            displayName: typeof m.displayName === "string" ? m.displayName : "",
+          })));
+        }
+      });
+      try {
+        child.stdin.write(JSON.stringify({ type: "control_request", request_id: "bc-models", request: { subtype: "initialize" } }) + "\n");
+      } catch { finish(null); }
+    });
+  }
+
+  return { sendMessage, respondPermission, stop, dispose, disposeAll, disposeIdle, aggregateState, isBusy, deliver, setTeam, setTeamMode, tabState, listModels };
 }
 
 module.exports = { createIdeChatEngine, pickAlwaysOption, friendlyError, cliModeFor, settingsProviderOverrides, isBillingOverrideNotice, SUBSCRIPTION_KEY_SOURCES, CLI_MODES };

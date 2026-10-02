@@ -52,7 +52,9 @@ const VIBE_BUNDLES = [
   {
     id: "brutalist-mono",
     label: "Brutalist Mono",
-    themeId: "high-contrast",
+    // Pure black and white: High Contrast's yellow accent (an accessibility
+    // choice) put yellow rings and a yellow logo on a "mono" look.
+    themeId: "mono-black",
     shape: "sharp",
     cursorStyle: "default",
     cursorTrail: "off",

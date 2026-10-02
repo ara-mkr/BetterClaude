@@ -3943,6 +3943,14 @@ ipcMain.handle("ide:set-openrouter-key", (e, key) => {
   setOpenRouterKey(typeof key === "string" ? key.slice(0, 400) : "");
   return openRouterKeyStatus();
 });
+// The Claude models' real names, "default" included, from Claude Code's own
+// handshake (no message sent, nothing billed). See ideChat.listModels.
+ipcMain.handle("ide:claude-models", async (e, cwd) => {
+  if (!isIdeSender(e.sender) || !ideChat) return null;
+  let dir = "";
+  try { if (typeof cwd === "string" && cwd) dir = ideWorkspace.realDirectory(cwd); } catch { /* home */ }
+  try { return await ideChat.listModels({ cwd: dir }); } catch { return null; }
+});
 ipcMain.handle("ide:list-free-models", async (e, opts) => {
   if (!isIdeSender(e.sender)) return [];
   try {

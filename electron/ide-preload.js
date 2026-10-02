@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld("betterClaudeIDE", {
   extensionInstallDir: () => ipcRenderer.invoke("ide:extension-install-dir"),
   uninstallExtension: (id) => ipcRenderer.invoke("ide:uninstall-extension", id),
   listFreeModels: (force) => ipcRenderer.invoke("ide:list-free-models", { force: !!force }),
+  claudeModels: (cwd) => ipcRenderer.invoke("ide:claude-models", cwd),
   // The OpenRouter key is write-only from here: status says whether one is
   // saved, never what it is.
   openRouterKeyStatus: () => ipcRenderer.invoke("ide:openrouter-key-status"),

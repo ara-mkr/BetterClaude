@@ -261,10 +261,13 @@
 #betterclaude-titlebar .bc-tb-logo {
   width: 18px;
   height: 18px;
-  object-fit: contain;
   display: block;
   pointer-events: none;
-  filter: brightness(1.28) saturate(1.12) drop-shadow(0 0 5px rgba(96, 89, 230, 0.32));
+  /* Theme-coloured mark: ui/title-bar.js sets both vars (the PNG as a mask,
+     and the accent adjusted for contrast against the bar). */
+  background-color: var(--bc-tb-logo-color, var(--bc-accent, #6059e6));
+  -webkit-mask: var(--bc-tb-logo-mask) center / contain no-repeat;
+  mask: var(--bc-tb-logo-mask) center / contain no-repeat;
 }
 
 #betterclaude-titlebar .bc-tb-logo-btn:focus-visible {

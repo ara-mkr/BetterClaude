@@ -950,9 +950,27 @@
     publishModelLabels();
     updateModelButtonLabel();
   }
+  /**
+   * Ask Claude Code what each choice resolves to in this folder (its own
+   * `initialize` handshake: no message, nothing billed), so "Default" names
+   * the real model before the first send — "Default · Opus 5.5", not a
+   * guess. A later `init` still corrects anything that changes.
+   */
+  async function syncClaudeModels(cwd) {
+    let models;
+    try { models = await api.claudeModels(cwd || ""); } catch { return; }
+    if (!Array.isArray(models)) return;
+    models.forEach((m) => {
+      if (!m.resolvedModel) return;
+      if (m.value === "default") { learnAlias("", m.resolvedModel); return; }
+      const choice = CLAUDE_MODEL_CHOICES.find((c) => c.id && new RegExp(`claude-?${c.id}`, "i").test(m.resolvedModel));
+      if (choice) learnAlias(choice.id, m.resolvedModel);
+    });
+  }
   let selectedModel = store.get(MODEL_STORAGE_KEY, "claude") || "claude";
   let claudeModelVariant = store.get(CLAUDE_MODEL_KEY, "") || "";
   publishModelLabels();
+  syncClaudeModels("");
   let freeModelsCache = null;
   let freeModelsFetchedAt = 0;
   let freeModelsPromise = null;
@@ -1045,7 +1063,7 @@
     claudeList.className = "bc-ide-model-list";
     CLAUDE_MODEL_CHOICES.forEach((choice) => claudeList.appendChild(modelRow({
       title: choiceLabel(choice),
-      sub: choice.id && resolveAlias(choice.id) ? `${choice.hint} · ${resolveAlias(choice.id)}` : choice.hint,
+      sub: resolveAlias(choice.id) ? `${choice.hint} · ${resolveAlias(choice.id)}` : choice.hint,
       selected: selectedModel === "claude" && claudeModelVariant === choice.id,
       onPick: () => selectModel("claude", choice.id),
     })));
@@ -1222,7 +1240,7 @@
     button.textContent = full.length > 24 ? `${full.slice(0, 23)}…` : full;
     button.dataset.free = selectedModel === "claude" ? "false" : "true";
     button.title = selectedModel === "claude"
-      ? `Claude Code on your plan (${claudeModelVariant || "default model"})`
+      ? `Claude Code on your plan: ${resolveAlias(claudeModelVariant) || claudeModelVariant || "your plan's default model"}`
       : `${full} — a free model, not your Claude plan`;
     pushWorkbenchStatus();
   }
@@ -1488,10 +1506,19 @@
     if (!planUsage || typeof planUsage.utilization !== "number") {
       return '<div class="bc-ide-muted">Claude Code reports your plan usage while you chat — send a message and it shows up here.</div>';
     }
-    const pct = Math.round(planUsage.utilization * 100);
-    const windowName = { five_hour: "5-hour window", seven_day: "weekly limit", seven_day_opus: "weekly Opus limit", overage: "extra usage" }[planUsage.rateLimitType] || "usage window";
-    const resets = planUsage.resetsAt ? new Date(planUsage.resetsAt * 1000).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
-    return `<div class="bc-ide-usage-meter"><div class="bc-ide-usage-meter-bar" data-level="${pct >= 90 ? "high" : pct >= 70 ? "mid" : "low"}"><i style="width:${pct}%"></i></div><div class="bc-ide-usage-meter-copy"><strong>${pct}%</strong> of your ${escapeHtml(windowName)} used${resets ? ` · resets ${escapeHtml(resets)}` : ""}</div></div>${planUsage.status === "rejected" ? '<div class="bc-ide-usage-warn">Limit reached — Claude Code pauses until it resets.</div>' : ""}`;
+    const NAMES = { five_hour: "5-hour window", seven_day: "weekly limit", seven_day_opus: "weekly Opus limit", overage: "extra usage" };
+    const meter = (utilization, resetsAt, windowName) => {
+      const pct = Math.round(utilization * 100);
+      const resets = resetsAt ? new Date(resetsAt * 1000).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
+      return `<div class="bc-ide-usage-meter"><div class="bc-ide-usage-meter-bar" data-level="${pct >= 90 ? "high" : pct >= 70 ? "mid" : "low"}"><i style="width:${Math.min(100, Math.max(0, pct))}%"></i></div><div class="bc-ide-usage-meter-copy"><strong>${pct}%</strong> of your ${escapeHtml(windowName)} used${resets ? ` · resets ${escapeHtml(resets)}` : ""}</div></div>`;
+    };
+    // Both windows when Claude Code reports them; otherwise the one it named.
+    const windows = planUsage.windows || {};
+    const both = ["five_hour", "seven_day"].filter((k) => windows[k]);
+    const meters = both.length
+      ? both.map((k) => meter(windows[k].utilization, windows[k].resetsAt, NAMES[k])).join("")
+      : meter(planUsage.utilization, planUsage.resetsAt, NAMES[planUsage.rateLimitType] || "usage window");
+    return `${meters}${planUsage.status === "rejected" ? '<div class="bc-ide-usage-warn">Limit reached — Claude Code pauses until it resets.</div>' : ""}`;
   }
 
   async function openUsagePop() {
@@ -1669,6 +1696,7 @@
     if (changed) {
       scmInfo = null;
       api.setLastProject(cwd).catch(() => {});
+      syncClaudeModels(cwd);
       if (!expanded.has(cwd)) { expanded.add(cwd); saveExpanded(); }
       renderDiffPill();
       syncChrome();

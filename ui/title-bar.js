@@ -92,7 +92,7 @@ function mountTitleBar(host) {
     <div class="bc-tb-drag bc-tb-spacer bc-tb-spacer-right" data-bc-tb-drag></div>
     <div class="bc-tb-controls">
       <button class="bc-tb-btn bc-tb-logo-btn" data-bc-tb-settings title="BetterClaude Settings (Cmd/Ctrl+,)">
-        ${host.logoSrc ? `<img class="bc-tb-logo" src="${host.logoSrc}" alt="Settings" />` : ""}
+        ${host.logoSrc ? `<span class="bc-tb-logo" role="img" aria-label="Settings"></span>` : ""}
       </button>
     </div>
   `;
@@ -104,6 +104,55 @@ function mountTitleBar(host) {
     bar.querySelector("[data-bc-tb-close]").addEventListener("click", () => host.close());
   }
   bar.querySelector("[data-bc-tb-settings]").addEventListener("click", () => host.openSettings());
+
+  // The mark is drawn in the theme's accent (a mask over the one-colour PNG),
+  // nudged toward white or black until it clears 3:1 against the bar, so a
+  // pale accent on a light theme still stands out. Re-checked whenever the
+  // theme's stylesheet or root attributes change.
+  const logo = bar.querySelector(".bc-tb-logo");
+  if (logo) {
+    logo.style.setProperty("--bc-tb-logo-mask", `url("${host.logoSrc}")`);
+    // A canvas normalises any CSS colour string without the page's own rules
+    // (the bar's `color` overrides) getting in the way.
+    const ctx = document.createElement("canvas").getContext("2d");
+    const rgbOf = (cssColor) => {
+      if (!ctx || !cssColor || !CSS.supports("color", cssColor)) return null;
+      ctx.fillStyle = "#000";
+      ctx.fillStyle = cssColor;
+      const v = String(ctx.fillStyle);
+      if (/^#[0-9a-f]{6}$/i.test(v)) return [1, 3, 5].map((i) => parseInt(v.slice(i, i + 2), 16));
+      const m = /rgba?\(([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(v);
+      return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+    };
+    const luminance = ([r, g, b]) => {
+      const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+      return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    };
+    const contrast = (a, b) => { const x = luminance(a), y = luminance(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+    let lastKey = "";
+    const recolor = () => {
+      const rootStyle = getComputedStyle(document.documentElement);
+      const accent = rgbOf(rootStyle.getPropertyValue("--bc-accent").trim() || "#6059e6");
+      const bg = rgbOf(getComputedStyle(bar).backgroundColor);
+      if (!accent || !bg) return;
+      const key = accent.join() + "|" + bg.join();
+      if (key === lastKey) return;
+      lastKey = key;
+      const toward = luminance(bg) > 0.4 ? [0, 0, 0] : [255, 255, 255];
+      let color = accent;
+      for (let t = 0.1; t <= 0.8 && contrast(color, bg) < 3; t += 0.1) {
+        color = accent.map((c, i) => Math.round(c + (toward[i] - c) * t));
+      }
+      logo.style.setProperty("--bc-tb-logo-color", `rgb(${color.join(",")})`);
+    };
+    // setTimeout, not rAF: rAF doesn't fire while the window is hidden, and a
+    // theme can change then (scheduled switching, settings from the tray).
+    let pending = 0;
+    const schedule = () => { if (!pending) pending = setTimeout(() => { pending = 0; recolor(); }, 30); };
+    recolor();
+    new MutationObserver(schedule).observe(document.documentElement, { attributes: true, attributeFilter: ["style", "class", "data-mode", "data-theme"] });
+    new MutationObserver(schedule).observe(document.head, { childList: true, subtree: true, characterData: true });
+  }
 
   // --- Nav rail wiring ---
   const navHandlers = { home: host.onHome, code: host.onCode, cli: host.onCli };
