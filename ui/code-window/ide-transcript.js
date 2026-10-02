@@ -691,7 +691,21 @@
       const el = document.createElement("div");
       el.className = "bc-t-foot";
       if (free) el.dataset.free = "true";
-      el.textContent = text;
+      const reply = Array.from(turn.segments.values()).map((seg) => seg.text.trim()).filter(Boolean).join("\n\n");
+      if (reply) {
+        const copy = document.createElement("button");
+        copy.type = "button";
+        copy.className = "bc-t-copy";
+        copy.dataset.copyReply = "";
+        copy.title = "Copy reply";
+        copy.setAttribute("aria-label", "Copy reply");
+        copy.innerHTML = `${icon("COPY")}${icon("CHECK")}`;
+        copy.bcCopyText = reply;
+        el.appendChild(copy);
+      }
+      const label = document.createElement("span");
+      label.textContent = text;
+      el.appendChild(label);
       turn.el.appendChild(el);
       scrollHint();
     }

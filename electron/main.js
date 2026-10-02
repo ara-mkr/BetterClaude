@@ -4050,6 +4050,13 @@ ipcMain.handle("ide:claude-models", async (e, cwd) => {
 // Plan limits (session + weekly) from Claude Code's own `get_usage`, and a
 // conversation's context window from `get_context_usage`. Neither sends a
 // message; both are what Claude Code's /usage and /context show.
+// Copy buttons. The Code tab's page has no clipboard permission (it's
+// granted the microphone only), so navigator.clipboard is refused there.
+ipcMain.handle("ide:copy-text", (e, text) => {
+  if (!isIdeSender(e.sender) || typeof text !== "string") return false;
+  clipboard.writeText(text.slice(0, 10 * 1024 * 1024));
+  return true;
+});
 ipcMain.handle("ide:plan-usage", async (e, opts = {}) => {
   if (!isIdeSender(e.sender) || !ideChat) return null;
   try { return await ideChat.getUsage({ force: !!(opts && opts.force) }); } catch { return null; }

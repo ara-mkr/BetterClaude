@@ -514,7 +514,12 @@ html.bc-ide-resizing, html.bc-ide-resizing * { cursor: col-resize !important; us
 .bc-t-error-icon { display: grid; width: 16px; height: 16px; flex: 0 0 16px; margin-top: 1px; color: var(--bc-ide-danger); }
 .bc-t-error-copy { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .bc-t-error-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.bc-t-foot { color: var(--bc-ide-faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.bc-t-foot { display: flex; align-items: center; gap: 6px; color: var(--bc-ide-faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.bc-t-copy { display: grid; flex: 0 0 auto; width: 24px; height: 24px; margin-left: -5px; padding: 5px; border: 0; border-radius: 6px; color: var(--bc-ide-muted); background: transparent; cursor: pointer; }
+.bc-t-copy:hover { color: var(--bc-ide-text); background: var(--bc-ide-hover); }
+.bc-t-copy svg { grid-area: 1 / 1; width: 14px; height: 14px; }
+.bc-t-copy svg + svg, .bc-t-copy.is-copied svg:first-child { visibility: hidden; }
+.bc-t-copy.is-copied svg + svg { visibility: visible; color: var(--bc-ide-ok); }
 .bc-t-foot[data-free="true"] { color: color-mix(in srgb, var(--bc-ide-ok) 70%, var(--bc-ide-muted)); }
 
 /* ============================================================

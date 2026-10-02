@@ -2559,7 +2559,7 @@
     if (!activeProject) return;
     try {
       const res = await api.gitDiff(activeProject.cwd);
-      await navigator.clipboard.writeText((res && res.diff) || "");
+      if (!(await api.copyText((res && res.diff) || ""))) throw new Error("Could not copy the diff.");
       toast("Diff copied.");
     } catch (error) {
       toast(error.message || "Could not copy the diff.", { kind: "error" });
@@ -3142,10 +3142,22 @@
     if (copy) {
       const code = copy.closest(".bc-md-code");
       const text = code ? code.querySelector("code").textContent : "";
-      navigator.clipboard.writeText(text).then(() => {
+      Promise.resolve(api.copyText(text)).then((ok) => {
+        if (!ok) throw new Error("copy");
         copy.textContent = "Copied";
         setTimeout(() => { copy.textContent = "Copy"; }, 1400);
-      }).catch(() => {});
+      }).catch(() => toast("Couldn't copy that.", { kind: "error" }));
+      return;
+    }
+    // A reply's own Copy (its footer): the reply as Claude wrote it (markdown).
+    const reply = event.target.closest && event.target.closest("[data-copy-reply]");
+    if (reply) {
+      Promise.resolve(api.copyText(reply.bcCopyText || "")).then((ok) => {
+        if (!ok) throw new Error("copy");
+        reply.classList.add("is-copied");
+        reply.title = "Copied";
+        setTimeout(() => { reply.classList.remove("is-copied"); reply.title = "Copy reply"; }, 1400);
+      }).catch(() => toast("Couldn't copy that.", { kind: "error" }));
     }
   });
 
