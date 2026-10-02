@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld("betterClaudeIDE", {
   listProjects: () => ipcRenderer.invoke("ide:list-projects"),
   listFiles: (cwd) => ipcRenderer.invoke("ide:list-files", cwd),
   pickFiles: (cwd) => ipcRenderer.invoke("ide:pick-files", cwd),
+  attachBytes: (payload) => ipcRenderer.invoke("ide:attach-bytes", payload),
   gitInfo: (cwd) => ipcRenderer.invoke("ide:git-info", cwd),
   gitDiff: (cwd) => ipcRenderer.invoke("ide:git-diff", cwd),
   // Commit (renderer-confirmed) + push + `gh pr create` for the current branch.

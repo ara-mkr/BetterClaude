@@ -3335,22 +3335,105 @@ ipcMain.handle("ide:get-initial-state", async (e) => {
 
 ipcMain.handle("ide:list-projects", (e) => isIdeSender(e.sender) ? ideWorkspace.listProjectIndex(ideRecentCwds()) : []);
 ipcMain.handle("ide:list-files", (e, cwd) => isIdeSender(e.sender) ? ideWorkspace.listProjectTree(rememberIdeCwd(cwd)) : { root: null, nodes: [], count: 0 });
+// --- Code tab attachments --------------------------------------------------
+// Text files ride along inside the prompt; images go to Claude as real image
+// blocks. Files can come from anywhere (a screenshot on the Desktop, not only
+// the project), from the picker, a drag-and-drop or a paste.
+const ATTACH_IMAGE_TYPES = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp" };
+const ATTACH_IMAGE_MIMES = new Set(Object.values(ATTACH_IMAGE_TYPES));
+const ATTACH_MAX_TEXT_BYTES = 1024 * 1024;
+const ATTACH_MAX_INPUT_BYTES = 40 * 1024 * 1024;
+// The API takes up to 5 MB of base64 per image, and scales anything past
+// ~1568 px down itself, so bigger pictures are shrunk here first.
+const ATTACH_MAX_IMAGE_B64 = 4.5 * 1024 * 1024;
+const ATTACH_MAX_IMAGE_EDGE = 2000;
+
+function imageAttachment(label, buffer, mediaType) {
+  let data = buffer;
+  let type = mediaType;
+  const img = nativeImage.createFromBuffer(buffer);
+  const tooHeavy = Math.ceil(buffer.length / 3) * 4 > ATTACH_MAX_IMAGE_B64;
+  if (!img.isEmpty()) {
+    const { width, height } = img.getSize();
+    const longEdge = Math.max(width, height);
+    if (tooHeavy || longEdge > ATTACH_MAX_IMAGE_EDGE) {
+      const scale = Math.min(1, ATTACH_MAX_IMAGE_EDGE / longEdge);
+      const resized = scale < 1 ? img.resize({ width: Math.round(width * scale), height: Math.round(height * scale), quality: "good" }) : img;
+      data = resized.toPNG();
+      type = "image/png";
+      for (const quality of [88, 75, 60]) {
+        if (Math.ceil(data.length / 3) * 4 <= ATTACH_MAX_IMAGE_B64) break;
+        data = resized.toJPEG(quality);
+        type = "image/jpeg";
+      }
+    }
+  }
+  if (Math.ceil(data.length / 3) * 4 > ATTACH_MAX_IMAGE_B64) throw new Error(`${path.basename(label)} is too large to send (images up to about 3 MB).`);
+  return { path: label, image: { mediaType: type, data: data.toString("base64") } };
+}
+
+function attachmentFromBuffer(label, buffer, mime = "") {
+  const ext = path.extname(label).toLowerCase();
+  const imageType = ATTACH_IMAGE_TYPES[ext] || (ATTACH_IMAGE_MIMES.has(mime) ? mime : null);
+  if (imageType) return imageAttachment(label, buffer, imageType);
+  if (/^image\//.test(mime) || /\.(heic|heif|tiff?|bmp)$/i.test(ext)) {
+    // Not a format the API reads; let Chromium convert what it can decode.
+    const img = nativeImage.createFromBuffer(buffer);
+    if (!img.isEmpty()) return imageAttachment(label.replace(/\.[^./]+$/, ".png"), img.toPNG(), "image/png");
+    throw new Error(`${path.basename(label)}: Claude reads PNG, JPEG, GIF and WebP images.`);
+  }
+  if (buffer.length > ATTACH_MAX_TEXT_BYTES) throw new Error(`${path.basename(label)} is too large to attach (text files up to 1 MB).`);
+  if (buffer.includes(0)) throw new Error(`${path.basename(label)} isn't text or an image, so Claude can't read it as an attachment.`);
+  return { path: label, content: buffer.toString("utf8") };
+}
+
+/** How a picked file is named in the message: project-relative, else ~/… */
+function attachmentLabel(projectRoot, filePath) {
+  const relative = projectRoot ? path.relative(projectRoot, filePath).split(path.sep).join("/") : "";
+  if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)) return relative;
+  const home = os.homedir();
+  return filePath.startsWith(home + path.sep) ? `~/${path.relative(home, filePath).split(path.sep).join("/")}` : filePath;
+}
+
 ipcMain.handle("ide:pick-files", async (e, cwd) => {
   if (!isIdeSender(e.sender)) return [];
   const resolved = rememberIdeCwd(cwd);
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: "Attach project files to Claude",
+    title: "Attach files or images",
     defaultPath: resolved,
     buttonLabel: "Attach",
     properties: ["openFile", "multiSelections"],
   });
   if (result.canceled || !result.filePaths.length) return [];
-  const relativePaths = result.filePaths.map((filePath) => {
-    const relative = path.relative(resolved, filePath).split(path.sep).join("/");
-    if (!relative || relative.startsWith("..")) throw new Error("Attachments must stay inside the selected project.");
-    return relative;
-  });
-  return ideWorkspace.readProjectFiles(resolved, relativePaths).map(({ path: relativePath, content, binary, size }) => ({ path: relativePath, content, binary, size }));
+  const files = [];
+  const errors = [];
+  for (const filePath of result.filePaths.slice(0, 12)) {
+    try {
+      const stat = fs.statSync(filePath);
+      if (!stat.isFile()) throw new Error(`${path.basename(filePath)} isn't a file.`);
+      if (stat.size > ATTACH_MAX_INPUT_BYTES) throw new Error(`${path.basename(filePath)} is too large to attach.`);
+      files.push(attachmentFromBuffer(attachmentLabel(resolved, filePath), fs.readFileSync(filePath)));
+    } catch (err) {
+      errors.push((err && err.message) || `Couldn't read ${path.basename(filePath)}.`);
+    }
+  }
+  return { files, errors };
+});
+
+// A dropped or pasted file: the page hands over the bytes (never a path to read).
+ipcMain.handle("ide:attach-bytes", (e, payload = {}) => {
+  if (!isIdeSender(e.sender) || !payload) return { error: "Couldn't attach that." };
+  const name = typeof payload.name === "string" && payload.name.trim() ? path.basename(payload.name.trim()).slice(0, 120) : "pasted-image.png";
+  const mime = typeof payload.type === "string" ? payload.type.slice(0, 60) : "";
+  let buffer;
+  try { buffer = Buffer.from(payload.bytes); } catch { return { error: `Couldn't read ${name}.` }; }
+  if (!buffer.length) return { error: `${name} is empty.` };
+  if (buffer.length > ATTACH_MAX_INPUT_BYTES) return { error: `${name} is too large to attach.` };
+  try {
+    return { file: attachmentFromBuffer(name, buffer, mime) };
+  } catch (err) {
+    return { error: (err && err.message) || `Couldn't attach ${name}.` };
+  }
 });
 ipcMain.handle("ide:git-info", async (e, cwd) => isIdeSender(e.sender) ? ideWorkspace.getGitInfo(rememberIdeCwd(cwd)) : { isRepo: false, branch: null, changedFiles: 0, statusLines: [], diffStat: "" });
 const IDE_TAB_ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
@@ -3367,9 +3450,12 @@ ipcMain.handle("ide:chat", async (e, payload = {}) => {
     sendIdeChat({ type: "error", message: (err && err.message) || "The selected project folder is unavailable.", tabId });
     return false;
   }
-  const attachments = Array.isArray(payload.attachments)
-    ? payload.attachments.filter((file) => file && typeof file.path === "string" && typeof file.content === "string").slice(0, 12)
+  const isImage = (file) => file.image && ATTACH_IMAGE_MIMES.has(file.image.mediaType) && typeof file.image.data === "string" && file.image.data.length <= ATTACH_MAX_IMAGE_B64;
+  const allAttachments = Array.isArray(payload.attachments)
+    ? payload.attachments.filter((file) => file && typeof file.path === "string" && (typeof file.content === "string" || isImage(file))).slice(0, 20)
     : [];
+  // Free models get the text files; images only go to Claude.
+  const attachments = allAttachments.filter((file) => typeof file.content === "string");
   // "claude" (or empty) = the user's Claude plan via Claude Code; anything
   // else is a free-model id from the picker ("qwen/…:free", "keyless:…").
   const freeModel = typeof payload.model === "string" && payload.model && payload.model !== "claude" ? payload.model.slice(0, 200) : null;
@@ -3389,7 +3475,7 @@ ipcMain.handle("ide:chat", async (e, payload = {}) => {
     tabId,
     cwd,
     prompt: payload.prompt,
-    attachments,
+    attachments: allAttachments,
     sessionId: typeof payload.sessionId === "string" ? payload.sessionId : null,
     claudeModel,
     permissionMode: typeof payload.permissionMode === "string" ? payload.permissionMode : "acceptEdits",

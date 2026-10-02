@@ -95,6 +95,24 @@ It is not a fork, a proxy or a modified client. It's a window wrapped around the
 
 <img src=".github/readme-assets/readme/install.png" alt="Three steps: download the build for your machine, let it open past Gatekeeper or SmartScreen, then sign in to claude.ai as usual." width="100%" />
 
+**Fastest: one command, no security prompts.** It downloads the latest release straight from GitHub and installs it. Run the same command again any time to update.
+
+macOS (Terminal):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ara-mkr/betterclaude/main/scripts/install.sh | bash
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/ara-mkr/betterclaude/main/scripts/install.ps1 | iex
+```
+
+Files a browser downloads get flagged as "from the internet", and that flag is what makes macOS and Windows ask "are you sure?" about apps that aren't signed with a paid developer certificate. Files these commands fetch aren't flagged, so BetterClaude simply opens. Both scripts are short and readable: [install.sh](scripts/install.sh), [install.ps1](scripts/install.ps1).
+
+**Or download it yourself.**
+
 **1. Download** the build for your machine from the **[latest release](https://github.com/ara-mkr/BetterClaude/releases/latest)**. That's the only place installers are published: no App Store build, no mirrors.
 
 | File | Platform |
@@ -129,7 +147,7 @@ xattr -cr /Applications/BetterClaude.app
 <summary><b>Windows</b>: <i>"Windows protected your PC"</i></summary>
 <br>
 
-Click **More info → Run anyway** on the SmartScreen prompt. After that the app checks this repo's Releases on launch and offers updates in-app. Windows updates in place; macOS users reinstall from a new DMG until the build gets a Developer ID certificate.
+Click **More info → Run anyway** on the SmartScreen prompt. After that the app checks this repo's Releases on launch and offers updates in-app. Windows updates in place. On macOS, re-run the install command (or download the new DMG) to update until the build gets a Developer ID certificate.
 
 </details>
 

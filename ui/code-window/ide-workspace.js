@@ -607,7 +607,8 @@
   async function sendChatMessage(event) {
     if (event) event.preventDefault();
     const input = $("bc-ide-chat-input");
-    const prompt = input.value.trim();
+    const hasImages = selectedAttachments.some((f) => f.image);
+    const prompt = input.value.trim() || (hasImages ? "What's in this image?" : "");
     if (!prompt) return;
     if (!activeProject) { toast("Add a project folder first."); return; }
 
@@ -632,6 +633,7 @@
     const sendModel = effectiveSelectedModel();
     if (!sendModel) return;
     const attachments = selectedAttachments.slice();
+    if (sendModel !== "claude" && attachments.some((f) => f.image)) toast("Free models can't see images — sending the text only.");
     const history = sendModel === "claude" ? [] : r.transcript.history();
     r.transcript.userMessage(prompt, { attachments: attachments.map((f) => f.path) });
     if (!r.firstPrompt) r.firstPrompt = prompt;
@@ -919,7 +921,21 @@
   // us the plan's default). Persisted so the next launch starts right.
   const MODEL_ALIASES_KEY = "bc-ide-model-aliases";
   const MODEL_ALIAS_SEED = { fable: "claude-fable-5-1", opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-4-5" };
+  /** "claude-opus-5-5" -> 505, "claude-haiku-4-5-20251001" -> 405, "claude-opus-5" -> 500; -1 if unknown. */
+  const modelVersion = (id) => {
+    const m = /claude-?(?:opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2})(?!\d))?/i.exec(id || "");
+    return m ? Number(m[1]) * 100 + Number(m[2] || 0) : -1;
+  };
   const learnedAliases = (() => { try { const v = JSON.parse(store.get(MODEL_ALIASES_KEY, "{}")); return v && typeof v === "object" ? v : {}; } catch { return {}; } })();
+  // 1.5.2 and earlier could learn an alias from the *last* model of its family
+  // in Claude Code's list ("opus" -> Opus 4.6). Drop anything older than the seed.
+  Object.keys(MODEL_ALIAS_SEED).forEach((alias) => {
+    if (learnedAliases[alias] && modelVersion(learnedAliases[alias]) < modelVersion(MODEL_ALIAS_SEED[alias])) delete learnedAliases[alias];
+  });
+  // Every model Claude Code offers this account (its `initialize` list), kept
+  // for the "Older models" flyout. Persisted so the menu is full on launch.
+  const CLAUDE_MODELS_KEY = "bc-ide-claude-models";
+  let cliModels = (() => { try { const v = JSON.parse(store.get(CLAUDE_MODELS_KEY, "[]")); return Array.isArray(v) ? v : []; } catch { return []; } })();
   const resolveAlias = (alias) => learnedAliases[alias || "default"] || MODEL_ALIAS_SEED[alias] || null;
   function choiceLabel(choice) {
     if (!choice.id) {
@@ -960,12 +976,33 @@
     let models;
     try { models = await api.claudeModels(cwd || ""); } catch { return; }
     if (!Array.isArray(models)) return;
-    models.forEach((m) => {
-      if (!m.resolvedModel) return;
-      if (m.value === "default") { learnAlias("", m.resolvedModel); return; }
-      const choice = CLAUDE_MODEL_CHOICES.find((c) => c.id && new RegExp(`claude-?${c.id}`, "i").test(m.resolvedModel));
-      if (choice) learnAlias(choice.id, m.resolvedModel);
+    models = models.filter((m) => m && m.resolvedModel);
+    const def = models.find((m) => m.value === "default");
+    if (def) learnAlias("", def.resolvedModel);
+    // The list also carries pinned older versions of each family (Opus 4.6,
+    // Sonnet 4.6…): an alias is the entry with exactly that value, else the
+    // newest of its family (Fable is listed by full id, not as "fable").
+    CLAUDE_MODEL_CHOICES.forEach((choice) => {
+      if (!choice.id) return;
+      const exact = models.find((m) => m.value === choice.id);
+      const newest = models
+        .filter((m) => new RegExp(`^claude-?${choice.id}`, "i").test(m.resolvedModel))
+        .sort((a, b) => modelVersion(b.resolvedModel) - modelVersion(a.resolvedModel))[0];
+      const pick = exact || newest;
+      if (pick) learnAlias(choice.id, pick.resolvedModel);
     });
+    cliModels = models.map((m) => ({ value: m.value, resolvedModel: m.resolvedModel, displayName: m.displayName || "", description: m.description || "" }));
+    store.set(CLAUDE_MODELS_KEY, JSON.stringify(cliModels));
+  }
+  /** Claude Code's models that aren't one of the picker's main rows, newest first. */
+  function olderClaudeModels() {
+    const main = new Set(CLAUDE_MODEL_CHOICES.map((c) => resolveAlias(c.id)).filter(Boolean));
+    const choiceIds = new Set(CLAUDE_MODEL_CHOICES.map((c) => c.id || "default"));
+    const seen = new Set();
+    return cliModels
+      .filter((m) => /^claude-/i.test(m.resolvedModel) && !choiceIds.has(m.value) && !main.has(m.resolvedModel))
+      .filter((m) => (seen.has(m.resolvedModel) ? false : seen.add(m.resolvedModel)))
+      .sort((a, b) => modelVersion(b.resolvedModel) - modelVersion(a.resolvedModel));
   }
   let selectedModel = store.get(MODEL_STORAGE_KEY, "claude") || "claude";
   let claudeModelVariant = store.get(CLAUDE_MODEL_KEY, "") || "";
@@ -989,7 +1026,9 @@
       return d ? prettyModel(d) : "Default model";
     }
     const known = CLAUDE_MODEL_CHOICES.find((c) => c.id === claudeModelVariant);
-    return known ? choiceLabel(known) : prettyModel(claudeModelVariant);
+    if (known) return choiceLabel(known);
+    const listed = cliModels.find((m) => m.value === claudeModelVariant);
+    return listed && listed.displayName ? listed.displayName : prettyModel(claudeModelVariant);
   }
   function modelLabelFor(id) {
     if (!id || id === "claude") return claudeModelLabel();
@@ -1024,6 +1063,7 @@
   }
 
   function closeModelMenu() {
+    closeOlderModels();
     $("bc-ide-model-menu").hidden = true;
     $("bc-ide-model-btn").setAttribute("aria-expanded", "false");
   }
@@ -1046,6 +1086,7 @@
 
   function renderModelMenu(models) {
     const menu = $("bc-ide-model-menu");
+    closeOlderModels();
     menu.textContent = "";
     const config = freeConfig();
     const header = (text, extra) => {
@@ -1067,7 +1108,41 @@
       selected: selectedModel === "claude" && claudeModelVariant === choice.id,
       onPick: () => selectModel("claude", choice.id),
     })));
+    const older = olderClaudeModels();
+    if (older.length) {
+      const pinned = older.find((m) => m.value === claudeModelVariant);
+      const more = modelRow({
+        title: "Older models",
+        sub: selectedModel === "claude" && pinned ? (pinned.displayName || prettyModel(pinned.resolvedModel)) : `${older.length} more`,
+        selected: selectedModel === "claude" && !!pinned,
+        onPick: (event) => { event.stopPropagation(); openOlderModels(more, older, { focus: true }); },
+      });
+      more.classList.add("bc-ide-model-more");
+      more.setAttribute("aria-haspopup", "menu");
+      more.setAttribute("aria-expanded", "false");
+      more.querySelector(".bc-ide-model-check").insertAdjacentHTML("beforebegin", `<span class="bc-ide-model-more-chev">${icon("CHEVRON")}</span>`);
+      more.addEventListener("mouseenter", () => openOlderModels(more, older));
+      more.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowRight") return;
+        event.preventDefault();
+        event.stopPropagation();
+        openOlderModels(more, older, { focus: true });
+      });
+      claudeList.appendChild(more);
+      // Pointing at any other row puts the flyout away.
+      claudeList.querySelectorAll(".bc-ide-model-row:not(.bc-ide-model-more)").forEach((row) => row.addEventListener("mouseenter", closeOlderModels));
+    }
     menu.appendChild(claudeList);
+    menu.onscroll = closeOlderModels;
+    // Leave room on the right for the flyout (it opens rightwards, like
+    // Claude's own "More models"): near the window's edge the menu shifts left.
+    menu.style.right = "";
+    if (older.length && !menu.hidden) {
+      const rect = menu.getBoundingClientRect();
+      const need = rect.right + 6 + Math.min(280, window.innerWidth * 0.8) - (window.innerWidth - 16);
+      const shift = Math.min(Math.max(0, need), Math.max(0, rect.left - 8));
+      if (shift > 0) menu.style.right = `${shift}px`;
+    }
 
     const custom = document.createElement("label");
     custom.className = "bc-ide-model-key";
@@ -1187,6 +1262,73 @@
     }
     foot.appendChild(keyWrap);
     menu.appendChild(foot);
+  }
+
+  /**
+   * The "Older models" flyout: a second panel beside the model menu (to its
+   * right, or its left when the window has no room), like Claude's own
+   * "More models". It lives in the picker, not the menu, so the menu's
+   * scrolling can't clip it.
+   */
+  function closeOlderModels() {
+    const sub = $("bc-ide-model-submenu");
+    if (sub) sub.remove();
+    const more = document.querySelector(".bc-ide-model-more");
+    if (more) more.setAttribute("aria-expanded", "false");
+  }
+  function openOlderModels(anchor, models, { focus = false } = {}) {
+    const picker = anchor.closest(".bc-ide-model-picker");
+    const menu = $("bc-ide-model-menu");
+    if (!picker || !menu) return;
+    let sub = $("bc-ide-model-submenu");
+    if (!sub) {
+      sub = document.createElement("div");
+      sub.id = "bc-ide-model-submenu";
+      sub.className = "bc-ide-model-menu bc-ide-model-submenu";
+      sub.setAttribute("role", "menu");
+      const list = document.createElement("div");
+      list.className = "bc-ide-model-list";
+      models.forEach((m) => list.appendChild(modelRow({
+        title: m.displayName || prettyModel(m.resolvedModel),
+        sub: m.description || m.resolvedModel,
+        selected: selectedModel === "claude" && claudeModelVariant === m.value,
+        onPick: () => selectModel("claude", m.value),
+      })));
+      sub.appendChild(list);
+      sub.addEventListener("keydown", (event) => {
+        const rows = Array.from(sub.querySelectorAll(".bc-ide-model-row"));
+        const i = rows.indexOf(document.activeElement);
+        if (event.key === "ArrowLeft" || event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          closeOlderModels();
+          anchor.focus();
+        } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          event.stopPropagation();
+          const step = event.key === "ArrowDown" ? 1 : -1;
+          rows[(i + step + rows.length) % rows.length].focus();
+        }
+      });
+      picker.appendChild(sub);
+    }
+    anchor.setAttribute("aria-expanded", "true");
+    // Place it beside the menu, its top level with the "Older models" row.
+    const pickerRect = picker.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const rowRect = anchor.getBoundingClientRect();
+    const width = sub.offsetWidth;
+    const gap = 6;
+    const fitsRight = menuRect.right + gap + width <= window.innerWidth - 8;
+    const left = fitsRight ? menuRect.right + gap : Math.max(8, menuRect.left - gap - width);
+    const top = Math.max(8, Math.min(rowRect.top - 4, window.innerHeight - 8 - sub.offsetHeight));
+    sub.style.left = `${left - pickerRect.left}px`;
+    sub.style.top = `${top - pickerRect.top}px`;
+    if (focus) {
+      const rows = Array.from(sub.querySelectorAll(".bc-ide-model-row"));
+      const start = rows.find((r) => r.classList.contains("selected")) || rows[0];
+      if (start) start.focus({ preventScroll: true });
+    }
   }
 
   async function openModelMenu() {
@@ -1316,7 +1458,7 @@
 
   function togglePlusMenu() {
     popMenu("bc-ide-plus-menu", "bc-ide-plus", [
-      { icon: "ATTACH", label: "Attach project files", hint: "Add file contents to this message", run: attachProjectFiles },
+      { icon: "ATTACH", label: "Attach files or images", hint: "Or drag them in, or paste a screenshot", run: attachProjectFiles },
       { icon: "CODE_SLASH", label: "Slash command", hint: "/compact, /review, /init…", run: () => { const i = $("bc-ide-chat-input"); if (!i.value.startsWith("/")) i.value = "/"; i.focus(); slashIndex = 0; refreshSlashMenu(); } },
     ]);
   }
@@ -1327,15 +1469,48 @@
     popMenu("bc-ide-mode-menu", "bc-ide-mode-btn", modeChoices().map((c) => ({ label: c.label, hint: c.hint, selected: c.id === current, danger: c.id === "bypass", run: () => setPermMode(c.id) })));
   }
 
+  const MAX_ATTACHMENTS = 20;
+  /** Adds files to the composer (a same-named one is replaced). */
+  function addAttachments(files) {
+    const incoming = (files || []).filter((f) => f && typeof f.path === "string" && (typeof f.content === "string" || f.image));
+    if (!incoming.length) return;
+    const names = new Set(incoming.map((f) => f.path));
+    selectedAttachments = [...selectedAttachments.filter((a) => !names.has(a.path)), ...incoming].slice(-MAX_ATTACHMENTS);
+    renderAttachments();
+    $("bc-ide-chat-input").focus();
+  }
+
   async function attachProjectFiles() {
-    if (!activeProject) return;
+    if (!activeProject) { toast("Add a project folder first."); return; }
     try {
-      const files = await api.pickFiles(activeProject.cwd);
-      selectedAttachments = (files || []).filter((f) => !f.binary && typeof f.content === "string");
-      renderAttachments();
+      const result = await api.pickFiles(activeProject.cwd);
+      const files = Array.isArray(result) ? result : (result && result.files) || [];
+      addAttachments(files);
+      const errors = (result && result.errors) || [];
+      if (errors.length) toast(errors[0], { kind: "error", ms: 5000 });
     } catch (error) {
       toast(error.message || "Could not attach those files.", { kind: "error" });
     }
+  }
+
+  /** Dropped or pasted File objects: main reads the bytes (and shrinks big images). */
+  async function attachDroppedFiles(fileList) {
+    const list = Array.from(fileList || []).slice(0, MAX_ATTACHMENTS);
+    if (!list.length) return;
+    if (!activeProject) { toast("Add a project folder first."); return; }
+    const added = [];
+    for (const file of list) {
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const fallback = `pasted-${new Date().toISOString().slice(11, 19).replace(/:/g, "")}.${(file.type.split("/")[1] || "png").replace("jpeg", "jpg")}`;
+        const result = await api.attachBytes({ name: file.name || fallback, type: file.type || "", bytes });
+        if (result && result.file) added.push(result.file);
+        else toast((result && result.error) || `Couldn't attach ${file.name || "that file"}.`, { kind: "error", ms: 5000 });
+      } catch {
+        toast(`Couldn't read ${file.name || "that file"} — if it's a folder, attach the files inside it.`, { kind: "error", ms: 5000 });
+      }
+    }
+    addAttachments(added);
   }
 
   function renderAttachments() {
@@ -1344,9 +1519,11 @@
     host.hidden = selectedAttachments.length === 0;
     selectedAttachments.forEach((file, i) => {
       const chip = document.createElement("span");
-      chip.className = "bc-ide-attachment-chip";
-      chip.innerHTML = `<span></span><button type="button" aria-label="Remove">${icon("CLOSE")}</button>`;
-      chip.querySelector("span").textContent = file.path;
+      chip.className = "bc-ide-attachment-chip" + (file.image ? " is-image" : "");
+      chip.innerHTML = `${file.image ? '<img alt="">' : ""}<span></span><button type="button" aria-label="Remove">${icon("CLOSE")}</button>`;
+      if (file.image) chip.querySelector("img").src = `data:${file.image.mediaType};base64,${file.image.data}`;
+      chip.querySelector("span").textContent = file.image ? file.path.split("/").pop() : file.path;
+      chip.title = file.path;
       chip.querySelector("button").addEventListener("click", () => { selectedAttachments.splice(i, 1); renderAttachments(); });
       host.appendChild(chip);
     });
@@ -2607,6 +2784,44 @@
   on("bc-ide-chat-form", "submit", sendChatMessage);
   on("bc-ide-plus", "click", (e) => { e.stopPropagation(); togglePlusMenu(); });
   on("bc-ide-mode-btn", "click", (e) => { e.stopPropagation(); toggleModeMenu(); });
+  // Drag files or images onto the chat, or paste a screenshot, to attach them.
+  // The document swallows every file drop so a stray one never navigates the page.
+  const chatColumn = $("bc-ide-chat-scroll").parentElement;
+  const dragHasFiles = (event) => !!(event.dataTransfer && Array.from(event.dataTransfer.types || []).includes("Files"));
+  let dragDepth = 0;
+  document.addEventListener("dragover", (event) => { if (dragHasFiles(event)) event.preventDefault(); });
+  document.addEventListener("drop", (event) => { if (dragHasFiles(event)) event.preventDefault(); });
+  chatColumn.addEventListener("dragenter", (event) => {
+    if (!dragHasFiles(event)) return;
+    event.preventDefault();
+    dragDepth += 1;
+    chatColumn.classList.add("bc-ide-dropping");
+  });
+  chatColumn.addEventListener("dragover", (event) => {
+    if (!dragHasFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  });
+  chatColumn.addEventListener("dragleave", (event) => {
+    if (!dragHasFiles(event)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (!dragDepth) chatColumn.classList.remove("bc-ide-dropping");
+  });
+  chatColumn.addEventListener("drop", (event) => {
+    if (!dragHasFiles(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepth = 0;
+    chatColumn.classList.remove("bc-ide-dropping");
+    attachDroppedFiles(event.dataTransfer.files);
+  });
+  $("bc-ide-chat-input").addEventListener("paste", (event) => {
+    const files = event.clipboardData ? Array.from(event.clipboardData.files || []) : [];
+    if (!files.length) return; // plain text pastes as usual
+    event.preventDefault();
+    attachDroppedFiles(files);
+  });
+
   on("bc-ide-model-btn", "click", (e) => { e.stopPropagation(); if ($("bc-ide-model-menu").hidden) openModelMenu(); else closeModelMenu(); });
   on("bc-ide-chat-stop", "click", () => { const r = activeRecord(); if (r) api.stopChat(r.tabId); });
   const chatInput = $("bc-ide-chat-input");

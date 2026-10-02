@@ -910,6 +910,12 @@ function createIdeChatEngine(host) {
       used += bytes;
     }
 
+    // Images go first as image blocks, then the prompt (with any text files).
+    const images = (Array.isArray(attachments) ? attachments : [])
+      .filter((file) => file && file.image && typeof file.image.data === "string")
+      .map((file) => ({ type: "image", source: { type: "base64", media_type: file.image.mediaType, data: file.image.data } }));
+    const content = images.length ? [...images, { type: "text", text: fullPrompt }] : fullPrompt;
+
     const config = host.getConfig() || {};
     const ensured = ensureProc({ tabId, cwd, sessionId: knownSession, model, permissionMode });
     if (ensured.error) return { ok: false, error: ensured.error };
@@ -932,9 +938,10 @@ function createIdeChatEngine(host) {
 
     // `cold`: a process was just spawned, so the CLI is still starting up.
     const started = startTurn(proc, {
-      content: fullPrompt,
+      content,
       prompt,
-      attachments,
+      // Kept for a free-model takeover at the limit, which only reads text.
+      attachments: (Array.isArray(attachments) ? attachments : []).filter((file) => file && typeof file.content === "string"),
       startPayload: { type: "start", sessionId: proc.sessionId, modelLabel: "Claude", cold },
     });
     return started ? { ok: true } : { ok: false, error: "write" };
@@ -1122,7 +1129,7 @@ function createIdeChatEngine(host) {
    * project's `model` setting). No user message is sent, so no API request is
    * made and nothing counts against the plan. Same binary, flags and scrubbed
    * env as a chat, so the answer matches what a send would use.
-   * @returns {Promise<{value:string, resolvedModel:string, displayName:string}[]|null>}
+   * @returns {Promise<{value:string, resolvedModel:string, displayName:string, description:string}[]|null>}
    */
   const modelsCache = new Map(); // cwd -> { at, models }
   function listModels({ cwd, force = false } = {}) {
@@ -1139,7 +1146,10 @@ function createIdeChatEngine(host) {
       let child;
       try {
         child = spawn(binaryPath, args, {
-          cwd: cwd || os.homedir(),
+          // No project yet: a neutral folder. The home folder would read
+          // ~/.claude/settings.json as *project* settings (model overrides,
+          // routers) that the Code tab deliberately leaves out.
+          cwd: cwd || os.tmpdir(),
           env: subscriptionEnv({ binaryPath, extra: { TERM: "dumb" } }),
           stdio: ["pipe", "pipe", "ignore"],
           shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(binaryPath),
@@ -1176,6 +1186,7 @@ function createIdeChatEngine(host) {
             value: m.value,
             resolvedModel: typeof m.resolvedModel === "string" ? m.resolvedModel : "",
             displayName: typeof m.displayName === "string" ? m.displayName : "",
+            description: typeof m.description === "string" ? m.description : "",
           })));
         }
       });
